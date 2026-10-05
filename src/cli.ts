@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { acquire, latestVersion, pinnedPackage } from "./acquire.ts";
+import { NeedsInteraction, acquire, latestVersion, pinnedPackage } from "./acquire.ts";
 import { acquireLock, apply, removeManaged } from "./apply.ts";
 import { hasSecret, storeSecret, storeSecretValue } from "./keychain.ts";
 import { type Kind, diagnose } from "./doctor.ts";
@@ -83,7 +83,7 @@ async function main(argv: string[]): Promise<number> {
     case "status":
       return status(ctx);
     case "doctor":
-      return doctor(ctx, rest.includes("--fix"));
+      return doctor(ctx, rest.includes("--fix"), flags);
     case "check":
       return check(ctx, args);
     case "add":
@@ -198,7 +198,7 @@ function dropStaging(staging: string): void {
 /** Fetch a set into staging; `replan` reads `ctx.registry` each time. */
 function fetchSet(ctx: Ctx, id: string, set: ManagedSet, staging: string, interactive: boolean, adopt = false) {
   const vendorDir = acquire(id, set, staging, { interactive });
-  return () =>
+  return (adoptNow = adopt) =>
     plan({
       paths: ctx.paths,
       setId: id,
@@ -210,7 +210,7 @@ function fetchSet(ctx: Ctx, id: string, set: ManagedSet, staging: string, intera
       staging,
       links: linkDirsFor(ctx.paths, getSet(ctx.registry, id)),
       fromInteractiveRun: interactive,
-      adopt,
+      adopt: adoptNow,
     });
 }
 
@@ -243,17 +243,22 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
   let resolved = false;
   const staging = stagingFor(ctx, id);
   try {
-    const replan = fetchSet(draft, id, set, staging, interactive, flags.adopt);
-    let p = replan();
+    let adopt = Boolean(flags.adopt);
+    const replan = fetchSet(draft, id, set, staging, interactive, adopt);
+    let p = replan(adopt);
     while (p.collisions.length) {
       if (flags.yes || !isInteractive()) {
         report(p);
         printResolveHints(p);
         return 1;
       }
-      for (const c of p.collisions) await resolveInteractively(draft, id, c);
-      resolved = true;
-      p = replan();
+      for (const c of p.collisions) {
+        const outcome = await resolveInteractively(ctx, draft, id, c, { adopt, dryRun: flags.dryRun });
+        if (outcome === "adopt") adopt = true;
+        else if (outcome === "other" && c.holderId) draft.registry.sets[c.holderId] = structuredClone(ctx.registry.sets[c.holderId]);
+        else resolved = true;
+      }
+      p = replan(adopt);
     }
     report(p);
     const hint = versionHint(set, staging);
@@ -277,6 +282,11 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
     console.log(`  applied.${fs.existsSync(trash) ? ` Previous versions: ${trash}` : ""}`);
     return 0;
   } catch (e) {
+    if (e instanceof NeedsInteraction) {
+      // Not a failure of the set: it needs you. Reported, not counted as an error.
+      console.log(`■ ${id}: ${e.message}`);
+      return 0;
+    }
     console.error(`✗ ${id}: ${(e as Error).message}`);
     return 1;
   } finally {
@@ -308,7 +318,7 @@ async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
         console.log("  Resolve, then run update again:");
         for (const c of p.collisions) {
           console.log(`    skl resolve ${id} ${c.name} --exclude`);
-          const holder = /^set "(.+)"$/.exec(c.holder)?.[1];
+          const holder = c.kind === "set" ? c.holderId : undefined;
           if (holder) console.log(`    skl resolve ${holder} ${c.name} --rename <name>   (then: skl update ${holder})`);
         }
         return 1;
@@ -317,7 +327,7 @@ async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
         log.warn(`Name collision: ${c.name}\nalready held by ${c.holder}\nincoming from "${id}" (npx skills; its names cannot be changed)`);
         const action = await choose(`What should happen to ${c.name}?`, [
           { value: "exclude", label: `Don't install it from "${id}"` },
-          { value: "abort", label: "Stop", hint: /^set "/.test(c.holder) ? "then rename the other side with skl resolve" : undefined },
+          { value: "abort", label: "Stop", hint: c.kind === "set" ? "then rename the other side with skl resolve" : undefined },
         ]);
         if (action === "abort") throw new Cancelled();
         setResolution(draft, id, c.name, { exclude: true });
@@ -379,28 +389,74 @@ function reportCli(p: CliPlan, unknown: string[]): void {
   for (const c of p.collisions) console.log(`  ✗ ${c.name} collides with ${c.holder}`);
 }
 
-async function resolveInteractively(ctx: Ctx, id: string, c: Collision): Promise<void> {
-  const set = getSet(ctx.registry, id) as ManagedSet;
+/**
+ * Ask how to resolve one collision. "prefix", "rename" and "exclude" change
+ * this set's rule in the draft. "adopt" takes over an identical unowned
+ * folder. "other" renames the holder's skill instead: the rule is saved to
+ * the registry and the holder is updated right away, so its name is free.
+ */
+async function resolveInteractively(
+  ctx: Ctx,
+  draft: Ctx,
+  id: string,
+  c: Collision,
+  opts: { adopt: boolean; dryRun: boolean },
+): Promise<"draft" | "adopt" | "other"> {
+  const set = getSet(draft.registry, id) as ManagedSet;
   const prefixed = withPrefix(c.original, set.prefix ?? id);
+  const holder = c.kind === "set" && c.holderId ? ctx.registry.sets[c.holderId] : undefined;
+  const otherBlocked = !holder
+    ? "skillport only renames skills it installs"
+    : !isManaged(holder)
+      ? "that set belongs to npx skills"
+      : !runsUnattended(holder)
+        ? `set "${c.holderId}" only runs interactively`
+        : opts.dryRun
+          ? "not in --dry-run: it updates the other set"
+          : undefined;
   log.warn(`Name collision: ${c.name}\nalready held by ${c.holder}\nincoming from set "${id}"`);
   const action = await choose(`How should "${id}" install ${c.original}?`, [
     { value: "prefix", label: "Add a prefix", hint: isValidSkillName(prefixed) ? prefixed : undefined },
     { value: "rename", label: "Rename it" },
+    ...(c.kind === "unowned" && !opts.adopt
+      ? [{ value: "adopt" as const, label: "Take over the existing folder", hint: "only if it matches this set's copy" }]
+      : []),
     { value: "exclude", label: "Don't install it" },
+    {
+      value: "other",
+      label: holder ? `Rename it in set "${c.holderId}" instead` : "Rename the other one",
+      disabled: otherBlocked,
+    },
     { value: "abort", label: "Stop" },
-    { value: "other", label: "Rename the other one", disabled: "skillport only renames skills it installs" },
   ]);
   if (action === "abort") throw new Cancelled();
-  if (action === "exclude") return setResolution(ctx, id, c.original, { exclude: true });
+  if (action === "adopt") return "adopt";
+  if (action === "exclude") {
+    setResolution(draft, id, c.original, { exclude: true });
+    return "draft";
+  }
+  const valid = (v: string) =>
+    !isValidSkillName(v) ? "Use a-z, 0-9 and single hyphens." : v === c.name ? "That is the colliding name." : undefined;
+  if (action === "other" && holder && isManaged(holder) && c.holderId) {
+    const theirs = readState(ctx.paths.stateDir).sets[c.holderId]?.skills[c.name]?.original ?? c.name;
+    const to = await ask(`New name for ${c.holderId}'s ${theirs}`, {
+      initial: withPrefix(theirs, holder.prefix ?? c.holderId),
+      validate: valid,
+    });
+    setResolution(ctx, c.holderId, theirs, { to, reason: `made room for set "${id}"` });
+    log.info(`Saved. Updating set "${c.holderId}" first so ${c.name} is free.`);
+    await sync(ctx, c.holderId, { yes: false, interactive: false, dryRun: false });
+    return "other";
+  }
   // The name is editable and validated; one that still collides is caught by
   // the replan that follows and asked about again.
   const to = await ask("New name", {
     initial: action === "prefix" && isValidSkillName(prefixed) ? prefixed : undefined,
     placeholder: c.original,
-    validate: (v) =>
-      !isValidSkillName(v) ? "Use a-z, 0-9 and single hyphens." : v === c.name ? "That is the colliding name." : undefined,
+    validate: valid,
   });
-  setResolution(ctx, id, c.original, { to, reason: `collides with ${c.holder}` });
+  setResolution(draft, id, c.original, { to, reason: `collides with ${c.holder}` });
+  return "draft";
 }
 
 type Resolution = { exclude: true } | { to: string; reason: string } | { undo: true };
@@ -567,28 +623,42 @@ function status(ctx: Ctx): number {
   return 0;
 }
 
-function doctor(ctx: Ctx, fix: boolean): number {
+/**
+ * Without --fix, a report. With --fix, the fixes are listed as a plan first,
+ * like every other command that changes files: confirm on a terminal, -y
+ * without one, --dry-run to stop at the plan.
+ */
+async function doctor(ctx: Ctx, fix: boolean, flags: Flags): Promise<number> {
   const findings = diagnose(ctx.paths, ctx.registry, readState(ctx.paths.stateDir), readSkillLock(ctx.paths.skillLock));
   if (!findings.length) {
     console.log("No problems found.");
     return 0;
   }
-  const order: Kind[] = ["collision", "stray-copy", "broken-link", "missing-link", "edited", "unowned", "stale-rule"];
+  const order: Kind[] = ["collision", "invalid", "stray-copy", "broken-link", "missing-link", "edited", "unowned", "stale-rule"];
   for (const kind of order) {
-    const of = findings.filter((f) => f.kind === kind);
-    if (!of.length) continue;
+    const ofKind = findings.filter((f) => f.kind === kind);
+    if (!ofKind.length) continue;
     console.log(`\n${kind}`);
-    for (const f of of) {
-      if (fix && f.fix) {
-        f.fix();
-        console.log(`  ✓ fixed: ${f.message}`);
-      } else {
-        console.log(`  ${f.fix ? "•" : "!"} ${f.message}`);
-      }
-    }
+    for (const f of ofKind) console.log(`  ${f.fix ? "•" : "!"} ${f.message}`);
   }
-  const fixable = findings.filter((f) => f.fix).length;
-  if (!fix && fixable) console.log(`\n${count(fixable, "problem")} can be fixed safely: skl doctor --fix (removed copies go to trash)`);
+  const fixable = findings.filter((f) => f.fix);
+  if (!fix) {
+    if (fixable.length) console.log(`\n${count(fixable.length, "problem")} marked • can be fixed safely: skl doctor --fix (removed copies go to trash)`);
+    return findings.some((f) => !f.fix) ? 1 : 0;
+  }
+  if (!fixable.length) return 1;
+  console.log(`\nPlan: fix the ${count(fixable.length, "problem")} marked •; moved copies go to ${path.join(ctx.paths.stateDir, "trash")}.`);
+  if (flags.dryRun) {
+    console.log("dry run: nothing changed.");
+    return 0;
+  }
+  const refuse = needsYes(flags);
+  if (refuse) throw new Error(refuse);
+  if (!flags.yes && !(await confirm("Fix them?"))) return 0;
+  for (const f of fixable) {
+    f.fix!();
+    console.log(`  ✓ ${f.message}`);
+  }
   return findings.some((f) => !f.fix) ? 1 : 0;
 }
 

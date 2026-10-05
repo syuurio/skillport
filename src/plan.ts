@@ -31,10 +31,21 @@ export interface SkillPlan {
   staged: string;
 }
 
+/** What already holds a name. */
+export type HolderKind =
+  | "twin" // another skill of the same set
+  | "set" // a skill skillport installed for another set
+  | "lock" // a skill npx skills installed
+  | "unowned" // a folder in ~/.agents/skills nobody owns
+  | "link"; // something at the link path that skillport did not create
+
 export interface Collision {
   original: string;
   name: string;
-  /** Who already holds the name. */
+  kind: HolderKind;
+  /** Set id for "set", npx skills source for "lock". */
+  holderId?: string;
+  /** Who already holds the name, for people. */
   holder: string;
 }
 
@@ -219,20 +230,21 @@ function findCollisions(
   const found: Collision[] = [];
   const seen = new Map<string, string>();
   for (const s of skills) {
-    const add = (holder: string) => found.push({ original: s.original, name: s.name, holder });
+    const add = (kind: HolderKind, holder: string, holderId?: string) =>
+      found.push({ original: s.original, name: s.name, kind, holder, ...(holderId ? { holderId } : {}) });
     const twin = seen.get(s.name);
     if (twin) {
-      add(`${setId}/${twin}`);
+      add("twin", `${setId}/${twin}`);
       continue;
     }
     seen.set(s.name, s.original);
     const otherSet = Object.entries(state.sets).find(([id, st]) => id !== setId && s.name in st.skills);
     if (otherSet) {
-      add(`set "${otherSet[0]}"`);
+      add("set", `set "${otherSet[0]}"`, otherSet[0]);
       continue;
     }
     if (lock[s.name]) {
-      add(`npx skills (${lock[s.name].source})`);
+      add("lock", `npx skills (${lock[s.name].source})`, lock[s.name].source);
       continue;
     }
     const dest = path.join(paths.skillsDir, s.name);
@@ -246,7 +258,7 @@ function findCollisions(
     if (fs.existsSync(dest) && !(s.name in prev)) {
       if (identical(dest)) adoption.adopted.push(s.name);
       else {
-        add(`an unmanaged folder ${dest}${input.adopt ? " with different content" : ""}`);
+        add("unowned", `an unmanaged folder ${dest}${input.adopt ? " with different content" : ""}`);
         continue;
       }
     }
@@ -255,7 +267,7 @@ function findCollisions(
       if (isOursOrFree(at, dest)) continue;
       if (identical(at)) adoption.strays.push(at);
       else if (input.links.includes(dir)) {
-        add(`${at}, which skillport did not create`);
+        add("link", `${at}, which skillport did not create`);
         break;
       }
     }

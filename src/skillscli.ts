@@ -5,6 +5,7 @@ import path from "node:path";
 import { sandboxEnv } from "./acquire.ts";
 import { isOursOrFree } from "./apply.ts";
 import type { Paths, SkillsCliSet } from "./registry.ts";
+import type { Collision } from "./plan.ts";
 import type { LockEntry, State } from "./state.ts";
 import { isValidSkillName } from "./transform.ts";
 
@@ -80,7 +81,7 @@ export interface CliPlan {
   update: string[];
   remove: string[];
   unselected: string[];
-  collisions: { name: string; holder: string }[];
+  collisions: Omit<Collision, "original">[];
 }
 
 /** What to ask npx skills for, and which names it must not touch. */
@@ -103,23 +104,23 @@ export function planCli(input: {
   for (const name of add) {
     const managed = Object.entries(state.sets).find(([, st]) => name in st.skills);
     if (managed) {
-      collisions.push({ name, holder: `set "${managed[0]}"` });
+      collisions.push({ name, kind: "set", holderId: managed[0], holder: `set "${managed[0]}"` });
       continue;
     }
     if (lock[name]) {
-      collisions.push({ name, holder: `npx skills (${lock[name].source})` });
+      collisions.push({ name, kind: "lock", holderId: lock[name].source, holder: `npx skills (${lock[name].source})` });
       continue;
     }
     const dest = path.join(paths.skillsDir, name);
     if (fs.lstatSync(dest, { throwIfNoEntry: false })) {
-      collisions.push({ name, holder: `an unmanaged folder ${dest}` });
+      collisions.push({ name, kind: "unowned", holder: `an unmanaged folder ${dest}` });
       continue;
     }
     // Anything already at the link path that is not a link to our folder
     // (a real folder, or your own symlink elsewhere) would be replaced.
     for (const dir of paths.links) {
       const at = path.join(dir, name);
-      if (!isOursOrFree(at, dest)) collisions.push({ name, holder: `${at}, which skillport did not create` });
+      if (!isOursOrFree(at, dest)) collisions.push({ name, kind: "link", holder: `${at}, which skillport did not create` });
     }
   }
   return {

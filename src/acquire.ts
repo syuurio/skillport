@@ -100,17 +100,32 @@ function runInstaller(
   });
   const output = redact(`${r.stdout ?? ""}${r.stderr ?? ""}`).trim();
   if (r.error || r.status !== 0) {
-    const why = r.signal === "SIGTERM" ? "timed out" : `exited ${r.status}`;
-    const hint = opts.interactive
-      ? ""
-      : `\nIf the installer needs answers, run it interactively: skl update ${id} -i`;
-    throw new Error(`Installer for "${id}" ${why}.\n${output}${hint}`);
+    if (!opts.interactive && (r.signal === "SIGTERM" || looksLikeAPrompt(output))) throw new NeedsInteraction(id, output);
+    throw new Error(`Installer for "${id}" exited ${r.status ?? r.signal}.\n${output}`);
   }
   const out = path.join(fakeHome, set.harvest ?? ".claude/skills");
   if (!fs.existsSync(out)) {
+    // A prompt that read EOF often exits 0 after printing "cancelled".
+    if (!opts.interactive && (looksLikeAPrompt(output) || /cancel/i.test(output))) throw new NeedsInteraction(id, output);
     throw new Error(`Installer for "${id}" wrote nothing to ${set.harvest ?? ".claude/skills"}.\n${output}`);
   }
   return out;
+}
+
+/** The installer stopped at a question it could not get an answer to. */
+export class NeedsInteraction extends Error {
+  constructor(id: string, output: string) {
+    super(`The installer for "${id}" is waiting for answers. Run it with you at the terminal: skl update ${id} -i\n${output.split("\n").slice(-5).join("\n")}`);
+  }
+}
+
+/**
+ * Whether an unattended run's last lines read as a question: an interactive
+ * prompt left hanging until the timeout, or one that got EOF on stdin.
+ */
+export function looksLikeAPrompt(output: string): boolean {
+  const tail = output.split("\n").slice(-6).join("\n");
+  return /\?\s*(\(y\/n\)|\[y\/n\]|›|$)|ok to proceed|press enter|select |choose |◆|❯/im.test(tail);
 }
 
 function extractNpm(set: NpmSet, staging: string): string {

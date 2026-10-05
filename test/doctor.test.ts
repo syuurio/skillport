@@ -113,3 +113,22 @@ test("--fix never treats a copy with your own additions as identical", () => {
   assert.ok(stray && !stray.fix);
   assert.match(stray.message, /different content/);
 });
+
+test("stale rules: a hand-made rename with no collision left, and a rule for a skill no longer shipped", () => {
+  const w = world();
+  w.registry.sets.emil = {
+    type: "npm",
+    package: "x@1",
+    path: "s",
+    rename: {
+      animate: { to: "emil-animate", reason: "resolved by hand", at: "2026-10-06" },
+      gone: { to: "emil-gone", reason: "collides with set \"x\"", at: "2026-10-06" },
+      picked: { to: "my-pick", reason: "renamed in installer", at: "2026-10-06" },
+    },
+  };
+  w.state.sets.emil.skills["my-pick"] = { original: "picked", hash: "", installed: "", updatedAt: "" };
+  const stale = diagnose(w.paths, w.registry, w.state, {}).filter((x) => x.kind === "stale-rule").map((x) => x.message);
+  assert.equal(stale.length, 2);
+  assert.ok(stale.some((m) => /animate → emil-animate \(resolved by hand\) is no longer needed/.test(m)));
+  assert.ok(stale.some((m) => /gone is no longer shipped/.test(m)));
+});

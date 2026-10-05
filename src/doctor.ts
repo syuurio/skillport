@@ -10,7 +10,7 @@ import { treeHash, treeHashWithout } from "./treehash.ts";
 // what can be fixed without a judgement call. Everything removed goes to the
 // trash; anything that needs a decision is only reported.
 
-export type Kind = "stray-copy" | "broken-link" | "missing-link" | "collision" | "edited" | "unowned" | "stale-rule";
+export type Kind = "stray-copy" | "broken-link" | "missing-link" | "collision" | "invalid" | "edited" | "unowned" | "stale-rule";
 
 export interface Finding {
   kind: Kind;
@@ -45,7 +45,7 @@ function ownedSkills(
   const out: Owned[] = [];
   const valid = (name: string, where: string) => {
     if (isValidSkillName(name)) return true;
-    bad.push({ kind: "collision", message: `${where} lists an invalid skill name ${JSON.stringify(name)}; it is ignored. Fix that file by hand.` });
+    bad.push({ kind: "invalid", message: `${where} lists an invalid skill name ${JSON.stringify(name)}; it is ignored. Fix that file by hand.` });
     return false;
   };
   for (const [id, st] of Object.entries(state.sets)) {
@@ -158,13 +158,21 @@ export function diagnose(paths: Paths, reg: Registry, state: State, lock: Record
     }
   }
 
-  // Rename and exclude rules whose reason no longer holds.
+  // Rename rules that no longer do anything. A rename you chose inside the
+  // installer is a preference, not a fix, so it is never flagged as unneeded.
   for (const [id, set] of Object.entries(reg.sets)) {
     if (!isManaged(set)) continue;
+    const synced = state.sets[id];
     for (const [original, rule] of Object.entries(set.rename ?? {})) {
+      const undo = `skl resolve ${id} ${original} --undo`;
+      const shipped = !synced || Object.entries(synced.skills).some(([n, s]) => (s.original ?? n) === original);
+      if (!shipped && !(set.exclude ?? []).includes(original)) {
+        findings.push({ kind: "stale-rule", message: `${id}: ${original} is no longer shipped, so rename ${original} → ${rule.to} does nothing; remove it with ${undo}` });
+        continue;
+      }
       const held = owned.some((o) => o.name === original && o.owner !== `set "${id}"`);
-      if (!held && rule.reason.startsWith("collides")) {
-        findings.push({ kind: "stale-rule", message: `${id}: rename ${original} → ${rule.to} (${rule.reason}) is no longer needed; undo with skl resolve ${id} ${original} --undo` });
+      if (!held && rule.reason !== "renamed in installer") {
+        findings.push({ kind: "stale-rule", message: `${id}: rename ${original} → ${rule.to} (${rule.reason}) is no longer needed; undo with ${undo}` });
       }
     }
   }

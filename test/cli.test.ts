@@ -121,3 +121,25 @@ test("a set needing a token that is missing fails early with the fix, before run
   assert.match(r.stderr, /No Keychain secret for "no-such-token-set"\. Run: skl secret/);
   assert.doesNotMatch(r.stderr, /exited 9/);
 });
+
+test("an installer stuck on a question is reported as needing you, not as a failure", () => {
+  const t = sandbox({ command: ["node", "-e", "console.log('Install everything? (y/n)');process.exit(1)", "--"] });
+  const r = t.skl("update", "emil", "-y");
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /waiting for answers.*skl update emil -i/);
+});
+
+test("doctor --fix shows a plan, honours --dry-run and needs -y without a terminal", () => {
+  const t = sandbox();
+  t.skl("update", "emil", "-y");
+  const codex = path.join(t.home, ".codex", "skills");
+  fs.cpSync(path.join(t.paths.skillsDir, "animate"), path.join(codex, "animate"), { recursive: true });
+  const dry = t.skl("doctor", "--fix", "--dry-run");
+  assert.match(dry.stdout, /Plan: fix the 1 problem/);
+  assert.ok(fs.existsSync(path.join(codex, "animate")));
+  const noTty = t.skl("doctor", "--fix");
+  assert.match(noTty.stderr, /pass -y/);
+  assert.ok(fs.existsSync(path.join(codex, "animate")));
+  assert.equal(t.skl("doctor", "--fix", "-y").status, 0);
+  assert.ok(!fs.existsSync(path.join(codex, "animate")));
+});
