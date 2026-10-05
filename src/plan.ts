@@ -194,7 +194,9 @@ export function plan(input: PlanInput): Plan {
       upstream,
       hash,
       installed,
-      write: diskHash !== installed,
+      // Your edits are kept unless there is something new to write: a vendor
+      // change, a new rename, or anything else that changes our copy.
+      write: diskHash !== installed && !(prevInstalled === installed && diskHash !== null),
       localEdits: diskHash !== null && prevInstalled !== undefined && diskHash !== prevInstalled,
       staged: dest,
     };
@@ -234,7 +236,7 @@ export function plan(input: PlanInput): Plan {
  */
 export function ownerOf(
   name: string,
-  setId: string,
+  setId: string | undefined,
   state: State,
   lock: Record<string, LockEntry>,
 ): { kind: "set" | "lock"; holderId: string; holder: string } | null {

@@ -104,7 +104,7 @@ function runInstaller(
     if (!opts.interactive && (r.signal === "SIGTERM" || looksLikeAPrompt(output))) throw new NeedsInteraction(id, output);
     throw new Error(`Installer for "${id}" exited ${r.status ?? r.signal}.\n${output}`);
   }
-  const out = path.join(fakeHome, set.harvest ?? ".claude/skills");
+  const out = realFolderPath(fakeHome, set.harvest ?? ".claude/skills");
   // A prompt that read EOF often exits 0 after printing "cancelled",
   // leaving nothing (or an empty folder) behind.
   const empty = !fs.existsSync(out) || fs.readdirSync(out).length === 0;
@@ -154,7 +154,23 @@ export function npmPack(spec: string, dir: string): string {
 }
 
 function extractNpm(set: NpmSet, staging: string): string {
-  return path.join(npmPack(set.package, staging), set.path);
+  return realFolderPath(npmPack(set.package, staging), set.path);
+}
+
+/**
+ * `root/rel`, refusing it unless every component is a real folder. A vendor
+ * archive or installer could make `skills` a symlink to any local folder,
+ * which would then be read as skills; the per-skill symlink check only looks
+ * below the skill folders.
+ */
+export function realFolderPath(root: string, rel: string): string {
+  let at = root;
+  for (const part of rel.split("/").filter((p) => p && p !== ".")) {
+    at = path.join(at, part);
+    const st = fs.lstatSync(at, { throwIfNoEntry: false });
+    if (st?.isSymbolicLink()) throw new Error(`${rel} goes through a symlink (${part}); skillport does not follow it.`);
+  }
+  return at;
 }
 
 export function listSkillDirs(root: string): string[] {

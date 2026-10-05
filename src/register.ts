@@ -56,7 +56,6 @@ export function packageIndex(argv: string[]): number {
   return argv.findIndex((a, i) => i > at && !a.startsWith("-"));
 }
 
-export const isPinned = isPinnedSpec;
 
 const bareName = (spec: string) => spec.replace(/^(@?[^@]+)@.*$/, "$1");
 
@@ -87,7 +86,7 @@ export function skillRootsIn(spec: string): { root: string; count: number }[] {
 
 /** Pin `spec` to its latest version, asking first. Returns the spec to use. */
 async function offerPin(spec: string): Promise<string> {
-  if (isPinned(spec)) return spec;
+  if (isPinnedSpec(spec)) return spec;
   const s = spinner();
   s.start(`Looking up the latest ${bareName(spec)}`);
   const version = latest(bareName(spec));

@@ -182,15 +182,19 @@ test("interactive capture records the selection and in-installer renames", () =>
   assert.equal(set.rename?.prototype.to, "anim-prototype");
 });
 
-test("local edits are detected and replaced only with the old copy in trash", () => {
+test("local edits are kept until upstream changes; then replaced with the edit in trash", () => {
   const t = sandbox();
   t.skill("animate");
   t.commit(t.run());
   fs.appendFileSync(path.join(t.paths.skillsDir, "animate", "SKILL.md"), "my note\n");
+  const quiet = t.run();
+  assert.deepEqual(quiet.skills.map((s) => [s.upstream, s.write, s.localEdits]), [["unchanged", false, true]]);
+  t.skill("animate", "vendor update");
   const p = t.run();
-  assert.deepEqual(p.skills.map((s) => [s.upstream, s.write, s.localEdits]), [["unchanged", true, true]]);
+  assert.deepEqual(p.skills.map((s) => [s.upstream, s.write, s.localEdits]), [["changed", true, true]]);
   const trash = t.commit(p);
   assert.match(t.read(trash, "animate", "SKILL.md"), /my note/);
+  assert.match(t.read(t.paths.skillsDir, "animate", "SKILL.md"), /vendor update/);
 });
 
 test("removeManaged trashes the set and removes only its own links", () => {

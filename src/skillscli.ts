@@ -8,6 +8,7 @@ import type { Paths, SkillsCliSet } from "./registry.ts";
 import { type Collision, ownerOf } from "./plan.ts";
 import type { LockEntry, State } from "./state.ts";
 import { isValidSkillName } from "./transform.ts";
+import { normalizeSource } from "./validate.ts";
 
 // skills-cli sets are delegated to `npx skills`, which owns their folders,
 // links and lock entries. skillport decides what to ask it for, checks
@@ -16,11 +17,7 @@ import { isValidSkillName } from "./transform.ts";
 
 export const SKILLS_CLI = "skills@1.7.0";
 
-/** `owner/repo` for GitHub sources in any spelling; other sources as given. */
-export function normalizeSource(source: string): string {
-  const m = /^(?:https?:\/\/github\.com\/|git@github\.com:)?([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/.exec(source.trim());
-  return m ? m[1] : source.trim();
-}
+export { normalizeSource };
 
 function run(paths: Paths, args: string[]): { status: number | null; out: string } {
   return withTempDir("skills", (tmp) => {
@@ -81,6 +78,8 @@ export interface CliPlan {
   collisions: Omit<Collision, "original">[];
   /** Names that a Claude Code plugin also ships; namespaced, so only a note. */
   warnings: string[];
+  /** From this source but not this set's: left alone. */
+  others: string[];
 }
 
 /** What to ask npx skills for, and which names it must not touch. */
@@ -93,6 +92,7 @@ export function planCli(input: {
   state: State;
   pluginSkills?: Map<string, string>;
 }): CliPlan {
+  const owned = new Set(input.state.cli?.[input.setId]?.skills ?? []);
   const { paths, setId, set, available, lock, state } = input;
   const excluded = new Set(set.exclude ?? []);
   const allow = set.skills ? new Set(set.skills) : null;
@@ -100,11 +100,14 @@ export function planCli(input: {
   const unselected = available.filter((n) => !excluded.has(n) && allow && !allow.has(n));
   const installed = new Set(lockedFor(lock, set.source));
   const add = wanted.filter((n) => !installed.has(n));
+  // Installed from this source but neither wanted nor recorded as ours:
+  // another set or you by hand. Never removed or updated.
+  const others = [...installed].filter((n) => !wanted.includes(n) && !owned.has(n));
   const collisions: CliPlan["collisions"] = [];
   for (const name of add) {
     // Only names not yet installed from this source reach here, so any
     // owner is someone else.
-    const owner = ownerOf(name, "", state, lock);
+    const owner = ownerOf(name, undefined, state, lock);
     if (owner) {
       collisions.push({ name, ...owner });
       continue;
@@ -129,7 +132,8 @@ export function planCli(input: {
     source: set.source,
     add,
     update: [...installed].filter((n) => wanted.includes(n)),
-    remove: [...installed].filter((n) => !wanted.includes(n)),
+    remove: [...installed].filter((n) => !wanted.includes(n) && owned.has(n)),
+    others,
     unselected,
     collisions,
     warnings: add

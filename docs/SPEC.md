@@ -83,6 +83,7 @@
 - **`-a` 要重複寫**：`-a codex -a claude-code`。逗號寫法 `-a codex,claude-code` 會被拒絕（`Invalid agents`，已驗證）。M0 當時記錄的逗號寫法是錯的：那次測試的參數被 zsh 當成一個字串傳入，結果不成立；同一次測得的「只給 `-a codex` 也會建 Claude symlink」也一併作廢。
 - `-a codex` 讓實體放在 `~/.agents/skills`；`links` 含 Claude Code 時加 `-a claude-code`，得到相對 symlink（已驗證）。只給 `-a claude-code` 會把實體寫進 `~/.claude/skills`。
 - **`npx skills add` 會直接覆蓋同名目錄，不警告**（已驗證：在沙盒 `~/.agents/skills/tdd` 放自己的 `SKILL.md`，安裝後被換掉）。所以呼叫前先檢查：撞到 skillport 管理的 skill、其他 `npx skills` 來源、`~/.agents/skills` 下的無主目錄、或 `~/.claude/skills` 下的非 symlink，就中止。
+- **每個 set 只動自己裝的 skill**：lock 只記「從哪個來源來」，不記「是哪個 set 要的」，所以 skillport 在 state 的 `cli` 欄位記下每個 skills-cli set 叫 `npx skills` 裝過哪些 skill。`update` 與 `remove` 只會移除記錄裡、而且這個 set 不再要的 skill；同一來源的其他 skill（你手動裝的、別處裝的）列為「left alone」，不碰（`npx skills remove` 是真的刪除，不進 trash）。同一個來源只能有一個 skills-cli set（registry 讀取時檢查）。
 - skills-cli 的名稱屬於 `npx skills`，skillport 不改名；撞名時只能在這一邊 `exclude`，或去改另一邊（skillport 管理的 set）的名稱。
 - 執行時用真實 `HOME`（它要寫進 `~/.agents`），但環境變數一樣是最小集合（§9）。
 
@@ -218,11 +219,16 @@ registry 每次讀取都完整驗證（不只 wizard 寫入時），有問題就
         "anim-prototype": { "original": "prototype", "hash": "c41d…", "installed": "7a03…", "updatedAt": "2026-10-05T08:30:00Z" }
       }
     }
+  },
+  "cli": {
+    "matt": { "syncedAt": "2026-10-06T10:00:00Z", "skills": ["tdd", "code-review"] }
   }
 }
 ```
 
 `hash` 用 **git tree hash**，和 `npx skills` 的 `skillFolderHash` 同一種演算法（已驗證：本機 16 個 skill 中 13 個與 lock 記錄一致，另 3 個是本機內容已偏離安裝時的版本）。同一種 hash 讓兩種負責者的 skill 能用同一套比對邏輯。
+
+`cli` 記錄每個 skills-cli set 實際擁有的 skill（§5.1）。
 
 `installed` 是 skillport 實際寫入的內容（改名、改寫引用之後）的 tree hash；磁碟上的內容和它不同，就是有人手動改過（`status` 與 `doctor` 回報「edited」）。
 
@@ -287,6 +293,7 @@ skills-cli 有改動的 skill 附上該資料夾在 GitHub 的 commit 歷史連�
 執行 check，列出計畫，確認後套用：
 
 - installer / npm：有改動的 skill 整個目錄替換（舊目錄移到 trash，新目錄 rename 進來），不做逐檔覆寫，所以 vendor 刪掉的檔案不會殘留。
+- 你手動改過的 skill：只要 skillport 要寫的內容沒變（上游沒改、改名規則沒變），就保留你的修改，只回報「local edits」；有新內容要寫時才替換，你的版本留在 trash。
 - skills-cli：呼叫 `npx skills update`。
 - installer 的新版本只提示，不自動升級；要升級就改 registry 裡的版本號。
 
@@ -352,7 +359,7 @@ skills-cli set 不需要 adopt：`npx skills` 自己決定要不要覆蓋，skil
 
 ### 7.10 `skl resolve <set> <skill> (--prefix [p] | --rename <name> | --exclude | --undo)`
 
-非互動處理撞名，結果和互動選擇一樣寫進 registry 與 state（§8.4）。先印出「原本 → 之後」，`--dry-run` 停在這裡，終端機上確認，沒有終端機要加 `-y`。`--undo` 撤銷一條 `rename` 或 `exclude`。skills-cli set 只能 `--exclude` / `--undo`。
+非互動處理撞名：寫進 registry（§8.4）；state 在下一次 `update` 套用時才更新。先印出「原本 → 之後」，`--dry-run` 停在這裡，終端機上確認，沒有終端機要加 `-y`。`--undo` 撤銷一條 `rename` 或 `exclude`。skills-cli set 只能 `--exclude` / `--undo`。
 
 ## 8. 撞名
 
@@ -427,6 +434,8 @@ skills-cli set 不需要 adopt：`npx skills` 自己決定要不要覆蓋，skil
 - vendor 行程（installer、`--help` 偵測）只拿到最小環境變數：`PATH`、`TMPDIR`、語系與終端機設定、proxy 與 CA 設定，加上假 `HOME` 與 npm 設定。shell 裡的 API key、token、`SSH_AUTH_SOCK` 都不會傳過去。
 - `register` 執行 installer 的 `--help` 前會先徵求同意，因為那就是在執行 vendor 的程式碼。
 - 所有 npm/npx 子行程設 `logs-max=0`、`logs-dir` 指向 staging：npm 會把完整 argv（含 `--token=`）寫進 debug log（已驗證並修正）。npm 指令的 cwd 設在 staging，專案層的 `.npmrc` 無法改 registry。
+- npm 的 `path` 與 installer 的 `harvest` 從根目錄一路往下，每一層都必須是真的資料夾：`package/skills -> /某個本機資料夾` 這種 symlink 會被拒絕（已驗證：macOS 的 tar 會保留封包裡的 symlink）。
+- 憑證旗標以「字」比對：旗標名稱拆成字（以 `-`、`_` 分隔）後，含 token、key、apikey、secret、auth、password、passwd、credential(s)、license、pat 其中之一就算；`--author`、`--keyboard` 不算，`--no-*` 不算；值是路徑或網址時也不算。
 - vendor 內容只接受一般檔案與目錄；symlink、FIFO 等在讀取前就拒絕（symlink 會把本機任意檔案帶進每個 agent 都讀的 skill，FIFO 會讓讀取永久卡住）。名稱在寫入任何檔案前驗證。
 
 ## 10. 可還原性
@@ -434,6 +443,7 @@ skills-cli set 不需要 adopt：`npx skills` 自己決定要不要覆蓋，skil
 - 被取代、移除、`doctor --fix` 清掉的目錄都移到 `~/.agents/.skillport/trash/`，不刪除。
 - 目錄替換是 rename（staging 與 skills 在同一個檔案系統），單一 skill 不會停在半寫入狀態。
 - 已知限制：一次 update 多個 skill 時，中途失敗會留下「部分已更新」的狀態；trash 保有舊版，`doctor` 會報告不一致。
+- 已知限制：lock 被接手的瞬間若同時有三個 skillport 在跑，可能兩個都拿到 lock；兩個 run 已被處理（接手後會確認搬走的是過期的 lock，不是就放回去）。
 
 ## 11. 從現況遷移
 

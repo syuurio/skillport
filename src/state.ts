@@ -24,6 +24,13 @@ export interface SetState {
 export interface State {
   version: 1;
   sets: Record<string, SetState>;
+  /**
+   * skills-cli sets: the skills each one asked npx skills to install. npx
+   * skills' lock says what came from a source, not which set wanted it, so
+   * this is what a set may update or remove; anything else from the same
+   * source is left alone.
+   */
+  cli?: Record<string, { syncedAt: string; skills: string[] }>;
 }
 
 export function readState(stateDir: string): State {

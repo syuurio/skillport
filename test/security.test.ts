@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { npmPack } from "../src/acquire.ts";
+import { npmPack, realFolderPath } from "../src/acquire.ts";
 import { acquireLock } from "../src/apply.ts";
 import { diagnose } from "../src/doctor.ts";
 import { defaultPaths, readRegistry } from "../src/registry.ts";
@@ -82,4 +82,35 @@ test("C1: a doctor fix re-checks its target; your link that appeared meanwhile i
   fs.symlinkSync(path.join(home, "mine"), at);
   f.fix();
   assert.equal(fs.readlinkSync(at), path.join(home, "mine"));
+});
+
+test("a symlink above the skills folder (package/skills -> elsewhere) is refused", () => {
+  const root = tmp("pkg");
+  const elsewhere = tmp("local");
+  fs.mkdirSync(path.join(elsewhere, "secret-notes"));
+  fs.writeFileSync(path.join(elsewhere, "secret-notes", "SKILL.md"), "---\nname: secret-notes\n---\n");
+  fs.symlinkSync(elsewhere, path.join(root, "skills"));
+  assert.throws(() => realFolderPath(root, "skills"), /goes through a symlink/);
+  fs.mkdirSync(path.join(root, "content"));
+  fs.symlinkSync(elsewhere, path.join(root, "content", "skills"));
+  assert.throws(() => realFolderPath(root, "content/skills"), /goes through a symlink \(skills\)/);
+});
+
+test("S7: credential words are matched whole: --license and --pat yes, --author and --keyboard no", () => {
+  const found = (...argv: string[]) => extractSecret(["npx", "x@1.0.0", ...argv]).secret;
+  assert.equal(found("--license", "ABCD-1234"), "ABCD-1234");
+  assert.equal(found("--pat", "ghp_abc"), "ghp_abc");
+  assert.equal(found("--author", "alice"), undefined);
+  assert.equal(found("--keyboard=us"), undefined);
+  assert.equal(found("--no-auth", "global"), undefined);
+});
+
+test("registry rules and lists are checked for shape", () => {
+  const bad = (extra: Record<string, unknown>) =>
+    validateEntry("x", { type: "npm", package: "a@1.0.0", path: "s", ...extra } as never, []).join();
+  assert.match(bad({ rename: { prototype: "anim-prototype" } }), /rename must map/);
+  assert.match(bad({ skills: "tdd" }), /skills must be a list/);
+  assert.match(bad({ exclude: ["../x"] }), /exclude must be a list/);
+  assert.match(bad({ prefix: "My_Set" }), /prefix must be/);
+  assert.equal(bad({ rename: { prototype: { to: "anim-prototype", reason: "x", at: "" } }, skills: ["tdd"] }), "");
 });

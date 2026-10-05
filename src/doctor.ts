@@ -138,7 +138,15 @@ export function diagnose(paths: Paths, reg: Registry, state: State, lock: Record
       findings.push({
         kind: "stray-copy",
         message: `${at} is a separate copy of ${o.name} (${o.owner})${same ? ", identical" : ", different content: keep or delete by hand"}`,
-        fix: same ? () => (stillSame() ? toTrash(at)() : undefined) : undefined,
+        // In a folder that should hold our link (~/.claude/skills), the link
+        // replaces the copy in the same step, so the agent never loses it.
+        fix: same
+          ? () => {
+              if (!stillSame()) return;
+              toTrash(at)();
+              if (o.links.includes(dir)) fs.symlinkSync(o.dest, at);
+            }
+          : undefined,
       });
     }
   }

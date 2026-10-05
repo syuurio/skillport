@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { validateEntry } from "./validate.ts";
+import { localDate } from "./transform.ts";
+import { normalizeSource, validateEntry } from "./validate.ts";
 
 // The registry is what you want; it is hand-editable and the only file worth
 // keeping under version control. See docs/SPEC.md §6.1.
@@ -126,6 +127,15 @@ export function readRegistry(file: string): Registry {
   const problems = Object.entries(reg.sets).flatMap(([id, set]) =>
     validateEntry(id, set, Object.keys(LINK_TARGETS)).map((p) => `${id}: ${p}`),
   );
+  // One set per npx skills source: the lock cannot tell two of them apart.
+  const bySource = new Map<string, string>();
+  for (const [id, set] of Object.entries(reg.sets)) {
+    if (set.type !== "skills-cli" || typeof set.source !== "string") continue;
+    const key = normalizeSource(set.source);
+    const twin = bySource.get(key);
+    if (twin) problems.push(`${id}: source ${set.source} is already used by set "${twin}"`);
+    else bySource.set(key, id);
+  }
   if (problems.length) throw new Error(`${file} has problems:\n  ${problems.join("\n  ")}`);
   return reg;
 }
@@ -133,6 +143,27 @@ export function readRegistry(file: string): Registry {
 export function writeRegistry(file: string, reg: Registry): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(reg, null, 2)}\n`);
+}
+
+/** One collision answer: leave a skill out, give it another name, or undo either. */
+export type Resolution = { exclude: true } | { to: string; reason: string } | { undo: true };
+
+/**
+ * Record a resolution for `original` (the vendor's name) in a set's entry.
+ * A skills-cli set can only leave a skill out: its names belong to npx skills.
+ */
+export function applyResolution(reg: Registry, id: string, original: string, r: Resolution): void {
+  const set = getSet(reg, id);
+  if (!isManaged(set) && "to" in r) {
+    throw new Error(`"${id}" is a skills-cli set; its names belong to npx skills. Use --exclude, or rename the other side.`);
+  }
+  set.exclude = (set.exclude ?? []).filter((n) => n !== original);
+  if ("exclude" in r) set.exclude.push(original);
+  if (!set.exclude.length) delete set.exclude;
+  if (!isManaged(set)) return;
+  if (set.rename) delete set.rename[original];
+  if ("to" in r) set.rename = { ...(set.rename ?? {}), [original]: { to: r.to, reason: r.reason, at: localDate() } };
+  if (set.rename && !Object.keys(set.rename).length) delete set.rename;
 }
 
 /** The folders a set's skills are linked into. */

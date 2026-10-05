@@ -191,7 +191,8 @@ export function acquireLock(paths: Paths): () => void {
       try {
         fs.renameSync(aside, dir);
       } catch {
-        fs.rmSync(aside, { recursive: true, force: true });
+        // A third run made a new lock meanwhile. Keep the moved one aside
+        // rather than delete a live run's lock; it is cleaned up later.
       }
       throw new Error(`Another skillport run (pid ${moved}) is in progress.`);
     }

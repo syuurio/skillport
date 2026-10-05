@@ -14,8 +14,10 @@ import {
   type ManagedSet,
   type Paths,
   type Registry,
+  type Resolution,
   type SkillSet,
   type SkillsCliSet,
+  applyResolution,
   defaultPaths,
   getSet,
   isManaged,
@@ -24,8 +26,8 @@ import {
   runsUnattended,
   writeRegistry,
 } from "./registry.ts";
-import { readSkillLock, readState } from "./state.ts";
-import { isValidSkillName, localDate, withPrefix } from "./transform.ts";
+import { readSkillLock, readState, writeState } from "./state.ts";
+import { isValidSkillName, withPrefix } from "./transform.ts";
 import { treeHash } from "./treehash.ts";
 
 const USAGE = `skillport — one place for skills that vendor installers scatter
@@ -125,13 +127,7 @@ async function register(ctx: Ctx, id: string | undefined, rest: string[], flags:
     const problems = validateSet(id, set, ctx.registry);
     if (problems.length) throw new Error(`Not registered:\n  ${problems.join("\n  ")}`);
     console.log(`Plan: add to ${ctx.paths.registry}\n${JSON.stringify({ [id]: set }, null, 2)}`);
-    if (flags.dryRun) {
-      console.log("dry run: registry unchanged.");
-      return 0;
-    }
-    const refuse = needsYes(flags);
-    if (refuse) throw new Error(refuse);
-    if (!flags.yes && !(await confirm("Save it?"))) return 0;
+    if (!(await confirmChange(flags, "Save it?", "dry run: registry unchanged."))) return 0;
     return saveSet(ctx, id, set);
   }
   if (!isInteractive()) throw new Error("register asks questions; without a terminal pass: skl register <set> --json '<entry>'");
@@ -223,6 +219,21 @@ function fetchSet(ctx: Ctx, id: string, set: ManagedSet, staging: string, intera
     });
 }
 
+/**
+ * The gate before a change that is not a sync plan (registry edits, removal,
+ * doctor fixes): --dry-run stops after the plan, no terminal needs -y, a
+ * terminal asks. Returns whether to go ahead.
+ */
+async function confirmChange(flags: Flags, question: string, dryRunNote: string): Promise<boolean> {
+  if (flags.dryRun) {
+    console.log(dryRunNote);
+    return false;
+  }
+  const refuse = needsYes(flags);
+  if (refuse) throw new Error(refuse);
+  return flags.yes || (await confirm(question));
+}
+
 /** Without a terminal there is no one to confirm, so -y must say so up front. */
 function needsYes(flags: Flags): string | null {
   if (flags.yes || flags.dryRun || isInteractive()) return null;
@@ -259,7 +270,7 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
     while (p.collisions.length) {
       if (flags.yes || !isInteractive()) {
         report(p);
-        printResolveHints(id, true, p.collisions);
+        printResolveHints(ctx.paths, id, true, p.collisions);
         return 1;
       }
       for (const c of p.collisions) {
@@ -318,23 +329,12 @@ async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
   const draft = draftOf(ctx);
   let resolved = false;
   try {
-    const { source } = getSet(draft.registry, id) as SkillsCliSet;
-    const available = listSource(ctx.paths, source);
-    const replan = () =>
-      planCli({
-        paths: ctx.paths,
-        setId: id,
-        set: getSet(draft.registry, id) as SkillsCliSet,
-        available,
-        lock: readSkillLock(ctx.paths.skillLock),
-        state: readState(ctx.paths.stateDir),
-        pluginSkills: pluginSkillNames(ctx.paths.claudePlugins),
-      });
+    const replan = cliPlanner(draft, id);
     let p = replan();
     while (p.collisions.length) {
       if (flags.yes || !isInteractive()) {
         reportCli(p, []);
-        printResolveHints(id, false, p.collisions);
+        printResolveHints(ctx.paths, id, false, p.collisions);
         return 1;
       }
       for (const c of p.collisions) {
@@ -361,11 +361,16 @@ async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
       p = replan();
     }
     const lock = readSkillLock(ctx.paths.skillLock);
+    // What this set will own once applied: everything it wants that is (or
+    // will be) installed, whether or not upstream changed.
+    const ownedAfter = [...p.add, ...p.update].sort();
     const upstream = upstreamChanges(lock, p.update);
     p.update = [...upstream.changed, ...upstream.unknown];
     reportCli(p, upstream.unknown);
     const links = linkDirsFor(ctx.paths, getSet(draft.registry, id));
-    const work = p.add.length > 0 || p.update.length > 0 || p.remove.length > 0 || resolved;
+    const before = readState(ctx.paths.stateDir).cli?.[id]?.skills ?? [];
+    const recordChanged = ownedAfter.join() !== [...before].sort().join();
+    const work = p.add.length > 0 || p.update.length > 0 || p.remove.length > 0 || resolved || recordChanged;
     if (!(await confirmPlan(flags, work, resolved))) return 0;
     // The prompt may have sat for a while: check again right before npx
     // skills runs, since it overwrites whatever is at those paths.
@@ -375,6 +380,9 @@ async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
       throw new Error(`Something changed since the plan was made:\n  ${fresh.map((c) => `${c.name} now collides with ${c.holder}`).join("\n  ")}`);
     }
     applyCli(ctx.paths, p, links);
+    const state = readState(ctx.paths.stateDir);
+    state.cli = { ...(state.cli ?? {}), [id]: { syncedAt: new Date().toISOString(), skills: ownedAfter } };
+    writeState(ctx.paths.stateDir, state);
     if (resolved) ctx.saveRegistry(draft.registry);
     ctx.registry = draft.registry;
     console.log("  applied.");
@@ -406,6 +414,7 @@ function reportCli(p: CliPlan, unknown: string[]): void {
   printItems("can't tell", unknown);
   printItems("removed", p.remove);
   printItems("unselected", p.unselected);
+  printItems("left alone", p.others);
   for (const c of p.collisions) console.log(`  ✗ ${c.name} collides with ${c.holder}`);
   for (const w of p.warnings) console.log(`  ⚠ ${w}`);
 }
@@ -494,26 +503,8 @@ async function resolveInteractively(
   return "draft";
 }
 
-type Resolution = { exclude: true } | { to: string; reason: string } | { undo: true };
-
 function setResolution(ctx: Ctx, id: string, original: string, r: Resolution): void {
-  const set = getSet(ctx.registry, id);
-  if (!isManaged(set)) {
-    // npx skills owns these names; skillport can only leave one out.
-    if ("to" in r) throw new Error(`"${id}" is a skills-cli set; its names belong to npx skills. Use --exclude, or rename the other side.`);
-    set.exclude = (set.exclude ?? []).filter((n) => n !== original);
-    if ("exclude" in r) set.exclude.push(original);
-    if (!set.exclude.length) delete set.exclude;
-    ctx.saveRegistry(ctx.registry);
-    return;
-  }
-  const at = localDate();
-  set.exclude = (set.exclude ?? []).filter((n) => n !== original);
-  if (set.rename) delete set.rename[original];
-  if ("exclude" in r) set.exclude.push(original);
-  if ("to" in r) set.rename = { ...(set.rename ?? {}), [original]: { to: r.to, reason: r.reason, at } };
-  if (!set.exclude.length) delete set.exclude;
-  if (set.rename && !Object.keys(set.rename).length) delete set.rename;
+  applyResolution(ctx.registry, id, original, r);
   ctx.saveRegistry(ctx.registry);
 }
 
@@ -545,13 +536,7 @@ async function resolveCmd(ctx: Ctx, args: string[], rest: string[], flags: Flags
     return renamed ? `renamed to ${renamed}` : e.exclude?.includes(skill) ? "excluded" : "installed as is";
   };
   console.log(`Plan: ${id}/${skill}: ${show(ctx.registry)} → ${show(draft.registry)} (in ${ctx.paths.registry})`);
-  if (flags.dryRun) {
-    console.log("dry run: registry unchanged.");
-    return 0;
-  }
-  const refuse = needsYes(flags);
-  if (refuse) throw new Error(refuse);
-  if (!flags.yes && !(await confirm("Save it?"))) return 0;
+  if (!(await confirmChange(flags, "Save it?", "dry run: registry unchanged."))) return 0;
   ctx.registry = draft.registry;
   ctx.saveRegistry(ctx.registry);
   console.log(`Recorded. Run: skl update ${id}`);
@@ -568,6 +553,7 @@ function draftOf(ctx: Ctx): Ctx {
  * sets can rename their own skill; any set can be the "other side".
  */
 function printResolveHints(
+  paths: Paths,
   setId: string,
   renamable: boolean,
   collisions: { name: string; original?: string; kind: HolderKind; holderId?: string }[],
@@ -580,7 +566,11 @@ function printResolveHints(
       console.log(`    skl resolve ${setId} ${name} --rename <name> -y`);
     }
     console.log(`    skl resolve ${setId} ${name} --exclude -y`);
-    if (c.kind === "set" && c.holderId) console.log(`    skl resolve ${c.holderId} ${c.name} --rename <name> -y   (then: skl update ${c.holderId})`);
+    if (c.kind === "set" && c.holderId) {
+      // Rules are keyed by the vendor's name, which differs if that set renamed it already.
+      const theirs = readState(paths.stateDir).sets[c.holderId]?.skills[c.name]?.original ?? c.name;
+      console.log(`    skl resolve ${c.holderId} ${theirs} --rename <name> -y   (then: skl update ${c.holderId})`);
+    }
   }
 }
 
@@ -614,7 +604,7 @@ async function check(ctx: Ctx, ids: string[]): Promise<number> {
     const set = getSet(ctx.registry, id);
     try {
       if (!isManaged(set)) {
-        checkCli(ctx, id, set);
+        checkCli(ctx, id);
         continue;
       }
       if (!runsUnattended(set)) {
@@ -633,7 +623,10 @@ async function check(ctx: Ctx, ids: string[]): Promise<number> {
             continue;
           }
           if (latest === pin.version) {
-            console.log(`\n■ ${id}\n  up to date (${set.package} is the latest).`);
+            // Same version, but other sets or folders may have changed since:
+            // plan it to report collisions and edits.
+            report(fetchSet(ctx, id, set, staging, false)());
+            console.log(`  ${set.package} is the latest.`);
             continue;
           }
           const upgraded: ManagedSet = { ...set, package: `${pin.name}@${latest}` };
@@ -662,22 +655,30 @@ async function check(ctx: Ctx, ids: string[]): Promise<number> {
   return failed ? 1 : 0;
 }
 
-function checkCli(ctx: Ctx, id: string, set: SkillsCliSet): void {
-  const lock = readSkillLock(ctx.paths.skillLock);
-  const p = planCli({
-    paths: ctx.paths,
-    setId: id,
-    set,
-    available: listSource(ctx.paths, set.source),
-    lock,
-    state: readState(ctx.paths.stateDir),
-  });
-  const upstream = upstreamChanges(lock, p.update);
+function checkCli(ctx: Ctx, id: string): void {
+  const p = cliPlanner(ctx, id)();
+  const upstream = upstreamChanges(readSkillLock(ctx.paths.skillLock), p.update);
   p.update = [...upstream.changed, ...upstream.unknown];
   reportCli(p, upstream.unknown);
   for (const [name, url] of Object.entries(upstream.links)) console.log(`    ${name}: ${url}`);
   if (upstream.unknown.length) console.log("  can't tell = not on GitHub, or GitHub did not answer; update re-fetches them.");
   if (!p.add.length && !p.update.length && !p.remove.length) console.log("  up to date.");
+}
+
+/** Plan a skills-cli set: lists its source once, re-reads lock and state each call. */
+function cliPlanner(ctx: Ctx, id: string): () => CliPlan {
+  const { source } = getSet(ctx.registry, id) as SkillsCliSet;
+  const available = listSource(ctx.paths, source);
+  return () =>
+    planCli({
+      paths: ctx.paths,
+      setId: id,
+      set: getSet(ctx.registry, id) as SkillsCliSet,
+      available,
+      lock: readSkillLock(ctx.paths.skillLock),
+      state: readState(ctx.paths.stateDir),
+      pluginSkills: pluginSkillNames(ctx.paths.claudePlugins),
+    });
 }
 
 function status(ctx: Ctx): number {
@@ -748,13 +749,7 @@ async function doctor(ctx: Ctx, fix: boolean, flags: Flags): Promise<number> {
   }
   if (!fixable.length) return 1;
   console.log(`\nPlan: fix the ${count(fixable.length, "problem")} marked •; moved copies go to ${path.join(ctx.paths.stateDir, "trash")}.`);
-  if (flags.dryRun) {
-    console.log("dry run: nothing changed.");
-    return 0;
-  }
-  const refuse = needsYes(flags);
-  if (refuse) throw new Error(refuse);
-  if (!flags.yes && !(await confirm("Fix them?"))) return 0;
+  if (!(await confirmChange(flags, "Fix them?", "dry run: nothing changed."))) return 0;
   for (const f of fixable) {
     f.fix!();
     console.log(`  ✓ ${f.message}`);
@@ -788,21 +783,23 @@ function diff(ctx: Ctx, id: string | undefined, skill: string | undefined): numb
 async function remove(ctx: Ctx, id: string | undefined, flags: Flags): Promise<number> {
   const set = getSet(ctx.registry, id);
   const state = readState(ctx.paths.stateDir);
+  // A skills-cli set removes only what it recorded installing; other skills
+  // from the same source (yours by hand, or older) are left alone.
+  const recorded = new Set(state.cli?.[id!]?.skills ?? []);
   const names = isManaged(set)
     ? Object.keys(state.sets[id!]?.skills ?? {})
-    : lockedFor(readSkillLock(ctx.paths.skillLock), set.source);
+    : lockedFor(readSkillLock(ctx.paths.skillLock), set.source).filter((n) => recorded.has(n));
   const how = isManaged(set) ? "moved to trash, links removed" : "removed through npx skills";
   console.log(`Remove set "${id}": ${count(names.length, "skill")} ${how}; the set is unregistered.`);
-  if (flags.dryRun) {
-    console.log("dry run: nothing removed.");
-    return 0;
-  }
-  const refuse = needsYes(flags);
-  if (refuse) throw new Error(refuse);
-  if (!flags.yes && !(await confirm("Continue?"))) return 0;
+  if (!(await confirmChange(flags, "Continue?", "dry run: nothing removed."))) return 0;
   // Re-read after the prompt so what is removed is what is there now.
   if (isManaged(set)) removeManaged(ctx.paths, id!, readState(ctx.paths.stateDir));
-  else if (names.length) applyCli(ctx.paths, { setId: id!, source: set.source, add: [], update: [], remove: names, unselected: [], collisions: [], warnings: [] }, []);
+  else {
+    if (names.length) applyCli(ctx.paths, { setId: id!, source: set.source, add: [], update: [], remove: names, unselected: [], collisions: [], warnings: [], others: [] }, []);
+    const after = readState(ctx.paths.stateDir);
+    if (after.cli) delete after.cli[id!];
+    writeState(ctx.paths.stateDir, after);
+  }
   delete ctx.registry.sets[id!];
   ctx.saveRegistry(ctx.registry);
   console.log("Done.");

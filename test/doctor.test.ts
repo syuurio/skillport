@@ -143,3 +143,13 @@ test("a rename made against an unowned folder is not stale while that folder exi
   fs.rmSync(path.join(w.paths.skillsDir, "loose"), { recursive: true });
   assert.equal(stale().length, 1);
 });
+
+test("fixing a stray copy in ~/.claude/skills puts our link in its place", () => {
+  const w = world();
+  const claude = w.paths.links[0];
+  fs.unlinkSync(path.join(claude, "animate"));
+  fs.cpSync(w.animate, path.join(claude, "animate"), { recursive: true });
+  const f = diagnose(w.paths, w.registry, w.state, {}).find((x) => x.kind === "stray-copy" && x.message.includes(".claude"));
+  f?.fix?.();
+  assert.equal(fs.readlinkSync(path.join(claude, "animate")), w.animate);
+});

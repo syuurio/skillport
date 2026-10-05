@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { defaultPaths } from "../src/registry.ts";
+import { defaultPaths, readRegistry } from "../src/registry.ts";
 import { agentArgs, lockedFor, normalizeSource, parseList, planCli } from "../src/skillscli.ts";
 import type { LockEntry, State } from "../src/state.ts";
 
@@ -48,7 +48,11 @@ test("planCli splits add / update / remove / unselected and refuses collisions",
   fs.mkdirSync(path.join(paths.skillsDir, "loose"), { recursive: true });
   const entry = (source: string): LockEntry => ({ source, skillPath: "", skillFolderHash: "", updatedAt: "" });
   const lock = { tdd: entry("mattpocock/skills"), old: entry("https://github.com/mattpocock/skills.git"), other: entry("someone/else") };
-  const state: State = { version: 1, sets: { emil: { syncedAt: "", skills: { prototype: { hash: "", installed: "", updatedAt: "" } } } } };
+  const state: State = {
+    version: 1,
+    sets: { emil: { syncedAt: "", skills: { prototype: { hash: "", installed: "", updatedAt: "" } } } },
+    cli: { matt: { syncedAt: "", skills: ["tdd", "old"] } },
+  };
   const p = planCli({
     paths,
     setId: "matt",
@@ -83,4 +87,29 @@ test("planCli refuses to let npx skills replace your own symlink in ~/.claude/sk
     state: { version: 1, sets: {} },
   });
   assert.match(p.collisions[0]?.holder ?? "", /which skillport did not create/);
+});
+
+test("S2: a skills-cli set never removes what it did not install; one set per source", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "skillport-own-"));
+  const paths = defaultPaths(home);
+  const entry = (source: string): LockEntry => ({ source, skillPath: "", skillFolderHash: "", updatedAt: "" });
+  const lock = { tdd: entry("mattpocock/skills"), grill: entry("mattpocock/skills"), mine: entry("mattpocock/skills") };
+  const plan = (owned: string[]) =>
+    planCli({
+      paths,
+      setId: "m",
+      set: { type: "skills-cli", source: "mattpocock/skills", skills: ["tdd"] },
+      available: ["tdd", "grill", "mine"],
+      lock,
+      state: { version: 1, sets: {}, cli: { m: { syncedAt: "", skills: owned } } },
+    });
+  // First run: nothing recorded, so grill and mine are someone else's.
+  assert.deepEqual(plan([]).remove, []);
+  assert.deepEqual(plan([]).others, ["grill", "mine"]);
+  // The set installed grill before and no longer wants it: that one goes.
+  assert.deepEqual(plan(["tdd", "grill"]).remove, ["grill"]);
+
+  fs.mkdirSync(path.dirname(paths.registry), { recursive: true });
+  fs.writeFileSync(paths.registry, JSON.stringify({ version: 1, sets: { a: { type: "skills-cli", source: "mattpocock/skills" }, b: { type: "skills-cli", source: "https://github.com/mattpocock/skills" } } }));
+  assert.throws(() => readRegistry(paths.registry), /already used by set "a"/);
 });

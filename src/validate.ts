@@ -22,9 +22,18 @@ export function isPackageName(name: string): boolean {
   return /^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(name);
 }
 
-// Flag names that carry a credential: --token, --api-key, --access-token,
-// --license-key, --secret, --auth, --password, ...
-const SECRET_FLAG = /^(--?[\w-]*(?:token|key|secret|auth|password|passwd|credential)[\w-]*)$/i;
+// A flag carries a credential when one of its words (split on - and _) is
+// one of these: --token, --api-key, --access-token, --license, --pat,
+// --secret, --auth, --password. Whole words only, so --author or --keyboard
+// do not match; --no-* switches never take a value.
+const SECRET_WORDS = new Set([
+  "token", "key", "apikey", "secret", "auth", "password", "passwd", "credential", "credentials", "license", "pat",
+]);
+
+function isSecretFlag(flag: string): boolean {
+  if (!/^--?[A-Za-z]/.test(flag) || /^--no-/.test(flag)) return false;
+  return flag.replace(/^-+/, "").toLowerCase().split(/[-_]/).some((w) => SECRET_WORDS.has(w));
+}
 // Values that are clearly not a credential: a path or a URL.
 const NOT_A_SECRET = /^(\.{0,2}\/|~\/|https?:\/\/)/;
 
@@ -38,7 +47,7 @@ export function extractSecret(argv: string[]): { command: string[]; secret?: str
   for (let i = 0; i < command.length; i++) {
     const eq = command[i].indexOf("=");
     const flag = eq > 0 ? command[i].slice(0, eq) : command[i];
-    if (!SECRET_FLAG.test(flag)) continue;
+    if (!isSecretFlag(flag)) continue;
     const value = eq > 0 ? command[i].slice(eq + 1) : command[i + 1];
     if (!value || value === "{secret}" || value.startsWith("-") || NOT_A_SECRET.test(value)) continue;
     if (eq > 0) command[i] = `${flag}={secret}`;
@@ -48,12 +57,49 @@ export function extractSecret(argv: string[]): { command: string[]; secret?: str
   return { command };
 }
 
+/** `owner/repo` for GitHub sources in any spelling; other sources as given. */
+export function normalizeSource(source: string): string {
+  const m = /^(?:https?:\/\/github\.com\/|git@github\.com:)?([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/.exec(source.trim());
+  return m ? m[1] : source.trim();
+}
+
 /** A path inside a folder: relative, no `..` segments. */
 function isInside(p: unknown): boolean {
   return typeof p === "string" && p.length > 0 && !p.startsWith("/") && !p.split("/").includes("..");
 }
 
 const isWords = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
+
+/** Shapes of the per-set lists and rules; a wrong shape would silently change what installs. */
+function validateCommon(set: SkillSet, problems: string[]): void {
+  const raw = set as unknown as Record<string, unknown>;
+  for (const key of ["skills", "exclude"] as const) {
+    if (raw[key] !== undefined && !(isWords(raw[key]) && (raw[key] as string[]).every(isValidSkillName))) {
+      problems.push(`${key} must be a list of skill names`);
+    }
+  }
+  if (set.type === "skills-cli") return;
+  if (raw.prefix !== undefined && !(typeof raw.prefix === "string" && isValidSkillName(raw.prefix))) {
+    problems.push("prefix must be a-z, 0-9 and single hyphens");
+  }
+  if (raw.rename !== undefined) {
+    const rules = raw.rename;
+    const ok =
+      typeof rules === "object" &&
+      rules !== null &&
+      !Array.isArray(rules) &&
+      Object.entries(rules).every(
+        ([from, r]) =>
+          isValidSkillName(from) &&
+          typeof r === "object" &&
+          r !== null &&
+          typeof (r as { to?: unknown }).to === "string" &&
+          isValidSkillName((r as { to: string }).to) &&
+          typeof (r as { reason?: unknown }).reason === "string",
+      );
+    if (!ok) problems.push('rename must map skill names to { "to": <skill name>, "reason": <text>, "at": <date> }');
+  }
+}
 
 /** Problems with one entry; empty when it is usable. `linkIds` are the known link targets. */
 export function validateEntry(id: string, set: SkillSet, linkIds: string[]): string[] {
@@ -62,6 +108,7 @@ export function validateEntry(id: string, set: SkillSet, linkIds: string[]): str
   if (set.links !== undefined && !(isWords(set.links) && set.links.every((l) => linkIds.includes(l)))) {
     problems.push(`links must be a list of: ${linkIds.join(", ")}`);
   }
+  validateCommon(set, problems);
   switch (set.type) {
     case "installer":
       if (!isWords(set.command) || set.command.length === 0) {

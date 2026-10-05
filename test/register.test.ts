@@ -5,8 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import type { Registry, SkillSet } from "../src/registry.ts";
-import { countSkillRoots, isPinned, packageIndex, splitCommand, suggestUnattendedFlag, validateSet } from "../src/register.ts";
-import { extractSecret } from "../src/validate.ts";
+import { countSkillRoots, packageIndex, splitCommand, suggestUnattendedFlag, validateSet } from "../src/register.ts";
+import { extractSecret, isPinnedSpec as isPinned } from "../src/validate.ts";
 import { localDate } from "../src/transform.ts";
 
 const empty: Registry = { version: 1, sets: {} };
