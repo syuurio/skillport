@@ -64,7 +64,7 @@ const looksLikePlainUrl = (v: string) => /^https?:\/\//.test(v) && !/^https?:\/\
 // prefixes (GitHub, GitLab, npm, Slack, Anthropic, OpenAI, Stripe, AWS), not
 // preceded by a letter or digit so "risk-assess..." is not "sk-...".
 const TOKEN_SHAPE =
-  /(?<![A-Za-z0-9])(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|npm_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|sk-(?:ant-[a-z0-9]+-|proj-)?[A-Za-z0-9_-]{20,}|sk_(?:live|test)_[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16})/;
+  /(?<![A-Za-z0-9])(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|npm_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|sk-ant-[a-z0-9]+-[A-Za-z0-9_-]{20,}|sk-proj-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9]{20,}|sk_(?:live|test)_[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16})/;
 // user:password@ in a URL, anywhere in the word (--registry=https://u:p@h/).
 const URL_PASSWORD = /([a-z][a-z0-9+.-]*:\/\/[^/:@\s]+:)([^/@\s]+)(@)/i;
 // An Authorization header value, anywhere in the word (--header=Authorization: Bearer x).
@@ -95,7 +95,23 @@ export function usesSecret(set: { command?: unknown; unattended?: unknown }): bo
 const ENV_WORD = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/;
 // Names a prefix may not set: they are skillport's sandbox (HOME, PATH, npm's
 // log and cache settings) or change what code runs (NODE_OPTIONS, DYLD_*).
-const RESERVED_ENV = /^(HOME|PATH|TMPDIR|NODE_OPTIONS|NODE_PATH|LD_.*|DYLD_.*|npm_config_.*|NPM_CONFIG_.*)$/;
+const RESERVED_ENV = /^(HOME|PATH|TMPDIR|NODE_OPTIONS|NODE_PATH|LD_.*|DYLD_.*)$/;
+
+/**
+ * Whether an environment prefix may not set `name`. The one list, for both
+ * validation and running. npm reads its settings case-insensitively, so
+ * npm_config_* is matched in any case. Pass-through settings such as
+ * HTTPS_PROXY or LANG are allowed: a prefix overriding them is legitimate.
+ */
+export function isReservedEnv(name: string): boolean {
+  return RESERVED_ENV.test(name) || /^npm_config_/i.test(name);
+}
+
+/** The environment prefix of a set's run: leading NAME=value words of command + unattended, as acquire runs them. */
+export function runEnvNames(set: { command?: unknown; unattended?: unknown }): string[] {
+  const words = [...(isWords(set.command) ? set.command : []), ...(isWords(set.unattended) ? set.unattended : [])];
+  return leadingEnv(words).env.map(([n]) => n);
+}
 
 /** Split leading NAME=value words off a command. The one rule for both validation and running. */
 export function leadingEnv(words: string[]): { env: [string, string][]; rest: string[] } {
@@ -233,8 +249,8 @@ export function validateEntry(id: string, set: SkillSet, linkIds: string[]): str
       if (usesSecret(set) && set.secret !== "keychain") {
         problems.push('{secret} is used but "secret" is not "keychain"');
       }
-      for (const [name] of leadingEnv(set.command).env) {
-        if (RESERVED_ENV.test(name)) problems.push(`command may not set ${name}: skillport controls it for the sandbox`);
+      for (const name of runEnvNames(set)) {
+        if (isReservedEnv(name)) problems.push(`command may not set ${name}: skillport controls it for the sandbox`);
       }
       if (extractSecret(set.command).secret !== undefined) {
         problems.push("command contains a literal token; use {secret} and store it with skl secret");

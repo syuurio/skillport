@@ -8,7 +8,7 @@ import { npmPack, realFolderPath } from "../src/acquire.ts";
 import { acquireLock } from "../src/apply.ts";
 import { diagnose } from "../src/doctor.ts";
 import { defaultPaths, readRegistry } from "../src/registry.ts";
-import { extractSecret, isPinnedSpec, normalizeSource, validateEntry } from "../src/validate.ts";
+import { extractSecret, isPinnedSpec, normalizeSource, sourceProblem, validateEntry } from "../src/validate.ts";
 
 const tmp = (label: string) => fs.mkdtempSync(path.join(os.tmpdir(), `skillport-sec-${label}-`));
 
@@ -258,4 +258,26 @@ test("round 7: {secret} in unattended needs secret; env prefixes may not set san
   assert.match(v({ type: "installer", command: ["HOME=/Users/me", "npx", "i"] }), /may not set HOME/);
   assert.match(v({ type: "installer", command: ["npm_config_logs_max=5", "npx", "i"] }), /may not set npm_config_logs_max/);
   assert.equal(v({ type: "installer", command: ["GITHUB_TOKEN={secret}", "npx", "i"], secret: "keychain" }), "");
+});
+
+test("round 8: sk- inside ordinary names is not a key; reserved env is one list for validation and running", async () => {
+  assert.equal(extractSecret(["npx", "-y", "@acme/sk-design-system-installer"]).secret, undefined);
+  assert.equal(sourceProblem("acme/sk-design-system-skills"), undefined);
+  assert.equal(extractSecret(["npx", "x@1.0.0", "sk-AbCdEfGhIjKlMnOpQrStUvWx"]).secret, "sk-AbCdEfGhIjKlMnOpQrStUvWx");
+  const v = (set: unknown) => validateEntry("x", set as never, []).join();
+  // Allowed: pass-through settings a prefix may override.
+  assert.equal(v({ type: "installer", command: ["HTTPS_PROXY=http://proxy:8080", "LANG=C", "npx", "i@1.0.0"], unattended: [] }), "");
+  // Refused in any case, and wherever the run's prefix ends up.
+  assert.match(v({ type: "installer", command: ["Npm_Config_Logs_Max=5", "npx", "i"] }), /may not set Npm_Config_Logs_Max/);
+  assert.match(v({ type: "installer", command: ["X=1"], unattended: ["NODE_PATH=/evil", "npx", "i"] }), /may not set NODE_PATH/);
+  // Running: the allowed prefix actually runs.
+  const { acquire } = await import("../src/acquire.ts");
+  const staging = tmp("proxy");
+  const out = path.join(staging, "seen");
+  acquire("p", {
+    type: "installer",
+    command: ["HTTPS_PROXY=http://proxy:8080", "node", "-e", `const fs=require("fs"),p=require("os").homedir()+"/.claude/skills/a";fs.mkdirSync(p,{recursive:true});fs.writeFileSync(p+"/SKILL.md","x");fs.writeFileSync(${JSON.stringify(out)},process.env.HTTPS_PROXY)`],
+    unattended: [],
+  }, staging, { interactive: false });
+  assert.equal(fs.readFileSync(out, "utf8"), "http://proxy:8080");
 });

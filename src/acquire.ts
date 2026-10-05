@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { readSecret } from "./keychain.ts";
-import { isPackageName, isPinnedSpec, leadingEnv, usesSecret } from "./validate.ts";
+import { isPackageName, isPinnedSpec, isReservedEnv, leadingEnv, usesSecret } from "./validate.ts";
 import type { InstallerSet, ManagedSet, NpmSet } from "./registry.ts";
 
 const INSTALLER_TIMEOUT_MS = 5 * 60 * 1000;
@@ -92,7 +92,7 @@ function runInstaller(
   // names the sandbox controls; checked again here in case it was bypassed.
   const { env, rest: argv } = leadingEnv(words);
   const extraEnv = Object.fromEntries(env);
-  const reserved = Object.keys(extraEnv).filter((n) => n in sandboxEnv(fakeHome, staging) || /^(npm_config_|NPM_CONFIG_|NODE_OPTIONS$|DYLD_|LD_)/.test(n));
+  const reserved = Object.keys(extraEnv).filter(isReservedEnv);
   if (reserved.length) throw new Error(`"${id}" may not set ${reserved.join(", ")}: skillport controls them for the sandbox.`);
   if (!argv.length) throw new Error(`"${id}" has no command to run.`);
 
