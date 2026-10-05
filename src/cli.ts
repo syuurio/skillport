@@ -129,12 +129,19 @@ async function register(ctx: Ctx, id: string | undefined, rest: string[]): Promi
   if (secret) {
     storeSecretValue(id, secret);
     log.success(`Token stored in Keychain (service skillport, account ${id}).`);
-  } else if (set.type === "installer" && set.secret === "keychain") {
-    log.warn(`Store its token with: skl secret ${id}`);
   }
-  const unattended = set.type !== "installer" || set.unattended !== undefined;
-  outro(`Next: skl add ${id} -y --dry-run   then   skl add ${id}${unattended ? "" : " -i"}`);
-  return 0;
+  log.success(`Registered "${id}".`);
+  if (set.type === "skills-cli") {
+    outro("GitHub sources install once skills-cli support lands (milestone M2).");
+    return 0;
+  }
+  const prompt = set.type === "installer" ? "Install now? The installer's own questions come next." : "Install now?";
+  if (!(await confirm(prompt))) {
+    outro(`Install later with: skl add ${id}`);
+    return 0;
+  }
+  outro(set.type === "installer" ? `Running ${id}'s installer in a sandbox` : `Installing ${id}`);
+  return sync(ctx, id, { yes: false, dryRun: false, interactive: set.type === "installer" });
 }
 
 function saveSet(ctx: Ctx, id: string, set: SkillSet): number {

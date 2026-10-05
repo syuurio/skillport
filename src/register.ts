@@ -3,8 +3,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { npmEnv } from "./acquire.ts";
-import { ask, askSecret, choose, confirm, note, spinner } from "./prompt.ts";
-import type { InstallerSet, NpmSet, Registry, SkillSet, SkillsCliSet } from "./registry.ts";
+import { hasSecret } from "./keychain.ts";
+import { ask, askSecret, choose, chooseMany, confirm, log, spinner } from "./prompt.ts";
+import { DEFAULT_LINKS, LINK_TARGETS, type InstallerSet, type NpmSet, type Registry, type SkillSet, type SkillsCliSet } from "./registry.ts";
 
 // `skl register`: add a set to the registry by answering questions, or from
 // `--json` for scripts and agents. Either way the entry is validated before
@@ -47,6 +48,9 @@ export function validateSet(id: string, set: SkillSet, reg: Registry): string[] 
   if (!ID_RE.test(id)) problems.push(`set id "${id}" must use a-z, 0-9 and single hyphens`);
   if (reg.sets[id]) problems.push(`set "${id}" already exists`);
   const isWords = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === "string");
+  if (set.links !== undefined && !(isWords(set.links) && set.links.every((l) => l in LINK_TARGETS))) {
+    problems.push(`links must be a list of: ${Object.keys(LINK_TARGETS).join(", ")}`);
+  }
   switch (set.type) {
     case "installer":
       if (!isWords(set.command) || set.command.length === 0) problems.push("command must be a non-empty list of words");
@@ -165,12 +169,56 @@ export interface WizardResult {
   secret?: string;
 }
 
+/**
+ * Run `<command> --help` in a throwaway HOME (token words dropped) and pick
+ * out a flag that usually means "don't ask": -y, --yes, --non-interactive,
+ * --no-input. A suggestion only; you confirm it.
+ */
+export function suggestUnattendedFlag(helpText: string): string | null {
+  for (const flag of ["--yes", "-y", "--non-interactive", "--no-input"]) {
+    if (new RegExp(`(^|[\\s,(])${flag.replace(/-/g, "\\-")}(?=[\\s,)=]|$)`, "m").test(helpText)) {
+      return flag === "--yes" && /(^|[\s,(])-y(?=[\s,)]|$)/m.test(helpText) ? "-y" : flag;
+    }
+  }
+  return null;
+}
+
+function readHelp(command: string[]): string {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "skillport-help-"));
+  try {
+    const argv = [...command.filter((a) => !a.includes("{secret}")), "--help"];
+    const r = spawnSync(argv[0], argv.slice(1), {
+      cwd: tmp,
+      encoding: "utf8",
+      env: { ...process.env, HOME: tmp, ...npmEnv(tmp) },
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 60_000,
+    });
+    return `${r.stdout ?? ""}${r.stderr ?? ""}`;
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+const SCOPE_FLAG = /^--?(global|user|g)$/;
+
+async function askLinks(): Promise<string[] | undefined> {
+  const links = await chooseMany(
+    "Which agents should get these skills? (space to toggle, enter to confirm)",
+    Object.entries(LINK_TARGETS).map(([value, t]) => ({ value, label: t.label, hint: "symlink" })),
+    DEFAULT_LINKS,
+  );
+  log.info("Codex, Cursor and OpenCode read ~/.agents/skills directly; they get every skill.");
+  const isDefault = links.length === DEFAULT_LINKS.length && links.every((l) => DEFAULT_LINKS.includes(l));
+  return isDefault ? undefined : links;
+}
+
 /** Arrow-key wizard for one registry entry. Throws Cancelled on Esc / Ctrl-C. */
 export async function askForSet(id: string): Promise<WizardResult> {
   const type = await choose(`What kind of source is "${id}"?`, [
     { value: "installer", label: "Installer", hint: "the vendor gave you a command such as npx @vendor/install …" },
     { value: "npm", label: "npm package", hint: "skill files ship inside a package; nothing is run" },
-    { value: "skills-cli", label: "GitHub repo", hint: "installed through npx skills (not supported yet)" },
+    { value: "skills-cli", label: "GitHub repo", disabled: "not supported yet" },
   ]);
 
   if (type === "npm") {
@@ -183,19 +231,17 @@ export async function askForSet(id: string): Promise<WizardResult> {
     s.stop(roots.length ? `Found skills in ${roots.length} folder${roots.length === 1 ? "" : "s"}` : "No SKILL.md found");
     let where = "";
     if (roots.length) {
-      where = await choose(
-        "Which folder holds the skills?",
-        [
-          ...roots.map((r) => {
-            const [root, n] = r.split("|");
-            return { value: root, label: root, hint: `${n} skill${n === "1" ? "" : "s"}` };
-          }),
-          { value: "", label: "Somewhere else…" },
-        ],
-      );
+      where = await choose("Which folder holds the skills?", [
+        ...roots.map((r) => {
+          const [root, n] = r.split("|");
+          return { value: root, label: root, hint: `${n} skill${n === "1" ? "" : "s"}` };
+        }),
+        { value: "", label: "Somewhere else…" },
+      ]);
     }
     if (!where) where = await ask("Folder inside the package", { placeholder: "skills", validate: (v) => (v ? undefined : "Required.") });
-    return { set: { type, package: spec, path: where } satisfies NpmSet };
+    const links = await askLinks();
+    return { set: { type, package: spec, path: where, ...(links ? { links } : {}) } satisfies NpmSet };
   }
 
   if (type === "skills-cli") {
@@ -207,8 +253,9 @@ export async function askForSet(id: string): Promise<WizardResult> {
     return { set: { type, source, ...(skills.length ? { skills } : {}) } satisfies SkillsCliSet };
   }
 
-  // Installer.
-  const pasted = await ask("Paste the install command the vendor gave you", {
+  // Installer: the vendor's own questions (which skills, renames) come later,
+  // when it runs; here skillport only learns how to run it.
+  const pasted = await ask("Paste the install command the vendor gave you (with or without the token)", {
     placeholder: "npx @vendor/install --token=… --global",
     validate: (v) => {
       try {
@@ -220,7 +267,12 @@ export async function askForSet(id: string): Promise<WizardResult> {
   });
   let { command, secret } = extractSecret(splitCommand(pasted));
   if (secret) {
-    note("The token was taken out of the command and will go to Keychain.\nThe command uses {secret} in its place.", "Token");
+    log.info("Token taken out of the command; it goes to Keychain and the command uses {secret}.");
+  } else if (command.some((a) => a.includes("{secret}"))) {
+    if (!hasSecret(id)) secret = await askSecret("Token (stored in Keychain, never in the registry)");
+  } else if (hasSecret(id) && (await confirm(`A token for "${id}" is already in Keychain. Use it?`))) {
+    const flag = await ask("Flag the token goes in", { initial: "--token", validate: (v) => (/^-/.test(v) ? undefined : "Starts with -") });
+    command = [...command, `${flag}={secret}`];
   } else if (await confirm("Does the installer need a token?", false)) {
     const flag = await ask("Flag the token goes in", { initial: "--token", validate: (v) => (/^-/.test(v) ? undefined : "Starts with -") });
     secret = await askSecret("Token (stored in Keychain, never in the registry)");
@@ -229,36 +281,32 @@ export async function askForSet(id: string): Promise<WizardResult> {
   const pkg = packageIndex(command);
   if (pkg >= 0) command[pkg] = await offerPin(command[pkg]);
 
-  const runs = await choose("Can it run without asking you questions?", [
-    { value: "flags", label: "Yes, with a flag", hint: "e.g. -y or --yes" },
-    { value: "none", label: "Yes, it never asks" },
-    { value: "never", label: "No, it always asks", hint: "you run it with skl update -i" },
-  ]);
-  let unattended: string[] | undefined;
-  if (runs === "flags") unattended = splitCommand(await ask("Flag(s) for no questions", { initial: "-y", validate: (v) => (v ? undefined : "Required.") }));
-  if (runs === "none") unattended = [];
-
-  const agent = await choose("Which agent should the installer think it is installing for?", [
-    { value: ".claude", label: "Claude Code", hint: "recommended: plain skill files, nothing extra" },
-    { value: ".codex", label: "Codex", hint: "adds agents/openai.yaml" },
-    { value: ".cursor", label: "Cursor" },
-    { value: "other", label: "Other…" },
-  ]);
-  const stage = agent === "other" ? await ask("Agent folder under HOME", { placeholder: ".myagent" }) : agent;
-  const harvest = agent === "other" ? await ask("Where its skills land under HOME", { initial: `${stage}/skills` }) : `${stage}/skills`;
-
-  if (!command.some((a) => /^--?(global|user|g)$/.test(a)) && (await confirm("Does it need a flag to install for your user (e.g. --global)?", false))) {
+  if (!command.some((a) => SCOPE_FLAG.test(a)) && (await confirm("Does it need a flag to install for your user (e.g. --global)?", false))) {
     command = [...command, ...splitCommand(await ask("Scope flag", { initial: "--global" }))];
   }
-  const prefix = await ask("Prefix to offer if a skill name collides (optional)", { placeholder: id });
 
+  const s = spinner();
+  s.start("Reading the installer's --help");
+  const found = suggestUnattendedFlag(readHelp(command));
+  s.stop(found ? `It documents ${found}` : "No \"don't ask\" flag found in --help");
+  const runs = await choose("For automatic updates: how does it skip its questions?", [
+    ...(found ? [{ value: "found", label: `With ${found}`, hint: "found in --help" }] : []),
+    { value: "other", label: "With another flag…" },
+    { value: "none", label: "It never asks" },
+    { value: "never", label: "It always asks", hint: "updates then need skl update -i" },
+  ]);
+  let unattended: string[] | undefined;
+  if (runs === "found") unattended = [found!];
+  if (runs === "other") unattended = splitCommand(await ask("Flag(s)", { placeholder: "--yes", validate: (v) => (v ? undefined : "Required.") }));
+  if (runs === "none") unattended = [];
+
+  const links = await askLinks();
   const set: InstallerSet = {
     type,
     command,
     ...(unattended !== undefined ? { unattended } : {}),
     ...(command.some((a) => a.includes("{secret}")) ? { secret: "keychain" as const } : {}),
-    ...(stage !== ".claude" ? { stage: [stage], harvest } : {}),
-    ...(prefix ? { prefix } : {}),
+    ...(links ? { links } : {}),
   };
   return { set, secret };
 }

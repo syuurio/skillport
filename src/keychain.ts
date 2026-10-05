@@ -5,6 +5,11 @@ import fs from "node:fs";
 // service "skillport", account = source id.
 const SERVICE = "skillport";
 
+export function hasSecret(source: string): boolean {
+  const r = spawnSync("security", ["find-generic-password", "-s", SERVICE, "-a", source], { stdio: "ignore" });
+  return r.status === 0;
+}
+
 export function readSecret(source: string): string {
   const r = spawnSync(
     "security",

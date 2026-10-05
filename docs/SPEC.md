@@ -329,9 +329,17 @@ matt           有改動 tdd, code-review · 上游新增 implement-spec, pr（�
 3. 列出計畫：保留哪份、哪些移到 trash、哪些內容不同需要你決定。
 4. 確認後套用，寫入 state。
 
-### 7.11 `skl register <set> [--json '<entry>']`
+### 7.11 `skl register [set] [--json '<entry>']`
 
-在 registry 新增一個 set。終端機下逐題詢問：類型、指令（token 寫成 `{secret}`）、非互動旗標、偵測的 agent 目錄、撞名時的前綴；npm 問套件與路徑；skills-cli 問 repo 與 skill 清單。顯示結果並確認後才寫入。沒有終端機時用 `--json` 傳入整筆設定。寫入前驗證：set id、必要欄位、npm 版本有固定、`{secret}` 與 `secret` 一致，且拒絕把 token 明文寫進 `command`。
+方向鍵 wizard（@clack/prompts），一次完成註冊與第一次安裝：
+
+1. 類型：Installer / npm package（GitHub repo 在 M2 前不可選）。
+2. Installer：貼上 vendor 給的安裝指令。指令裡的 `--token=…` 會被抽出存進 Keychain，改寫成 `{secret}`；沒有 token 而 Keychain 已有這個 set 的 token 時，詢問是否沿用。未固定版本的套件提議固定到最新版。指令裡沒有 `--global` 之類的範圍旗標時才詢問。
+3. 在沙盒跑一次 `<command> --help`（不帶 token），找出 `-y`、`--yes`、`--non-interactive`、`--no-input`，作為「自動更新時怎麼略過問題」的預設選項。
+4. 多選要連結的 agent（目前只有已驗證的 Claude Code）；Codex、Cursor、OpenCode 直接讀 `~/.agents/skills`，只做說明。
+5. 顯示 registry 內容，確認後寫入，接著詢問是否立刻安裝：installer 會在沙盒內互動執行，**由 vendor 自己的問題**決定裝哪些 skill、要不要改名，結果寫回 registry（§5.4）。
+
+「假裝成哪個 agent」（`stage`/`harvest`）不再詢問，固定 `.claude`；需要時用 `--json` 指定。沒有終端機時用 `--json` 傳入整筆設定。寫入前驗證：set id、必要欄位、npm 版本固定、`{secret}` 與 `secret` 一致、`links` 為已知目標，且拒絕 token 明文。
 
 ### 7.10 `skl resolve <set> <skill> (--prefix [p] | --rename <name> | --exclude | --undo)`
 

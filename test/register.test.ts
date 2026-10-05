@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import type { Registry, SkillSet } from "../src/registry.ts";
-import { extractSecret, isPinned, packageIndex, splitCommand, validateSet } from "../src/register.ts";
+import { extractSecret, isPinned, packageIndex, splitCommand, suggestUnattendedFlag, validateSet } from "../src/register.ts";
 
 const empty: Registry = { version: 1, sets: {} };
 
@@ -76,4 +76,18 @@ test("packageIndex and isPinned find and judge the package an npx command runs",
   assert.ok(isPinned("foo@1.0.0"));
   assert.ok(!isPinned("@aiforui/install"));
   assert.ok(!isPinned("foo@latest"));
+});
+
+test("suggestUnattendedFlag finds the documented don't-ask flag", () => {
+  assert.equal(suggestUnattendedFlag("  -y, --yes   Non-interactive: install everything"), "-y");
+  assert.equal(suggestUnattendedFlag("Options:\n  --yes  skip prompts"), "--yes");
+  assert.equal(suggestUnattendedFlag("  --non-interactive  never prompt"), "--non-interactive");
+  assert.equal(suggestUnattendedFlag("  --yesterday  show yesterday"), null);
+  assert.equal(suggestUnattendedFlag("no flags here"), null);
+});
+
+test("validateSet checks link targets", () => {
+  assert.deepEqual(validateSet("a", { type: "npm", package: "x@1", path: "s", links: ["claude-code"] }, empty), []);
+  assert.deepEqual(validateSet("a", { type: "npm", package: "x@1", path: "s", links: [] }, empty), []);
+  assert.match(validateSet("a", { type: "npm", package: "x@1", path: "s", links: ["grok"] }, empty).join(), /links must be/);
 });
