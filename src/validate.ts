@@ -107,8 +107,9 @@ export function usesSecret(set: { command?: unknown; unattended?: unknown }): bo
 
 // Leading NAME=value words are the installer's environment, as in a shell.
 const ENV_WORD = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/;
-// Names a prefix may not set: they are skillport's sandbox (HOME, PATH, npm's
-// log and cache settings) or change what code runs (NODE_OPTIONS, DYLD_*).
+// Names a prefix may not set: they are skillport's sandbox (HOME, PATH,
+// TMPDIR) or change what code runs (NODE_OPTIONS, NODE_PATH, DYLD_*). npm
+// settings are matched in isReservedEnv.
 const RESERVED_ENV = /^(HOME|PATH|TMPDIR|NODE_OPTIONS|NODE_PATH|LD_.*|DYLD_.*)$/;
 
 /**
