@@ -64,7 +64,7 @@ const looksLikePlainUrl = (v: string) => /^https?:\/\//.test(v) && !/^https?:\/\
 // prefixes (GitHub, GitLab, npm, Slack, Anthropic, OpenAI, Stripe, AWS), not
 // preceded by a letter or digit so "risk-assess..." is not "sk-...".
 const TOKEN_SHAPE =
-  /(?<![A-Za-z0-9])(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|npm_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|sk-ant-[a-z0-9]+-[A-Za-z0-9_-]{20,}|sk-proj-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9]{20,}|sk_(?:live|test)_[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16})/;
+  /(?<![A-Za-z0-9])(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|npm_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{20,}|sk_(?:live|test)_[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16})/;
 // user:password@ in a URL, anywhere in the word (--registry=https://u:p@h/).
 const URL_PASSWORD = /([a-z][a-z0-9+.-]*:\/\/[^/:@\s]+:)([^/@\s]+)(@)/i;
 // An Authorization header value, anywhere in the word (--header=Authorization: Bearer x).
@@ -82,8 +82,18 @@ function embeddedSecret(word: string): { word: string; secret: string } | null {
   const header = AUTH_HEADER.exec(word);
   if (header) return { word: word.replace(header[0], `${header[1]}{secret}`), secret: header[2] };
   const token = TOKEN_SHAPE.exec(word);
-  if (token) return { word: word.replace(token[1], "{secret}"), secret: token[1] };
+  if (token && !looksLikeName(token[1])) return { word: word.replace(token[1], "{secret}"), secret: token[1] };
   return null;
+}
+
+/**
+ * sk- keys come in many hyphenated forms (sk-proj-, sk-ant-api03-,
+ * sk-svcacct-, sk-None-, ...), so their shape alone cannot tell them from a
+ * package or repo name such as sk-design-system-skills. Keys are random
+ * base62, so they contain upper case; names are lower case.
+ */
+function looksLikeName(match: string): boolean {
+  return match.startsWith("sk-") && !/[A-Z]/.test(match);
 }
 
 /** Whether a set's words use {secret} (command and unattended). */

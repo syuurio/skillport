@@ -245,8 +245,8 @@ test("round 7: embedded credentials behind any flag, real token formats, no fals
   const ex = (...argv: string[]) => extractSecret(["npx", "x@1.0.0", ...argv]);
   assert.deepEqual(ex("--registry=https://alice:hunter2@npm.example.com/").command.slice(-1), ["--registry=https://alice:{secret}@npm.example.com/"]);
   assert.equal(ex("--header=Authorization: Bearer abc").secret, "abc");
-  assert.equal(ex("sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWx").secret, "sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWx");
-  assert.equal(ex("sk-proj-AbCdEfGhIjKlMnOpQrStUvWxYz").secret, "sk-proj-AbCdEfGhIjKlMnOpQrStUvWxYz");
+  assert.equal(ex("sk-ant-api03-AbCd3fGh1jKlMn0pQrStUvWx").secret, "sk-ant-api03-AbCd3fGh1jKlMn0pQrStUvWx");
+  assert.equal(ex("sk-proj-AbCd3fGh1jKlMn0pQrStUvWxYz").secret, "sk-proj-AbCd3fGh1jKlMn0pQrStUvWxYz");
   assert.equal(ex("@acme/risk-assessmentframework@1.0.0").secret, undefined);
   assert.deepEqual(validateEntry("x", { type: "skills-cli", source: "acme/risk-assessmentframework" }, []), []);
 });
@@ -263,7 +263,7 @@ test("round 7: {secret} in unattended needs secret; env prefixes may not set san
 test("round 8: sk- inside ordinary names is not a key; reserved env is one list for validation and running", async () => {
   assert.equal(extractSecret(["npx", "-y", "@acme/sk-design-system-installer"]).secret, undefined);
   assert.equal(sourceProblem("acme/sk-design-system-skills"), undefined);
-  assert.equal(extractSecret(["npx", "x@1.0.0", "sk-AbCdEfGhIjKlMnOpQrStUvWx"]).secret, "sk-AbCdEfGhIjKlMnOpQrStUvWx");
+  assert.equal(extractSecret(["npx", "x@1.0.0", "sk-AbCd3fGh1jKlMn0pQrStUvWx"]).secret, "sk-AbCd3fGh1jKlMn0pQrStUvWx");
   const v = (set: unknown) => validateEntry("x", set as never, []).join();
   // Allowed: pass-through settings a prefix may override.
   assert.equal(v({ type: "installer", command: ["HTTPS_PROXY=http://proxy:8080", "LANG=C", "npx", "i@1.0.0"], unattended: [] }), "");
@@ -280,4 +280,14 @@ test("round 8: sk- inside ordinary names is not a key; reserved env is one list 
     unattended: [],
   }, staging, { interactive: false });
   assert.equal(fs.readFileSync(out, "utf8"), "http://proxy:8080");
+});
+
+test("round 8b: hyphenated sk- key forms are caught; lower-case names are not", () => {
+  for (const k of ["sk-svcacct-AbC123dEf456GhI789jKl012MnO345", "sk-None-AbC123dEf456GhI789jKl012", "sk-admin-AbC123dEf456GhI789jKl0", "sk-ant-api03-AbCdEf123GhIjKl456MnOp", "sk-proj-AbCdEf123GhIjKl456MnOpQr"]) {
+    assert.equal(extractSecret(["npx", "x@1.0.0", k]).secret, k, k);
+  }
+  // Upper case without digits is still a key: a false alarm shows up as {secret}, a miss leaks the key.
+  assert.equal(extractSecret(["npx", "x@1.0.0", "sk-AbCdEfGhIjKlMnOpQrStUvWx"]).secret, "sk-AbCdEfGhIjKlMnOpQrStUvWx");
+  assert.equal(extractSecret(["npx", "-y", "@acme/sk-design-system-installer"]).secret, undefined);
+  assert.equal(sourceProblem("acme/sk-design-system-skills-2024"), undefined);
 });
