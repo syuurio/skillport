@@ -405,3 +405,11 @@ test("round 5: an edited folder moved away by a new rename is reported as edits 
   (t.registry.sets.emil as ManagedSet).rename = { prototype: { to: "anim-prototype", reason: "x", at: "" } };
   assert.deepEqual(t.run().removedEdits, ["prototype"]);
 });
+
+test("round 6: adopt leaves a copy in a link folder the set does not link into", () => {
+  const t = sandbox({ links: [] });
+  t.skill("animate");
+  fs.cpSync(path.join(t.vendor, "animate"), path.join(t.paths.links[0], "animate"), { recursive: true });
+  const p = t.run({ adopt: true, links: [] });
+  assert.deepEqual(p.strays, []);
+});

@@ -159,13 +159,13 @@ function saveSet(ctx: Ctx, id: string, set: SkillSet): number {
   return 0;
 }
 
-/** "A newer pinned package exists" line for installer and npm sets, or null. */
 /** The pinned package of a set and the latest published version (null if unknown). */
 function versions(set: ManagedSet, staging: string): { name: string; pinned: string; latest: string | null } | null {
   const pin = pinnedPackage(set);
   return pin ? { name: pin.name, pinned: pin.version, latest: latestVersion(pin.name, staging) } : null;
 }
 
+/** "A newer pinned package exists" line for installer and npm sets, or null. */
 function versionHint(set: ManagedSet, staging: string): string | null {
   const v = versions(set, staging);
   if (!v?.latest || v.latest === v.pinned) return null;

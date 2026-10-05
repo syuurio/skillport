@@ -189,3 +189,54 @@ test("round 5: a lock folder without a pid that is not fresh is taken over", () 
   fs.utimesSync(dir, old, old);
   acquireLock(paths)();
 });
+
+test("round 6: credentials anywhere in a word are caught, and validation covers unattended and source", () => {
+  const found = (...argv: string[]) => extractSecret(["npx", "x@1.0.0", ...argv]);
+  assert.deepEqual(found("--registry", "https://me:npm_AbC123@npm.example.com/").command.slice(-1), ["https://me:{secret}@npm.example.com/"]);
+  assert.equal(found("https://me:pw@host/x").secret, "pw");
+  assert.equal(found("-t", "ghp_0123456789abcdefghij0123").secret, "ghp_0123456789abcdefghij0123");
+  assert.equal(found("--header", "Authorization: Bearer abc.def").secret, "abc.def");
+  assert.equal(found("--registry", "https://npm.example.com/").secret, undefined);
+  const v = (set: unknown) => validateEntry("x", set as never, []).join();
+  assert.match(v({ type: "installer", command: ["npx", "i"], unattended: ["--token", "ghp_0123456789abcdefghij0123"] }), /unattended contains a literal token/);
+  assert.match(v({ type: "skills-cli", source: "https://me:ghp_0123456789abcdefghij0123@github.com/o/r.git" }), /source contains a credential/);
+});
+
+test("round 6: a leading NAME={secret} word reaches the installer as environment, not argv", async () => {
+  const { acquire } = await import("../src/acquire.ts");
+  const staging = tmp("envrun");
+  const out = path.join(staging, "seen");
+  const set = {
+    type: "installer" as const,
+    command: ["DEMO_VAR=hello", "node", "-e", `const fs=require("fs"),p=require("os").homedir()+"/.claude/skills/a";fs.mkdirSync(p,{recursive:true});fs.writeFileSync(p+"/SKILL.md","x");fs.writeFileSync(${JSON.stringify(out)},process.env.DEMO_VAR)`],
+    unattended: [],
+  };
+  acquire("demo", set, staging, { interactive: false });
+  assert.equal(fs.readFileSync(out, "utf8"), "hello");
+});
+
+test("round 6: a takeover that would move a fresh pid-less lock puts it back", () => {
+  const paths = defaultPaths(tmp("fresh"));
+  const dir = path.join(paths.stateDir, "lock.d");
+  fs.mkdirSync(dir, { recursive: true });
+  const old = new Date(Date.now() - 60_000);
+  fs.utimesSync(dir, old, old);
+  // Between our staleness check and the rename, another run replaces it with a fresh lock.
+  const realRename = fs.renameSync;
+  let once = true;
+  (fs as { renameSync: typeof fs.renameSync }).renameSync = (from, to) => {
+    if (once && String(from).endsWith("lock.d")) {
+      once = false;
+      fs.rmSync(String(from), { recursive: true });
+      fs.mkdirSync(String(from));
+    }
+    return realRename(from, to);
+  };
+  try {
+    // The fresh one gets put back; on retry it is fresh and pid-less, so we wait and finally give up.
+    assert.throws(() => acquireLock(paths), /Could not take the lock/);
+  } finally {
+    (fs as { renameSync: typeof fs.renameSync }).renameSync = realRename;
+  }
+  assert.ok(fs.existsSync(dir));
+});

@@ -154,11 +154,11 @@ test("fixing a stray copy in ~/.claude/skills puts our link in its place", () =>
   assert.equal(fs.readlinkSync(path.join(claude, "animate")), w.animate);
 });
 
-test("round 5: npx skills drift is reported, and a copy in a link folder the skill does not use is never moved", () => {
+test("round 6: npx skills skills get no drift check; a copy in a link folder the skill does not use is never moved", () => {
   const w = world();
   const lockDir = w.skill(w.paths.skillsDir, "tdd");
   const lock = { tdd: { source: "a/b", skillPath: "", skillFolderHash: "0".repeat(40), updatedAt: "" } };
-  assert.ok(diagnose(w.paths, w.registry, w.state, lock).some((x) => x.kind === "edited" && x.message.includes("tdd")));
+  assert.ok(!diagnose(w.paths, w.registry, w.state, lock).some((x) => x.kind === "edited" && x.message.includes("tdd")));
   // A hand install with --copy: a real folder in ~/.claude/skills, no set records it.
   fs.cpSync(lockDir, path.join(w.paths.links[0], "tdd"), { recursive: true });
   const stray = diagnose(w.paths, w.registry, w.state, lock).find((x) => x.kind === "stray-copy" && x.message.includes(".claude"));

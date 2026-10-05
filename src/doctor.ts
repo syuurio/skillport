@@ -72,8 +72,9 @@ function ownedSkills(
       name,
       dest: path.join(paths.skillsDir, name),
       links: set ? linkDirsFor(paths, set) : [],
-      // npx skills records the folder's git tree hash: same algorithm.
-      installed: lock[name].skillFolderHash || undefined,
+      // No drift check: npx skills drops some files when it copies
+      // (metadata.json, .git, ...) and records a sha256 for non-GitHub
+      // sources, so its skillFolderHash cannot be compared with the disk.
       owner: `npx skills (${lock[name].source})`,
     });
   }
@@ -96,10 +97,10 @@ export function diagnose(paths: Paths, reg: Registry, state: State, lock: Record
   for (const o of owned) {
     const disk = fs.existsSync(o.dest) ? treeHash(o.dest) : null;
     if (o.installed && disk && disk !== o.installed) {
-      const next = o.setId
-        ? "skl update keeps it until there is something new to write, then replaces it and keeps the edit in trash"
-        : "npx skills update would overwrite it";
-      findings.push({ kind: "edited", message: `${o.name} (${o.owner}) differs from what was installed; ${next}` });
+      findings.push({
+        kind: "edited",
+        message: `${o.name} (${o.owner}) differs from what was installed; skl update keeps it until there is something new to write, then replaces it and keeps the edit in trash`,
+      });
     }
     // Links skillport owns: missing ones can be recreated.
     for (const dir of o.links) {

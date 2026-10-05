@@ -172,10 +172,13 @@ export function acquireLock(paths: Paths): () => void {
       // The owner is between mkdir and writing its pid, or just released.
     }
     if (pid && isAlive(pid)) throw new Error(`Another skillport run (pid ${pid}) is in progress.`);
+    // The lock folder's identity when we judged it: a takeover must move this
+    // one, not a fresh lock another run made in the meantime.
+    const seenAt = fs.statSync(dir, { throwIfNoEntry: false })?.mtimeMs;
     if (!pid) {
       // Its owner is between mkdir and writing the pid, or died there. Give a
       // fresh one a moment; an old one is stale.
-      const age = Date.now() - (fs.statSync(dir, { throwIfNoEntry: false })?.mtimeMs ?? Date.now());
+      const age = Date.now() - (seenAt ?? Date.now());
       if (age < 10_000) {
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
         continue;
@@ -196,13 +199,15 @@ export function acquireLock(paths: Paths): () => void {
     } catch {
       // empty lock folder: treat as the stale one
     }
-    if (moved && moved !== pid) {
+    const movedAt = fs.statSync(aside, { throwIfNoEntry: false })?.mtimeMs;
+    if ((moved && moved !== pid) || (!moved && movedAt !== seenAt)) {
       try {
         fs.renameSync(aside, dir);
       } catch {
         // A third run made a new lock meanwhile. Keep the moved one aside
         // rather than delete a live run's lock; it is cleaned up later.
       }
+      if (!moved) continue; // a fresh lock without its pid yet: try again
       throw new Error(`Another skillport run (pid ${moved}) is in progress.`);
     }
     fs.rmSync(aside, { recursive: true, force: true });

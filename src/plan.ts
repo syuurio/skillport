@@ -295,7 +295,11 @@ function findCollisions(
         continue;
       }
     }
-    for (const dir of new Set([...input.links, ...(adopting ? paths.agentDirs : [])])) {
+    // Adopting cleans copies in agent folders, but not in a link folder this
+    // set does not link into: there the copy may be the only one that agent
+    // reads (same rule as doctor).
+    const scan = adopting ? paths.agentDirs.filter((d) => input.links.includes(d) || !paths.links.includes(d)) : [];
+    for (const dir of new Set([...input.links, ...scan])) {
       const at = path.join(dir, s.name);
       if (isOursOrFree(at, dest)) continue;
       if (identical(at)) adoption.strays.push(at);

@@ -151,6 +151,9 @@ async function askLinks(): Promise<string[] | undefined> {
   return isDefault ? undefined : links;
 }
 
+const askTokenFlag = () =>
+  ask("Flag the token goes in", { initial: "--token", validate: (v) => (/^-/.test(v) ? undefined : "Starts with -") });
+
 /** Arrow-key wizard for one registry entry. Throws Cancelled on Esc / Ctrl-C. */
 export async function askForSet(id: string, paths: Paths): Promise<WizardResult> {
   const type = await choose(`What kind of source is "${id}"?`, [
@@ -200,7 +203,7 @@ export async function askForSet(id: string, paths: Paths): Promise<WizardResult>
           [],
           true,
         )
-      : list(await ask("Skills to install (comma-separated)", { placeholder: "tdd, code-review", validate: (v) => (v ? undefined : "Name at least one.") }));
+      : list(await ask("Skills to install (comma-separated)", { placeholder: "tdd, code-review", validate: (v) => (list(v).length ? undefined : "Name at least one.") }));
     const links = await askLinks();
     return { set: { type, source, ...(skills.length ? { skills } : {}), ...(links ? { links } : {}) } satisfies SkillsCliSet };
   }
@@ -223,10 +226,10 @@ export async function askForSet(id: string, paths: Paths): Promise<WizardResult>
   } else if (command.some((a) => a.includes("{secret}"))) {
     if (!hasSecret(id)) secret = await askSecret("Token (stored in Keychain, never in the registry)");
   } else if (hasSecret(id) && (await confirm(`A token for "${id}" is already in Keychain. Use it?`))) {
-    const flag = await ask("Flag the token goes in", { initial: "--token", validate: (v) => (/^-/.test(v) ? undefined : "Starts with -") });
+    const flag = await askTokenFlag();
     command = [...command, `${flag}={secret}`];
   } else if (await confirm("Does the installer need a token?", false)) {
-    const flag = await ask("Flag the token goes in", { initial: "--token", validate: (v) => (/^-/.test(v) ? undefined : "Starts with -") });
+    const flag = await askTokenFlag();
     secret = await askSecret("Token (stored in Keychain, never in the registry)");
     command = [...command, `${flag}={secret}`];
   }

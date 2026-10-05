@@ -6,9 +6,9 @@ import { withTempDir } from "./fsutil.ts";
 import { isOursOrFree } from "./apply.ts";
 import type { Paths, SkillsCliSet } from "./registry.ts";
 import { type Collision, ownerOf } from "./plan.ts";
-import type { LockEntry, State } from "./state.ts";
+import { type LockEntry, type State, readSkillLock } from "./state.ts";
 import { isValidSkillName } from "./transform.ts";
-import { normalizeSource } from "./validate.ts";
+import { githubRepo, normalizeSource } from "./validate.ts";
 
 // skills-cli sets are delegated to `npx skills`, which owns their folders,
 // links and lock entries. skillport decides what to ask it for, checks
@@ -200,7 +200,16 @@ export function applyCli(
     done("remove", p.remove);
   }
   if (p.add.length) {
-    step(["add", p.source, "-g", ...agents, ...p.add.flatMap((n) => ["-s", n]), "-y"]);
+    try {
+      step(["add", p.source, "-g", ...agents, ...p.add.flatMap((n) => ["-s", n]), "-y"]);
+    } catch (e) {
+      // Some names may have been installed before it failed: they are this
+      // set's, or they would be "left alone" forever.
+      const lock = readSkillLock(paths.skillLock);
+      const landed = p.add.filter((n) => lock[n] && normalizeSource(lock[n].source) === normalizeSource(p.source));
+      if (landed.length) done("add", landed);
+      throw e;
+    }
     done("add", p.add);
   }
   if (p.update.length) {
@@ -244,7 +253,7 @@ export function upstreamChanges(
   const links: Record<string, string> = {};
   for (const name of names) {
     const e = lock[name];
-    const repo = /github\.com[/:]([\w.-]+\/[\w.-]+?)(?:\.git)?$/.exec(e.sourceUrl ?? "")?.[1];
+    const repo = e.sourceUrl ? githubRepo(e.sourceUrl) : null;
     if (!repo || !e.skillPath) {
       unknown.push(name);
       continue;

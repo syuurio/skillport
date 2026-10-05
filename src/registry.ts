@@ -128,12 +128,13 @@ export function readRegistry(file: string): Registry {
     validateEntry(id, set, Object.keys(LINK_TARGETS)).map((p) => `${id}: ${p}`),
   );
   // One set per npx skills source: the lock cannot tell two of them apart.
-  const ids = Object.keys(reg.sets);
-  for (const [i, id] of ids.entries()) {
-    const set = reg.sets[id];
-    if (set.type !== "skills-cli" || typeof set.source !== "string") continue;
-    const twin = setUsingSource(Object.fromEntries(ids.slice(0, i).map((k) => [k, reg.sets[k]])), set.source);
-    if (twin) problems.push(`${id}: source ${set.source} is already used by set "${twin}"`);
+  const earlier: Record<string, SkillSet> = {};
+  for (const [id, set] of Object.entries(reg.sets)) {
+    if (set.type === "skills-cli" && typeof set.source === "string") {
+      const twin = setUsingSource(earlier, set.source);
+      if (twin) problems.push(`${id}: source ${set.source} is already used by set "${twin}"`);
+    }
+    earlier[id] = set;
   }
   if (problems.length) throw new Error(`${file} has problems:\n  ${problems.join("\n  ")}`);
   return reg;

@@ -83,17 +83,26 @@ function runInstaller(
   if (!opts.interactive && set.unattended === undefined) {
     throw new Error(`"${id}" declares no \`unattended\` args, so it only runs interactively: skl update ${id} -i`);
   }
-  const argv = [
+  const words = [
     ...set.command.map((a) => a.replaceAll("{secret}", secret)),
-    ...(opts.interactive ? [] : (set.unattended ?? [])),
+    ...(opts.interactive ? [] : (set.unattended ?? []).map((a) => a.replaceAll("{secret}", secret))),
   ];
+  // Leading NAME=value words are environment for the installer, as a shell
+  // would treat them (GITHUB_TOKEN={secret} npx ...).
+  const extraEnv: Record<string, string> = {};
+  while (words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0])) {
+    const w = words.shift()!;
+    extraEnv[w.slice(0, w.indexOf("="))] = w.slice(w.indexOf("=") + 1);
+  }
+  const argv = words;
+  if (!argv.length) throw new Error(`"${id}" has no command to run.`);
 
   // Installers find agent folders through os.homedir(), which follows $HOME
   // on POSIX. cwd is inside the sandbox too, so a "project" install is caught.
   const r = spawnSync(argv[0], argv.slice(1), {
     cwd: fakeHome,
     encoding: "utf8",
-    env: sandboxEnv(fakeHome, staging),
+    env: { ...sandboxEnv(fakeHome, staging), ...extraEnv },
     // Unattended runs get no stdin: a prompt reads EOF and exits instead of
     // waiting forever.
     stdio: opts.interactive ? "inherit" : ["ignore", "pipe", "pipe"],
@@ -102,7 +111,8 @@ function runInstaller(
   const output = redact(`${r.stdout ?? ""}${r.stderr ?? ""}`).trim();
   if (r.error || r.status !== 0) {
     if (!opts.interactive && (r.signal === "SIGTERM" || looksLikeAPrompt(output))) throw new NeedsInteraction(id, output);
-    throw new Error(`Installer for "${id}" exited ${r.status ?? r.signal}.\n${output}`);
+    const why = r.error ? `could not start (${redact(r.error.message)})` : `exited ${r.status ?? r.signal}`;
+    throw new Error(`Installer for "${id}" ${why}.\n${output}`);
   }
   const out = realFolderPath(fakeHome, set.harvest ?? ".claude/skills");
   // A prompt that read EOF often exits 0 after printing "cancelled",

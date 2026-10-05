@@ -65,9 +65,38 @@ const looksLikePlainUrl = (v: string) => /^https?:\/\//.test(v) && !/^https?:\/\
  * `--token={secret}` and `abc` is returned for Keychain. Handles the
  * `--token abc` form too.
  */
+// Values that are credentials wherever they appear: well-known token
+// prefixes (GitHub, GitLab, npm, Slack, Stripe/OpenAI-style, AWS keys).
+const TOKEN_SHAPE = /(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|npm_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|sk(?:_live|_test)?[-_][A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16})/;
+// user:password@ in a URL.
+const URL_PASSWORD = /^([a-z][a-z0-9+.-]*:\/\/[^/:@\s]+:)([^/@\s]+)(@.*)$/i;
+// An Authorization header value: "Authorization: Bearer <x>" or "Basic <x>".
+const AUTH_HEADER = /^(authorization:\s*(?:bearer|basic|token)\s+)(\S+)$/i;
+
+/**
+ * A credential embedded in one word, wherever it sits: a URL password, an
+ * Authorization header, or a token with a well-known prefix. Returns the
+ * word with {secret} in its place.
+ */
+function embeddedSecret(word: string): { word: string; secret: string } | null {
+  if (word.includes("{secret}")) return null;
+  const url = URL_PASSWORD.exec(word);
+  if (url) return { word: `${url[1]}{secret}${url[3]}`, secret: url[2] };
+  const header = AUTH_HEADER.exec(word);
+  if (header) return { word: `${header[1]}{secret}`, secret: header[2] };
+  const token = TOKEN_SHAPE.exec(word);
+  if (token) return { word: word.replace(token[1], "{secret}"), secret: token[1] };
+  return null;
+}
+
 export function extractSecret(argv: string[]): { command: string[]; secret?: string } {
   const command = [...argv];
   for (let i = 0; i < command.length; i++) {
+    const embedded = embeddedSecret(command[i]);
+    if (embedded) {
+      command[i] = embedded.word;
+      return { command, secret: embedded.secret };
+    }
     // An environment assignment in front of the command: GITHUB_TOKEN=ghp_… npx x
     const env = /^([A-Za-z_][A-Za-z0-9_]*)=(.+)$/.exec(command[i]);
     if (env && isSecretFlag(`--${env[1]}`) && env[2] !== "{secret}") {
@@ -87,11 +116,15 @@ export function extractSecret(argv: string[]): { command: string[]; secret?: str
   return { command };
 }
 
+/** `owner/repo` (lowercased: GitHub is case-insensitive) from a GitHub URL or shorthand; null otherwise. */
+export function githubRepo(source: string): string | null {
+  const m = /^(?:(?:git\+)?https?:\/\/github\.com\/|git@github\.com:)?([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/.exec(source.trim());
+  return m ? m[1].toLowerCase() : null;
+}
+
 /** `owner/repo` for GitHub sources in any spelling; other sources as given. */
 export function normalizeSource(source: string): string {
-  const m = /^(?:https?:\/\/github\.com\/|git@github\.com:)?([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/.exec(source.trim());
-  // GitHub owner/repo are case-insensitive.
-  return m ? m[1].toLowerCase() : source.trim();
+  return githubRepo(source) ?? source.trim();
 }
 
 /**
@@ -168,6 +201,9 @@ export function validateEntry(id: string, set: SkillSet, linkIds: string[]): str
       if (extractSecret(set.command).secret !== undefined) {
         problems.push("command contains a literal token; use {secret} and store it with skl secret");
       }
+      if (isWords(set.unattended) && extractSecret(set.unattended).secret !== undefined) {
+        problems.push("unattended contains a literal token; use {secret} and store it with skl secret");
+      }
       if (set.stage !== undefined && !(isWords(set.stage) && set.stage.every(isInside))) {
         problems.push("stage must be folders inside the sandbox HOME (relative, no ..)");
       }
@@ -182,6 +218,8 @@ export function validateEntry(id: string, set: SkillSet, linkIds: string[]): str
     case "skills-cli":
       if (!set.source || /\s/.test(set.source) || set.source.startsWith("-")) {
         problems.push("source must be one word, as passed to npx skills add");
+      } else if (embeddedSecret(set.source)) {
+        problems.push("source contains a credential; it would be passed to npx skills and stored in its lock");
       }
       break;
     default:
