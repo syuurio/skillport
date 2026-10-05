@@ -4,6 +4,7 @@ import path from "node:path";
 import { acquire, latestVersion, pinnedPackage } from "./acquire.ts";
 import { acquireLock, apply, removeManaged } from "./apply.ts";
 import { storeSecret, storeSecretValue } from "./keychain.ts";
+import { type CliPlan, applyCli, listSource, lockedFor, planCli, upstreamChanges } from "./skillscli.ts";
 import { type Collision, type Plan, plan } from "./plan.ts";
 import { pluginSkillNames } from "./plugins.ts";
 import { askForSet, validateSet } from "./register.ts";
@@ -13,6 +14,7 @@ import {
   type Paths,
   type Registry,
   type SkillSet,
+  type SkillsCliSet,
   defaultPaths,
   getSet,
   isManaged,
@@ -117,7 +119,7 @@ async function register(ctx: Ctx, id: string | undefined, rest: string[]): Promi
   } else if (ctx.registry.sets[id]) {
     throw new Error(`Set "${id}" already exists in ${ctx.paths.registry}.`);
   }
-  const { set, secret } = await askForSet(id);
+  const { set, secret } = await askForSet(id, ctx.paths);
   const problems = validateSet(id, set, ctx.registry);
   if (problems.length) throw new Error(`Not registered:\n  ${problems.join("\n  ")}`);
   note(JSON.stringify({ [id]: set }, null, 2), "Registry entry");
@@ -131,10 +133,6 @@ async function register(ctx: Ctx, id: string | undefined, rest: string[]): Promi
     log.success(`Token stored in Keychain (service skillport, account ${id}).`);
   }
   log.success(`Registered "${id}".`);
-  if (set.type === "skills-cli") {
-    outro("GitHub sources install once skills-cli support lands (milestone M2).");
-    return 0;
-  }
   const prompt = set.type === "installer" ? "Install now? The installer's own questions come next." : "Install now?";
   if (!(await confirm(prompt))) {
     outro(`Install later with: skl add ${id}`);
@@ -153,11 +151,12 @@ function saveSet(ctx: Ctx, id: string, set: SkillSet): number {
   return 0;
 }
 
-function managed(ctx: Ctx, id: string): ManagedSet | null {
-  const set = getSet(ctx.registry, id);
-  if (isManaged(set)) return set;
-  console.log(`■ ${id}: skills-cli sets are not supported yet (milestone M2).`);
-  return null;
+/** "A newer pinned package exists" line for installer and npm sets, or null. */
+function versionHint(set: ManagedSet, staging: string): string | null {
+  const pin = pinnedPackage(set);
+  const latest = pin && latestVersion(pin.name, staging);
+  if (!pin || !latest || latest === pin.version) return null;
+  return `⬆ ${pin.name}@${latest} is out (pinned ${pin.version}); bump it in the registry to upgrade.`;
 }
 
 // Staging folders hold vendor content and the installer's fake HOME, where an
@@ -203,8 +202,9 @@ function needsYes(flags: Flags): string | null {
 }
 
 async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
-  const set = managed(ctx, id);
-  if (!set) return 0;
+  const any = getSet(ctx.registry, id);
+  if (!isManaged(any)) return syncCli(ctx, id, flags);
+  const set = any;
   const interactive = flags.interactive && set.type === "installer";
   if (interactive && !isInteractive()) throw new Error("Interactive install needs a terminal; pass -y to install everything.");
   if (!interactive && !runsUnattended(set)) {
@@ -232,6 +232,8 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
       p = replan();
     }
     report(p);
+    const hint = versionHint(set, staging);
+    if (hint) console.log(`  ${hint}`);
     if (p.errors.length) return 1;
     const work = p.skills.some((s) => s.write) || p.removed.length > 0 || p.relink || p.captured !== undefined || resolved;
     if (!work) {
@@ -254,6 +256,94 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
   } finally {
     dropStaging(staging);
   }
+}
+
+async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
+  const refuse = needsYes(flags);
+  if (refuse) throw new Error(refuse);
+  const draft: Ctx = { ...ctx, registry: structuredClone(ctx.registry), saveRegistry: () => {} };
+  let resolved = false;
+  try {
+    const set0 = getSet(draft.registry, id) as SkillsCliSet;
+    const available = listSource(ctx.paths, set0.source);
+    const replan = () =>
+      planCli({
+        paths: ctx.paths,
+        setId: id,
+        set: getSet(draft.registry, id) as SkillsCliSet,
+        available,
+        lock: readSkillLock(ctx.paths.skillLock),
+        state: readState(ctx.paths.stateDir),
+      });
+    let p = replan();
+    while (p.collisions.length) {
+      if (flags.yes || !isInteractive()) {
+        reportCli(p, []);
+        console.log("  Resolve, then run update again:");
+        for (const c of p.collisions) {
+          console.log(`    skl resolve ${id} ${c.name} --exclude`);
+          const holder = /^set "(.+)"$/.exec(c.holder)?.[1];
+          if (holder) console.log(`    skl resolve ${holder} ${c.name} --rename <name>   (then: skl update ${holder})`);
+        }
+        return 1;
+      }
+      for (const c of p.collisions) {
+        log.warn(`Name collision: ${c.name}\nalready held by ${c.holder}\nincoming from "${id}" (npx skills; its names cannot be changed)`);
+        const action = await choose(`What should happen to ${c.name}?`, [
+          { value: "exclude", label: `Don't install it from "${id}"` },
+          { value: "abort", label: "Stop", hint: /^set "/.test(c.holder) ? "then rename the other side with skl resolve" : undefined },
+        ]);
+        if (action === "abort") throw new Cancelled();
+        setResolution(draft, id, c.name, { exclude: true });
+      }
+      resolved = true;
+      p = replan();
+    }
+    const lock = readSkillLock(ctx.paths.skillLock);
+    const up = upstreamChanges(lock, p.update);
+    p.update = [...up.changed, ...up.unknown];
+    reportCli(p, up.unknown);
+    const links = linkDirsFor(ctx.paths, getSet(draft.registry, id));
+    if (!p.add.length && !p.update.length && !p.remove.length && !resolved) {
+      console.log("  up to date.");
+      return 0;
+    }
+    if (flags.dryRun) {
+      console.log(`  dry run: nothing installed${resolved ? ", collision answers not saved" : ""}.`);
+      return 0;
+    }
+    if (!flags.yes && !(await confirm("Apply?"))) return 0;
+    applyCli(ctx.paths, p, links);
+    if (resolved) ctx.saveRegistry(draft.registry);
+    ctx.registry = draft.registry;
+    console.log("  applied.");
+    return 0;
+  } catch (e) {
+    if (e instanceof Cancelled) throw e;
+    console.error(`✗ ${id}: ${(e as Error).message}`);
+    return 1;
+  }
+}
+
+const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** A list for one report line; long ones are cut to a few names and a count. */
+function summarize(items: string[], max = 8): string {
+  if (items.length <= max) return items.join(", ");
+  return `${items.slice(0, max).join(", ")} and ${items.length - max} more`;
+}
+
+function reportCli(p: CliPlan, unknown: string[]): void {
+  console.log(`\n■ ${p.set}  (npx skills · ${p.source})`);
+  const line = (title: string, items: string[]) => {
+    if (items.length) console.log(`  ${title.padEnd(11)}${summarize(items)}`);
+  };
+  line("new", p.add);
+  line("changed", p.update.filter((n) => !unknown.includes(n)));
+  line("can't tell", unknown);
+  line("removed", p.remove);
+  line("unselected", p.unselected);
+  for (const c of p.collisions) console.log(`  ✗ ${c.name} collides with ${c.holder}`);
 }
 
 async function resolveInteractively(ctx: Ctx, id: string, c: Collision): Promise<void> {
@@ -284,7 +374,15 @@ type Resolution = { exclude: true } | { to: string; reason: string } | { undo: t
 
 function setResolution(ctx: Ctx, id: string, original: string, r: Resolution): void {
   const set = getSet(ctx.registry, id);
-  if (!isManaged(set)) throw new Error(`"${id}" is a skills-cli set; its names belong to npx skills.`);
+  if (!isManaged(set)) {
+    // npx skills owns these names; skillport can only leave one out.
+    if ("to" in r) throw new Error(`"${id}" is a skills-cli set; its names belong to npx skills. Use --exclude, or rename the other side.`);
+    set.exclude = (set.exclude ?? []).filter((n) => n !== original);
+    if ("exclude" in r) set.exclude.push(original);
+    if (!set.exclude.length) delete set.exclude;
+    ctx.saveRegistry(ctx.registry);
+    return;
+  }
   const at = new Date().toISOString().slice(0, 10);
   set.exclude = (set.exclude ?? []).filter((n) => n !== original);
   if (set.rename) delete set.rename[original];
@@ -325,14 +423,14 @@ function report(p: Plan): void {
   const label = (s: Plan["skills"][number]) => (s.original === s.name ? s.name : `${s.original} → ${s.name}`);
   const by = (u: string) => p.skills.filter((s) => s.upstream === u).map(label);
   const line = (title: string, items: string[]) => {
-    if (items.length) console.log(`  ${title.padEnd(11)}${items.join(", ")}`);
+    if (items.length) console.log(`  ${title.padEnd(11)}${summarize(items)}`);
   };
   line("new", by("new"));
   line("changed", by("changed"));
   line("removed", p.removed);
   line("unselected", p.unselected);
   const same = by("unchanged").length;
-  if (same) console.log(`  ${"unchanged".padEnd(11)}${same} skill${same === 1 ? "" : "s"}`);
+  if (same) console.log(`  ${"unchanged".padEnd(11)}${count(same, "skill")}`);
   line("local edits", p.skills.filter((s) => s.localEdits && s.write).map((s) => s.name));
   for (const { file, change } of p.rewrites) {
     console.log(`  rewrite    ${file}:${change.line} \`${change.from}\` → \`${change.to}\``);
@@ -348,28 +446,53 @@ function report(p: Plan): void {
 async function check(ctx: Ctx, ids: string[]): Promise<number> {
   let failed = 0;
   for (const id of ids.length ? ids : Object.keys(ctx.registry.sets)) {
-    const set = managed(ctx, id);
-    if (!set) continue;
-    if (!runsUnattended(set)) {
-      console.log(`■ ${id}: only runs interactively; check skipped. Run: skl update ${id} -i`);
-      continue;
-    }
-    const staging = stagingFor(ctx, id);
+    const set = getSet(ctx.registry, id);
     try {
-      report(fetchSet(ctx, id, set, staging, false)());
-      const pin = pinnedPackage(set);
-      const latest = pin && latestVersion(pin.name, staging);
-      if (pin && latest && latest !== pin.version) {
-        console.log(`  ⬆ ${pin.name}@${latest} is out (pinned ${pin.version}); bump it in the registry to upgrade.`);
+      if (!isManaged(set)) {
+        checkCli(ctx, id, set);
+        continue;
+      }
+      if (!runsUnattended(set)) {
+        console.log(`■ ${id}: only runs interactively; check skipped. Run: skl update ${id} -i`);
+        continue;
+      }
+      const staging = stagingFor(ctx, id);
+      try {
+        if (set.type === "npm") {
+          // A pinned package never changes; only a newer version can.
+          const hint = versionHint(set, staging);
+          console.log(`\n■ ${id}`);
+          console.log(hint ? `  ${hint}` : `  up to date (${set.package} is the latest).`);
+          continue;
+        }
+        report(fetchSet(ctx, id, set, staging, false)());
+        const hint = versionHint(set, staging);
+        if (hint) console.log(`  ${hint}`);
+      } finally {
+        dropStaging(staging);
       }
     } catch (e) {
       failed++;
       console.error(`✗ ${id}: ${(e as Error).message}`);
-    } finally {
-      dropStaging(staging);
     }
   }
   return failed ? 1 : 0;
+}
+
+function checkCli(ctx: Ctx, id: string, set: SkillsCliSet): void {
+  const lock = readSkillLock(ctx.paths.skillLock);
+  const p = planCli({
+    paths: ctx.paths,
+    setId: id,
+    set,
+    available: listSource(ctx.paths, set.source),
+    lock,
+    state: readState(ctx.paths.stateDir),
+  });
+  const up = upstreamChanges(lock, p.update);
+  p.update = [...up.changed, ...up.unknown];
+  reportCli(p, up.unknown);
+  if (!p.add.length && !p.update.length && !p.remove.length) console.log("  up to date.");
 }
 
 function status(ctx: Ctx): number {
@@ -380,12 +503,12 @@ function status(ctx: Ctx): number {
   for (const [id, set] of Object.entries(ctx.registry.sets)) {
     if (!isManaged(set)) {
       const mine = Object.values(lock).filter((e) => e.source === set.source).length;
-      console.log(`${id.padEnd(15)}${"skills-cli".padEnd(13)}${mine} skill${mine === 1 ? " " : "s"}   ${set.source}`);
+      console.log(`${id.padEnd(15)}${"skills-cli".padEnd(13)}${count(mine, "skill").padEnd(10)}${set.source}`);
       continue;
     }
     const st = state.sets[id];
     const n = Object.keys(st?.skills ?? {}).length;
-    const when = st ? `${n} skill${n === 1 ? " " : "s"}   synced ${st.syncedAt.slice(0, 16).replace("T", " ")}` : "not installed";
+    const when = st ? `${count(n, "skill").padEnd(10)}synced ${st.syncedAt.slice(0, 16).replace("T", " ")}` : "not installed";
     console.log(`${id.padEnd(15)}${set.type.padEnd(13)}${when}`);
     for (const [name, s] of Object.entries(st?.skills ?? {})) {
       const rule = s.original ? set.rename?.[s.original] : undefined;
@@ -402,14 +525,14 @@ function status(ctx: Ctx): number {
     if (set.exclude?.length) console.log(`${pad}  excluded: ${set.exclude.join(", ")}`);
   }
   if (!Object.keys(ctx.registry.sets).length) console.log(`No sets registered. Edit ${ctx.paths.registry}.`);
-  if (problems) console.log(`\n${problems} problem${problems === 1 ? "" : "s"} found.`);
+  if (problems) console.log(`\n${count(problems, "problem")} found.`);
   return 0;
 }
 
 function diff(ctx: Ctx, id: string | undefined, skill: string | undefined): number {
   if (!id || !skill) throw new Error(USAGE);
-  const set = managed(ctx, id);
-  if (!set) return 1;
+  const set = getSet(ctx.registry, id);
+  if (!isManaged(set)) throw new Error(`"${id}" is installed by npx skills; compare upstream on its source instead.`);
   const staging = stagingFor(ctx, id);
   try {
     const s = fetchSet(ctx, id, set, staging, false)().skills.find((x) => x.name === skill || x.original === skill);
@@ -423,13 +546,12 @@ function diff(ctx: Ctx, id: string | undefined, skill: string | undefined): numb
 
 async function remove(ctx: Ctx, id: string | undefined, flags: Flags): Promise<number> {
   const set = getSet(ctx.registry, id);
-  if (!isManaged(set)) {
-    console.log(`"${id}" is a skills-cli set; removal is milestone M2.`);
-    return 1;
-  }
   const state = readState(ctx.paths.stateDir);
-  const names = Object.keys(state.sets[id!]?.skills ?? {});
-  console.log(`Remove set "${id}": ${names.length} skills go to trash, links are removed, the set is unregistered.`);
+  const names = isManaged(set)
+    ? Object.keys(state.sets[id!]?.skills ?? {})
+    : lockedFor(readSkillLock(ctx.paths.skillLock), set.source);
+  const how = isManaged(set) ? "moved to trash, links removed" : "removed through npx skills";
+  console.log(`Remove set "${id}": ${count(names.length, "skill")} ${how}; the set is unregistered.`);
   if (flags.dryRun) {
     console.log("dry run: nothing removed.");
     return 0;
@@ -437,7 +559,8 @@ async function remove(ctx: Ctx, id: string | undefined, flags: Flags): Promise<n
   const refuse = needsYes(flags);
   if (refuse) throw new Error(refuse);
   if (!flags.yes && !(await confirm("Continue?"))) return 0;
-  removeManaged(ctx.paths, id!, state);
+  if (isManaged(set)) removeManaged(ctx.paths, id!, state);
+  else if (names.length) applyCli(ctx.paths, { set: id!, source: set.source, add: [], update: [], remove: names, unselected: [], collisions: [] }, []);
   delete ctx.registry.sets[id!];
   ctx.saveRegistry(ctx.registry);
   console.log("Done.");

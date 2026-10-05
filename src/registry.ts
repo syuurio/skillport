@@ -74,6 +74,7 @@ export interface Registry {
 }
 
 export interface Paths {
+  home: string;
   registry: string;
   skillsDir: string;
   stateDir: string;
@@ -94,6 +95,7 @@ export interface Paths {
 export function defaultPaths(home = process.env.SKILLPORT_HOME ?? os.homedir()): Paths {
   const h = (...p: string[]) => path.join(home, ...p);
   return {
+    home,
     registry: process.env.SKILLPORT_REGISTRY ?? h(".config", "skillport", "registry.json"),
     skillsDir: h(".agents", "skills"),
     stateDir: h(".agents", ".skillport"),

@@ -5,7 +5,8 @@ import path from "node:path";
 import { npmEnv, sandboxEnv } from "./acquire.ts";
 import { hasSecret } from "./keychain.ts";
 import { ask, askSecret, choose, chooseMany, confirm, log, spinner } from "./prompt.ts";
-import { DEFAULT_LINKS, LINK_TARGETS, type InstallerSet, type NpmSet, type Registry, type SkillSet, type SkillsCliSet } from "./registry.ts";
+import { DEFAULT_LINKS, LINK_TARGETS, type InstallerSet, type NpmSet, type Paths, type Registry, type SkillSet, type SkillsCliSet } from "./registry.ts";
+import { listSource } from "./skillscli.ts";
 
 // `skl register`: add a set to the registry by answering questions, or from
 // `--json` for scripts and agents. Either way the entry is validated before
@@ -68,7 +69,7 @@ export function validateSet(id: string, set: SkillSet, reg: Registry): string[] 
       if (!set.path || set.path.includes("..")) problems.push("path must be a folder inside the package");
       break;
     case "skills-cli":
-      if (!/^[\w.-]+\/[\w.-]+$/.test(set.source ?? "")) problems.push("source must be owner/repo");
+      if (!set.source || /\s/.test(set.source) || set.source.startsWith("-")) problems.push("source must be one word, as passed to npx skills add");
       break;
     default:
       problems.push('type must be "installer", "npm" or "skills-cli"');
@@ -214,11 +215,11 @@ async function askLinks(): Promise<string[] | undefined> {
 }
 
 /** Arrow-key wizard for one registry entry. Throws Cancelled on Esc / Ctrl-C. */
-export async function askForSet(id: string): Promise<WizardResult> {
+export async function askForSet(id: string, paths: Paths): Promise<WizardResult> {
   const type = await choose(`What kind of source is "${id}"?`, [
     { value: "installer", label: "Installer", hint: "the vendor gave you a command such as npx @vendor/install …" },
     { value: "npm", label: "npm package", hint: "skill files ship inside a package; nothing is run" },
-    { value: "skills-cli", label: "GitHub repo", disabled: "not supported yet" },
+    { value: "skills-cli", label: "npx skills source", hint: "GitHub owner/repo, a URL, or a name npx skills knows" },
   ]);
 
   if (type === "npm") {
@@ -245,12 +246,28 @@ export async function askForSet(id: string): Promise<WizardResult> {
   }
 
   if (type === "skills-cli") {
-    const source = await ask("GitHub repo", {
+    const source = await ask("Source, as you would pass it to npx skills add", {
       placeholder: "mattpocock/skills",
-      validate: (v) => (/^[\w.-]+\/[\w.-]+$/.test(v) ? undefined : "Use owner/repo."),
+      validate: (v) => (v && !/\s/.test(v) && !v.startsWith("-") ? undefined : "One word, no spaces."),
     });
-    const skills = list(await ask("Skills to install (comma-separated, empty = all)", { placeholder: "tdd, code-review" }));
-    return { set: { type, source, ...(skills.length ? { skills } : {}) } satisfies SkillsCliSet };
+    const s = spinner();
+    s.start(`Asking npx skills what ${source} offers`);
+    let available: string[] = [];
+    try {
+      available = listSource(paths, source);
+      s.stop(`${available.length} skills available`);
+    } catch {
+      s.stop("Could not list it; type the names instead");
+    }
+    const skills = available.length
+      ? await chooseMany(
+          "Which skills? (space to toggle, enter to confirm)",
+          available.map((n) => ({ value: n, label: n })),
+          [],
+        )
+      : list(await ask("Skills to install (comma-separated)", { placeholder: "tdd, code-review" }));
+    const links = await askLinks();
+    return { set: { type, source, ...(skills.length ? { skills } : {}), ...(links ? { links } : {}) } satisfies SkillsCliSet };
   }
 
   // Installer: the vendor's own questions (which skills, renames) come later,

@@ -41,7 +41,7 @@
      (委派給 npx skills)                  (skillport 自己負責)
             │                                   │
    npx skills add <repo> -g              假 $HOME → 暫存區 → 比對
-     -a codex,claude-code -s … -y               │
+     -a codex -a claude-code -s … -y            │
             │                                   │
    ~/.agents/.skill-lock.json            ~/.agents/.skillport/state.json
             └─────────────────┬─────────────────┘
@@ -70,18 +70,21 @@
 
 ### 5.1 `skills-cli`
 
-委派給 `npx skills`（目前 `skills@1.7.0`）。
+委派給 `npx skills`（固定 `skills@1.7.0`）。它負責目錄、symlink 與 `~/.agents/.skill-lock.json`；skillport 決定要它做什麼，並在呼叫前檢查撞名。`source` 是你會傳給 `npx skills add` 的任何寫法（GitHub `owner/repo`、URL、它認得的名稱）。
 
 | 動作 | 執行 |
 |---|---|
-| 安裝 | `npx skills@<ver> add <source> -g -a codex,claude-code -s <skills> -y` |
-| 更新 | `npx skills@<ver> update <skills> -g -y` |
-| 移除 | `npx skills@<ver> remove <skills> -g -y` |
-| 檢查 | skillport 自己做，見 §7.2 |
+| 列出可裝的 skill | `npx skills add <source> --list`，解析文字輸出（`--list` 不接受 `--json`，已驗證） |
+| 安裝 | `npx skills add <source> -g -a codex [-a claude-code] -s <name>… -y` |
+| 更新 | `npx skills update <name>… -g -y`，只送上游有變的 |
+| 移除 | `npx skills remove <name>… -g -y` |
+| 檢查 | lock 的 `skillFolderHash`（git tree hash）對 GitHub `git/trees/HEAD:<dir>`；非 GitHub 來源標為「can't tell」並交給 `update` |
 
-**委派前先檢查撞名**：`npx skills add` 遇到同名目錄的行為未驗證（推測會覆寫）。skillport 在呼叫它之前，先用 §8 的規則檢查要安裝的名稱，撞到 skillport 管理的 skill 時中止，由你決定處理方式。
-
-`-a codex,claude-code`：實體放在 `~/.agents/skills`，Claude Code 拿到指向它的相對 symlink（已驗證，M0）。**只給 `-a claude-code` 不行**：它會把實體目錄直接寫進 `~/.claude/skills`，`~/.agents/skills` 不會產生。
+- **`-a` 要重複寫**：`-a codex -a claude-code`。逗號寫法 `-a codex,claude-code` 會被拒絕（`Invalid agents`，已驗證）。M0 當時記錄的逗號寫法是錯的：那次測試的參數被 zsh 當成一個字串傳入，結果不成立；同一次測得的「只給 `-a codex` 也會建 Claude symlink」也一併作廢。
+- `-a codex` 讓實體放在 `~/.agents/skills`；`links` 含 Claude Code 時加 `-a claude-code`，得到相對 symlink（已驗證）。只給 `-a claude-code` 會把實體寫進 `~/.claude/skills`。
+- **`npx skills add` 會直接覆蓋同名目錄，不警告**（已驗證：在沙盒 `~/.agents/skills/tdd` 放自己的 `SKILL.md`，安裝後被換掉）。所以呼叫前先檢查：撞到 skillport 管理的 skill、其他 `npx skills` 來源、`~/.agents/skills` 下的無主目錄、或 `~/.claude/skills` 下的非 symlink，就中止。
+- skills-cli 的名稱屬於 `npx skills`，skillport 不改名；撞名時只能在這一邊 `exclude`，或去改另一邊（skillport 管理的 set）的名稱。
+- 執行時用真實 `HOME`（它要寫進 `~/.agents`），但環境變數一樣是最小集合（§9）。
 
 ### 5.2 `installer`
 
@@ -451,7 +454,8 @@ matt           有改動 tdd, code-review · 上游新增 implement-spec, pr（�
 | `skillFolderHash` 是 skill 目錄的 git tree hash | 本機 13/16 吻合 |
 | Codex 的 `agents/openai.yaml` 是選用 metadata | 官方文件 |
 | 以 `.claude` 為目標時，產出和 Codex 目標相同（28 個 skill，只差 `agents/`） | M0：真 token 各跑一次，`diff -rq` |
-| `npx skills -a codex,claude-code` 把實體放 `~/.agents/skills`、為 Claude 建相對 symlink；只給 `-a claude-code` 會把實體寫進 `~/.claude/skills` | M0：在假 `$HOME` 安裝 `mattpocock/skills` 的 `tdd` |
+| `npx skills -a codex -a claude-code` 把實體放 `~/.agents/skills`、為 Claude 建相對 symlink；逗號寫法被拒；只給 `-a claude-code` 會把實體寫進 `~/.claude/skills` | M2：在假 `$HOME` 安裝 `mattpocock/skills` 的 `tdd`（更正 M0 的逗號結論） |
+| `npx skills add` 會覆蓋同名目錄而不警告 | M2：沙盒實測 |
 | GitHub API 取得子目錄 tree hash，和 `skillFolderHash` 相同 | M0：`contents/<parent>` 的 dir `sha` 與 `git/trees/HEAD:<path>` 都等於 lock 值 |
 | `skills@1.7.0` 的 lock 是 `version: 3`，新增欄位 `pluginName` | M0 |
 
@@ -469,7 +473,7 @@ matt           有改動 tdd, code-review · 上游新增 implement-spec, pr（�
 |---|---|---|
 | M0 | 驗證 §12 待驗證項目 | 1 小時 · **完成**（Grok 待 CLI 升級；Cursor/OpenCode 待實際安裝後檢查） |
 | M1 | registry / state、installer 與 npm 類型、`status`、`check`、`update`、`diff`、`secret`、`remove`、撞名處理與 `resolve` | 半天多 · **完成**（互動模式需真實終端機，尚未實測） |
-| M2 | skills-cli 類型（委派 + GitHub hash 檢查） | 2–3 小時 |
+| M2 | skills-cli 類型（委派 + GitHub hash 檢查） | 2–3 小時 · **完成** |
 | M3 | `doctor`、`adopt`，完成 §11 遷移 | 2–3 小時 |
 
 每個階段結束都附測試，且先在 scratchpad 的假目錄跑過才碰真實的 `~/.agents`。

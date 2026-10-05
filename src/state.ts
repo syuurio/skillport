@@ -41,6 +41,7 @@ export function writeState(stateDir: string, state: State): void {
 /** `npx skills` lock entries, read-only. Refuses formats it does not know. */
 export interface LockEntry {
   source: string;
+  sourceUrl?: string;
   skillPath: string;
   skillFolderHash: string;
   updatedAt: string;
