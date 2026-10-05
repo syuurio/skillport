@@ -112,9 +112,9 @@
 
 | 順序 | 做法 | 適用 | 例子 |
 |---|---|---|---|
-| 1 | **非互動旗標**：`-y`、`--global` 等，加上不給 TTY | installer 有非互動模式 | Emil 的兩個 installer：非 TTY 或 `-y` 時 4 個問題全部跳過，用預設值（global、全部偵測到的 agent、全部 skill、不改名） |
+| 1 | **非互動旗標**：registry 的 `unattended`（例如 `-y`），加上不給 TTY | installer 有非互動模式 | Emil 的兩個 installer：非 TTY 或 `-y` 時 4 個問題全部跳過，用預設值（global、全部偵測到的 agent、全部 skill、不改名） |
 | 2 | **`npm` 類型**：不執行，直接取出套件內容 | skill 內容打包在套件裡 | `motion-ai` |
-| 3 | **`capture` 模式**：你在 skillport 準備好的沙盒裡親自回答問題 | 只能互動執行、內容又是執行時才下載 | 目前沒有 |
+| 3 | **互動執行**（`-i`）：你在 skillport 準備好的沙盒裡親自回答問題 | 只能互動執行、內容又是執行時才下載 | registry 沒有 `unattended` 的 set |
 
 不採用的做法：用 pseudo-terminal 自動回答（expect 式）。問題文字或順序一改就會答錯，而且答錯時不一定會失敗，可能靜靜裝錯東西。
 
@@ -122,7 +122,7 @@
 
 `skl add` 對 installer 類型**預設互動**（決定紀錄 #6）；`skl add <set> -y` 改為非互動、安裝全部。`skl update` 預設非互動，`skl update <set> -i` 重新互動。
 
-- installer 拿到真正的 TTY，但仍在沙盒裡執行。skillport 帶 `--global`，沙盒裡只有 `.claude`，所以「裝在哪裡」和「裝到哪些 agent」兩題不會出現（位置由 skillport 決定）；**「裝哪些 skill」和「要不要改名」照常由你回答**（依 `@aiforui/install@0.1.4` 原始碼第 320、350、395、413 行）。
+- installer 拿到真正的 TTY，但仍在沙盒裡執行。範圍旗標（例如 `--global`）寫在 registry 的 `command` 裡，skillport 自己不加旗標（§5.2）；沙盒裡只有 `.claude`，所以「裝在哪裡」和「裝到哪些 agent」兩題不會出現（位置由 skillport 決定）；**「裝哪些 skill」和「要不要改名」照常由你回答**（依 `@aiforui/install@0.1.4` 原始碼第 320、350、395、413 行）。
 - installer 結束後，skillport 把你的回答轉成 registry 記錄：
   - 勾選的 skill → `skills` 允許清單。
   - 在 installer 裡改的名稱（目錄名 ≠ frontmatter `name`）→ `rename`，`reason` 記為 `"renamed in installer"`，並補改 frontmatter 與引用（§8.3）。installer 的改名功能只改目錄名、不改 `name`，不補改的話 Codex 會用舊名稱識別它。
@@ -131,25 +131,13 @@
 
 #### 防止卡住
 
-自動執行時，installer 的 stdin 一律接 `/dev/null`，並設逾時（預設 5 分鐘）。installer 如果還是跳出問題，會讀到 EOF 而結束，不會無限等待。skillport 把這種情況回報為「installer 需要互動」，提示改用 `capture` 模式，不會當成一般錯誤。
+自動執行時，installer 的 stdin 一律接 `/dev/null`，並設逾時（5 分鐘）。installer 如果還是跳出問題，會讀到 EOF 而結束，不會無限等待。逾時、輸出最後幾行像是問題（`(y/n)`、`?` 結尾、`Ok to proceed` 等），或輸出 `cancelled` 卻沒裝任何東西時，skillport 回報「installer 正在等你回答，請用 `skl update <set> -i`」，**不算失敗**（結束碼 0），也不中斷其他 set 的更新。
 
-#### `capture` 模式
+#### 只能互動的 installer
 
-```
-$ skl capture newvendor
-準備沙盒：HOME=~/.agents/.skillport/staging/newvendor/home（只有 .claude/）
-執行：npx @newvendor/install --token=***
-────── 以下由你回答 installer 的問題 ──────
-◆ Where do you want to install?  ● Globally
-◆ Which skills?                  ◼ a  ◼ b
-...
-────── installer 結束 ──────
-取出 2 個 skill，接下來和一般 update 相同：比對 → 撞名檢查 → 確認 → 套用
-```
+不另設 `capture` 指令（原規劃），改用既有的 `-i`：registry 沒有 `unattended` 的 set 就是「只能互動」，`update` 與 `check` 會略過並提示 `skl update <set> -i`。`-i` 的行為就是原規劃的 capture：installer 拿到真正的 TTY，檔案仍只寫進沙盒，結束後照常比對、檢查撞名、確認、套用，並把你的選擇記進 registry。
 
-- installer 拿到真正的 TTY，問題由你回答；檔案仍然只寫進沙盒，不會散落。
-- registry 裡這類 set 標記 `"interactive": true`。`check` 和 `update --all` 會略過它們並提示「需要手動執行 `skl capture <set>`」，不會在背景卡住。
-- 已知限制：installer 如果寫入 `$HOME` 以外的位置（例如 `/usr/local`），沙盒攔不到。執行時的 cwd 設在沙盒內，可以攔住 project 模式的寫入。
+已知限制：installer 如果寫入 `$HOME` 以外的位置（例如 `/usr/local`），沙盒攔不到。執行時的 cwd 設在沙盒內，可以攔住 project 模式的寫入。
 
 ## 6. 資料格式
 
@@ -219,12 +207,12 @@ $ skl capture newvendor
       "source": "@aiforui/install@0.1.4",
       "syncedAt": "2026-10-05T08:30:00Z",
       "skills": {
-        "emil-color": { "hash": "9f2c…", "updatedAt": "2026-10-05T08:30:00Z" }
+        "emil-color": { "hash": "9f2c…", "installed": "9f2c…", "updatedAt": "2026-10-05T08:30:00Z" }
       }
     },
     "animationsdev": {
       "skills": {
-        "anim-prototype": { "original": "prototype", "hash": "c41d…", "updatedAt": "2026-10-05T08:30:00Z" }
+        "anim-prototype": { "original": "prototype", "hash": "c41d…", "installed": "7a03…", "updatedAt": "2026-10-05T08:30:00Z" }
       }
     }
   }
@@ -232,6 +220,8 @@ $ skl capture newvendor
 ```
 
 `hash` 用 **git tree hash**，和 `npx skills` 的 `skillFolderHash` 同一種演算法（已驗證：本機 16 個 skill 中 13 個與 lock 記錄一致，另 3 個是本機內容已偏離安裝時的版本）。同一種 hash 讓兩種負責者的 skill 能用同一套比對邏輯。
+
+`installed` 是 skillport 實際寫入的內容（改名、改寫引用之後）的 tree hash；磁碟上的內容和它不同，就是有人手動改過（`status` 與 `doctor` 回報「edited」）。
 
 改過名的 skill，`hash` 算的是 **vendor 原始內容**（改名、改寫引用之前），所以下次 check 時，改名本身不會被當成「有改動」或「偏離」。
 
@@ -241,11 +231,14 @@ $ skl capture newvendor
 ~/.agents/
   skills/                  實體 skill（兩種負責者共用）
   .skill-lock.json         npx skills 的 lock（只讀）
-  .skillport/
+  .skillport/              0700：staging 裡有 installer 的假 HOME，可能留下 token
     state.json
-    staging/<set>/         比對用，執行完清空
+    lock.d/pid             同一時間只跑一個 skillport；pid 已不存在的 lock 會被接手
+    staging/<set>/         比對用，每次結束（含錯誤、Ctrl-C、SIGHUP、SIGTERM）都清空
     trash/<時間>-<set>/    被取代、移除的舊版本
 ```
+
+開發與測試時可用 `SKILLPORT_HOME` 把以上所有路徑（含 registry、`~/.claude/skills`）搬到別處；Keychain 與 npm 快取仍用真實 HOME。
 
 staging 和 trash 不放在 `skills/` 底下：Cursor 會遞迴掃描 skill 根目錄，留在裡面的 `SKILL.md` 都會被載入（官方文件）。
 
@@ -273,16 +266,18 @@ matt           skills-cli   4 skills   10/05 更新
 | 類型 | 做法 | 成本 |
 |---|---|---|
 | installer | 執行到暫存區，逐一比對 tree hash | 每個 set 一次完整下載 |
-| npm | `npm view` 比對版本；有新版才下載比對 | 一次 registry 查詢 |
-| skills-cli | 用 GitHub API 取得上游該 skill 目錄的 tree hash，和 `skillFolderHash` 比對 | 每個 set 一次 API 查詢 |
+| npm | `npm view` 比對版本；有新版才下載新版，照「把版本號改成新版」規劃一次，列出會變的 skill 與撞名 | 一次 registry 查詢；有新版時一次下載 |
+| skills-cli | 上游該 skill 目錄的 tree hash（GitHub `git/trees/HEAD:<dir>`）對 `skillFolderHash`；先用 `gh`，沒有登入時改用公開 API（curl，每小時 60 次） | 每個已安裝 skill 一次 API 查詢 |
 
 ```
 aiforui        有改動 emil-color, emil-typography · 新增 emil-charts
 animationsdev  沒有改動
 motion         沒有改動 · installer 有新版 motion-ai@14.2.0（目前固定 14.1.0）
-matt           有改動 tdd, code-review · 上游新增 implement-spec, pr（未註冊）
-               https://github.com/mattpocock/skills/compare/84fdeff...f6abdeb
+matt           有改動 tdd, code-review · 上游新增 implement-spec, pr（未選）
+               tdd: https://github.com/mattpocock/skills/commits/HEAD/skills/engineering/tdd
 ```
+
+skills-cli 有改動的 skill 附上該資料夾在 GitHub 的 commit 歷史連結（lock 只記 tree hash、不記 commit，做不出 compare 連結）。非 GitHub 來源或 GitHub 沒回應時標為「can't tell」，`update` 會直接重抓它們。
 
 ### 7.3 `skl update [set...]`
 
@@ -310,7 +305,7 @@ matt           有改動 tdd, code-review · 上游新增 implement-spec, pr（�
 
 ### 7.8 `skl doctor [--fix]`
 
-找出並（加 `--fix` 時）修正：
+不加 `--fix` 只報告（• 可安全修正、! 需要你判斷）。加 `--fix` 時先列出計畫，和其他會改動檔案的指令一樣：`--dry-run` 只看計畫，終端機上詢問確認，沒有終端機要加 `-y`。
 
 | 問題 | 例子 | `--fix` 的處理 |
 |---|---|---|
@@ -319,9 +314,11 @@ matt           有改動 tdd, code-review · 上游新增 implement-spec, pr（�
 | 缺少的 symlink | 受管 skill 在 `~/.claude/skills` 沒有 link | 補建 |
 | 撞名 | 兩個負責者想要同一個目錄名 | 只報告 |
 | 偏離 | 受管 skill 的 tree hash 和記錄不同（有人手動改過） | 只報告 |
-| 無主目錄 | `~/.agents/skills` 下有目錄不屬於任何負責者 | 只報告 |
+| 無主目錄 | `~/.agents/skills` 下有目錄不屬於任何負責者 | 只報告（用 `skl adopt` 或撞名提示裡的「收進來」） |
+| 不合法的名稱 | state 或 lock 裡有 `../x` 這類名稱 | 只報告，且絕不拿來組路徑 |
+| 不再需要的改名規則 | 撞名的對象已經不在；或 vendor 已不再提供原本那個 skill。在 installer 裡自己選的改名是偏好，不算 | 只報告，附上 `skl resolve <set> <skill> --undo` |
 
-「散落副本」的判定：目錄名稱等於某個受管 skill（skillport 或 `npx skills` 管理），且位於已知 agent 目錄（`~/.claude/skills`、`~/.codex/skills`、`~/.cursor/skills`、`~/.config/opencode/skills`、`~/.gemini/skills`），且不是指向 `~/.agents/skills` 的 symlink。內容和受管版本相同，或只多了 installer 為該 agent 加的檔案（例如 Codex 的 `agents/openai.yaml`）時，算「相同」，`--fix` 會移到 trash；內容不同只報告。
+「散落副本」的判定：目錄名稱等於某個受管 skill（skillport 或 `npx skills` 管理），且位於已知 agent 目錄（`~/.claude/skills`、`~/.codex/skills`、`~/.cursor/skills`、`~/.config/opencode/skills`、`~/.gemini/skills`），且不是指向 `~/.agents/skills` 的 symlink。內容和受管版本相同，或只多了 installer 為 Codex 加的 `agents/openai.yaml`（`agents/` 裡只有這一個檔案，且受管版本沒有 `agents/`）時，算「相同」；你自己加的任何檔案都讓它算「不同」，`--fix` 會移到 trash；內容不同只報告。
 
 「無主目錄」只算 `~/.agents/skills` 下的真實資料夾；symlink 是你刻意連進來的（例如 `~/dev` 下自己寫的 skill），不報告。`status` 會顯示 doctor 找到的問題數。
 
@@ -380,8 +377,11 @@ skills-cli set 不需要 adopt：`npx skills` 自己決定要不要覆蓋，skil
     中止
 ```
 
-- 每個選項都先驗證新名稱：符合 skill 名稱規則、且不會再撞到別的 skill。
-- 選擇後顯示會連帶改動的地方（§8.3），確認才套用。
+- 每個選項的新名稱都先驗證規則；仍然撞名時，下一輪規劃會再問一次。
+- 「收進來」只在撞到無主目錄時出現：內容和這個 set 要裝的版本相同才會收進來，不同就再問一次（這時不再提供收進來）。
+- 「改另一邊」在另一邊是 skillport 管理、且能非互動執行的 set 時可選：輸入那邊 skill 的新名稱，規則立即寫進 registry（原因記為 `made room for set "<這個 set>"`），並先更新那個 set 讓出名稱，再繼續這個 set。另一邊是 `npx skills`、只能互動執行，或正在 `--dry-run` 時不可選，並說明原因。
+- 這個 set 自己的回答（加前綴、改名、排除）先放在草稿裡，套用後才寫進 registry；`--dry-run` 或回答「不套用」都不會寫入。
+- skills-cli set 撞名時只能在自己這邊排除，或去改另一邊（skillport 管理的 set）。
 - 非互動（`-y` 或沒有終端機）時不猜：中止，並印出可以直接執行的處理指令：
   ```
   skl resolve animationsdev prototype --prefix        # → anim-prototype
@@ -476,7 +476,7 @@ skills-cli set 不需要 adopt：`npx skills` 自己決定要不要覆蓋，skil
 | 階段 | 內容 | 預估 |
 |---|---|---|
 | M0 | 驗證 §12 待驗證項目 | 1 小時 · **完成**（Cursor/OpenCode 重複顯示待你在 app 內確認） |
-| M1 | registry / state、installer 與 npm 類型、`status`、`check`、`update`、`diff`、`secret`、`remove`、撞名處理與 `resolve` | 半天多 · **完成**（互動模式需真實終端機，尚未實測） |
+| M1 | registry / state、installer 與 npm 類型、`status`、`check`、`update`、`diff`、`secret`、`remove`、撞名處理與 `resolve` | 半天多 · **完成**（互動模式已用 pseudo-terminal 實測） |
 | M2 | skills-cli 類型（委派 + GitHub hash 檢查） | 2–3 小時 · **完成** |
 | M3 | `doctor`、`adopt`，完成 §11 遷移 | 2–3 小時 · **完成**（實際 `--fix` 由你執行） |
 
@@ -492,3 +492,10 @@ skills-cli set 不需要 adopt：`npx skills` 自己決定要不要覆蓋，skil
 | 4 | Grok 納入第一版 | 是；驗證結果：直接讀 `~/.agents/skills`，不需連結 | 2026-10-05 |
 | 5 | 工具名稱 | 沿用 `skillport`；指令 alias `skl` | 2026-10-05 |
 | 6 | `skl add` 對 installer 預設互動 | 是；第一次安裝由你勾選 skill，之後 update 重播記錄 | 2026-10-05 |
+| 7 | `capture` 指令 | 不做；`-i` 已涵蓋，沒有 `unattended` 就是「只能互動」（§5.4） | 2026-10-06 |
+| 8 | installer 卡在問題時 | 回報「需要你」並以 0 結束，不中斷其他 set | 2026-10-06 |
+| 9 | 「改另一邊」 | 只對能非互動執行的 skillport set 開放；規則立即存檔並先更新那個 set | 2026-10-06 |
+| 10 | skills-cli 檢查的連結 | 給 GitHub 資料夾的 commit 歷史，不給 compare（lock 沒有 commit） | 2026-10-06 |
+| 11 | 沒登入 `gh` | 改用 GitHub 公開 API（curl），不另加依賴 | 2026-10-06 |
+| 12 | 非 GitHub 的 skills-cli 來源 | 檢查標為「can't tell」，`update` 直接重抓；不另做機制 | 2026-10-06 |
+| 13 | Gemini CLI 連結目標 | 暫不加入 `LINK_TARGETS`：未驗證它讀哪個目錄，且 `gemini -p` 驗證會用你的額度 | 2026-10-06 |
