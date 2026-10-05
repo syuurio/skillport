@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { isValidSkillName } from "./transform.ts";
 
 // macOS Keychain via the `security` CLI. One generic password per source:
 // service "skillport", account = source id.
@@ -59,7 +60,7 @@ export function storeSecretValue(source: string, raw: string): void {
   if (!SAFE_SECRET.test(value)) {
     throw new Error(`The token has characters skillport will not pass along; store it with: skl secret ${source}`);
   }
-  if (!/^[a-z0-9-]+$/.test(source)) throw new Error(`Invalid set id "${source}".`);
+  if (!isValidSkillName(source)) throw new Error(`Invalid set id "${source}".`);
   const r = spawnSync("security", ["-i"], {
     input: `add-generic-password -U -s ${SERVICE} -a ${source} -w "${value}"\n`,
     stdio: ["pipe", "ignore", "ignore"],

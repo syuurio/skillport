@@ -3,7 +3,7 @@ import path from "node:path";
 import { listSkillDirs, pinnedPackage } from "./acquire.ts";
 import { isOursOrFree } from "./apply.ts";
 import type { ManagedSet, Paths, RenameRule } from "./registry.ts";
-import type { LockEntry, State } from "./state.ts";
+import type { InstalledSkill, LockEntry, State } from "./state.ts";
 import {
   type Change,
   isValidSkillName,
@@ -227,10 +227,28 @@ export function plan(input: PlanInput): Plan {
   return { setId, source: pin ? `${pin.name}@${pin.version}` : undefined, links: input.links, relink, ...adoption, skills, removed, unselected, collisions, warnings, errors, rewrites, keptAsCode, captured };
 }
 
+/**
+ * Who, other than `setId`, owns a skill name: a skillport set (from state) or
+ * npx skills (from its lock). Shared by both kinds of plan so their answers
+ * cannot drift apart.
+ */
+export function ownerOf(
+  name: string,
+  setId: string,
+  state: State,
+  lock: Record<string, LockEntry>,
+): { kind: "set" | "lock"; holderId: string; holder: string } | null {
+  const other = Object.entries(state.sets).find(([id, st]) => id !== setId && name in st.skills);
+  if (other) return { kind: "set", holderId: other[0], holder: `set "${other[0]}"` };
+  const entry = lock[name];
+  if (entry) return { kind: "lock", holderId: entry.source, holder: `npx skills (${entry.source})` };
+  return null;
+}
+
 function findCollisions(
   input: PlanInput,
   skills: SkillPlan[],
-  prev: Record<string, unknown>,
+  prev: Record<string, InstalledSkill>,
   adoption: { adopted: string[]; strays: string[] },
 ): Collision[] {
   const { paths, setId, state, lock } = input;
@@ -245,13 +263,9 @@ function findCollisions(
       continue;
     }
     seen.set(s.name, s.original);
-    const otherSet = Object.entries(state.sets).find(([id, st]) => id !== setId && s.name in st.skills);
-    if (otherSet) {
-      add("set", `set "${otherSet[0]}"`, otherSet[0]);
-      continue;
-    }
-    if (lock[s.name]) {
-      add("lock", `npx skills (${lock[s.name].source})`, lock[s.name].source);
+    const owner = ownerOf(s.name, setId, state, lock);
+    if (owner) {
+      add(owner.kind, owner.holder, owner.holderId);
       continue;
     }
     const dest = path.join(paths.skillsDir, s.name);

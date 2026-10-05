@@ -5,7 +5,7 @@ import { sandboxEnv } from "./acquire.ts";
 import { withTempDir } from "./fsutil.ts";
 import { isOursOrFree } from "./apply.ts";
 import type { Paths, SkillsCliSet } from "./registry.ts";
-import type { Collision } from "./plan.ts";
+import { type Collision, ownerOf } from "./plan.ts";
 import type { LockEntry, State } from "./state.ts";
 import { isValidSkillName } from "./transform.ts";
 
@@ -102,13 +102,11 @@ export function planCli(input: {
   const add = wanted.filter((n) => !installed.has(n));
   const collisions: CliPlan["collisions"] = [];
   for (const name of add) {
-    const managed = Object.entries(state.sets).find(([, st]) => name in st.skills);
-    if (managed) {
-      collisions.push({ name, kind: "set", holderId: managed[0], holder: `set "${managed[0]}"` });
-      continue;
-    }
-    if (lock[name]) {
-      collisions.push({ name, kind: "lock", holderId: lock[name].source, holder: `npx skills (${lock[name].source})` });
+    // Only names not yet installed from this source reach here, so any
+    // owner is someone else.
+    const owner = ownerOf(name, "", state, lock);
+    if (owner) {
+      collisions.push({ name, ...owner });
       continue;
     }
     const dest = path.join(paths.skillsDir, name);
@@ -120,7 +118,10 @@ export function planCli(input: {
     // (a real folder, or your own symlink elsewhere) would be replaced.
     for (const dir of paths.links) {
       const at = path.join(dir, name);
-      if (!isOursOrFree(at, dest)) collisions.push({ name, kind: "link", holder: `${at}, which skillport did not create` });
+      if (!isOursOrFree(at, dest)) {
+        collisions.push({ name, kind: "link", holder: `${at}, which skillport did not create` });
+        break;
+      }
     }
   }
   return {
@@ -148,11 +149,6 @@ export function applyCli(paths: Paths, p: CliPlan, links: string[]): void {
   if (p.update.length) step(["update", ...p.update, "-g", "-y"]);
 }
 
-/**
- * Compare each installed skill's `skillFolderHash` (a git tree hash, verified)
- * with the tree hash of its folder on GitHub's default branch. Non-GitHub
- * sources cannot be checked this way and are reported as such.
- */
 /**
  * Tree hash of a folder on a GitHub repo's default branch. Uses `gh` (5000
  * requests an hour when logged in) and falls back to GitHub's public API

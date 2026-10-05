@@ -6,7 +6,7 @@ import { acquireLock, apply, removeManaged } from "./apply.ts";
 import { hasSecret, storeSecret, storeSecretValue } from "./keychain.ts";
 import { type Kind, diagnose } from "./doctor.ts";
 import { type CliPlan, applyCli, listSource, lockedFor, planCli, upstreamChanges } from "./skillscli.ts";
-import { type Collision, type Plan, plan } from "./plan.ts";
+import { type Collision, type HolderKind, type Plan, plan } from "./plan.ts";
 import { pluginSkillNames } from "./plugins.ts";
 import { askForSet, validateSet } from "./register.ts";
 import { Cancelled, ask, askSecret, choose, confirm, intro, isInteractive, log, note, outro } from "./prompt.ts";
@@ -167,9 +167,8 @@ async function register(ctx: Ctx, id: string | undefined, rest: string[], flags:
   return sync(ctx, id, { yes: false, dryRun: false, interactive: set.type === "installer" });
 }
 
+/** Write an entry its caller has already validated and shown. */
 function saveSet(ctx: Ctx, id: string, set: SkillSet): number {
-  const problems = validateSet(id, set, ctx.registry);
-  if (problems.length) throw new Error(`Not registered:\n  ${problems.join("\n  ")}`);
   ctx.registry.sets[id] = set;
   ctx.saveRegistry(ctx.registry);
   if (!isInteractive()) console.log(`Registered "${id}" in ${ctx.paths.registry}.${set.type === "installer" && set.secret ? ` Store its token with: skl secret ${id}` : ""}`);
@@ -260,7 +259,7 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
     while (p.collisions.length) {
       if (flags.yes || !isInteractive()) {
         report(p);
-        printResolveHints(p);
+        printResolveHints(id, true, p.collisions);
         return 1;
       }
       for (const c of p.collisions) {
@@ -278,7 +277,7 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
     const work =
       p.skills.some((s) => s.write) || p.removed.length > 0 || p.relink || p.adopted.length > 0 || p.strays.length > 0 ||
       p.captured !== undefined || resolved;
-    if (!(await gate(flags, work, resolved))) return 0;
+    if (!(await confirmPlan(flags, work, resolved))) return 0;
     const trash = apply(ctx.paths, p, readState(ctx.paths.stateDir), draft.registry, ctx.saveRegistry);
     if (resolved) ctx.saveRegistry(draft.registry);
     ctx.registry = draft.registry;
@@ -301,7 +300,7 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
  * The step between a plan and changing anything, shared by every set type:
  * nothing to do, a dry run, or a "no" all stop here.
  */
-async function gate(flags: Flags, work: boolean, resolved: boolean): Promise<boolean> {
+async function confirmPlan(flags: Flags, work: boolean, resolved: boolean): Promise<boolean> {
   if (!work) {
     console.log("  up to date.");
     return false;
@@ -335,12 +334,7 @@ async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
     while (p.collisions.length) {
       if (flags.yes || !isInteractive()) {
         reportCli(p, []);
-        console.log("  Resolve, then run update again:");
-        for (const c of p.collisions) {
-          console.log(`    skl resolve ${id} ${c.name} --exclude`);
-          const holder = c.kind === "set" ? c.holderId : undefined;
-          if (holder) console.log(`    skl resolve ${holder} ${c.name} --rename <name>   (then: skl update ${holder})`);
-        }
+        printResolveHints(id, false, p.collisions);
         return 1;
       }
       for (const c of p.collisions) {
@@ -367,16 +361,16 @@ async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
       p = replan();
     }
     const lock = readSkillLock(ctx.paths.skillLock);
-    const up = upstreamChanges(lock, p.update);
-    p.update = [...up.changed, ...up.unknown];
-    reportCli(p, up.unknown);
+    const upstream = upstreamChanges(lock, p.update);
+    p.update = [...upstream.changed, ...upstream.unknown];
+    reportCli(p, upstream.unknown);
     const links = linkDirsFor(ctx.paths, getSet(draft.registry, id));
     const work = p.add.length > 0 || p.update.length > 0 || p.remove.length > 0 || resolved;
-    if (!(await gate(flags, work, resolved))) return 0;
+    if (!(await confirmPlan(flags, work, resolved))) return 0;
     // The prompt may have sat for a while: check again right before npx
     // skills runs, since it overwrites whatever is at those paths.
-    const again = replan();
-    const fresh = again.collisions.filter((c) => p.add.includes(c.name));
+    const recheck = replan();
+    const fresh = recheck.collisions.filter((c) => p.add.includes(c.name));
     if (fresh.length) {
       throw new Error(`Something changed since the plan was made:\n  ${fresh.map((c) => `${c.name} now collides with ${c.holder}`).join("\n  ")}`);
     }
@@ -395,7 +389,7 @@ async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
 const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /** One report line: a title and its items, skipped when there are none. */
-function line(title: string, items: string[]): void {
+function printItems(title: string, items: string[]): void {
   if (items.length) console.log(`  ${title.padEnd(11)}${summarize(items)}`);
 }
 
@@ -407,11 +401,11 @@ function summarize(items: string[], max = 8): string {
 
 function reportCli(p: CliPlan, unknown: string[]): void {
   console.log(`\n■ ${p.setId}  (npx skills · ${p.source})`);
-  line("new", p.add);
-  line("changed", p.update.filter((n) => !unknown.includes(n)));
-  line("can't tell", unknown);
-  line("removed", p.remove);
-  line("unselected", p.unselected);
+  printItems("new", p.add);
+  printItems("changed", p.update.filter((n) => !unknown.includes(n)));
+  printItems("can't tell", unknown);
+  printItems("removed", p.remove);
+  printItems("unselected", p.unselected);
   for (const c of p.collisions) console.log(`  ✗ ${c.name} collides with ${c.holder}`);
   for (const w of p.warnings) console.log(`  ⚠ ${w}`);
 }
@@ -569,12 +563,24 @@ function draftOf(ctx: Ctx): Ctx {
   return { ...ctx, registry: structuredClone(ctx.registry), saveRegistry: () => {} };
 }
 
-function printResolveHints(p: Plan): void {
+/**
+ * Commands that resolve each collision without a terminal. Only skillport
+ * sets can rename their own skill; any set can be the "other side".
+ */
+function printResolveHints(
+  setId: string,
+  renamable: boolean,
+  collisions: { name: string; original?: string; kind: HolderKind; holderId?: string }[],
+): void {
   console.log("  Resolve, then run update again:");
-  for (const c of p.collisions) {
-    console.log(`    skl resolve ${p.setId} ${c.original} --prefix`);
-    console.log(`    skl resolve ${p.setId} ${c.original} --rename <name>`);
-    console.log(`    skl resolve ${p.setId} ${c.original} --exclude`);
+  for (const c of collisions) {
+    const name = c.original ?? c.name;
+    if (renamable) {
+      console.log(`    skl resolve ${setId} ${name} --prefix -y`);
+      console.log(`    skl resolve ${setId} ${name} --rename <name> -y`);
+    }
+    console.log(`    skl resolve ${setId} ${name} --exclude -y`);
+    if (c.kind === "set" && c.holderId) console.log(`    skl resolve ${c.holderId} ${c.name} --rename <name> -y   (then: skl update ${c.holderId})`);
   }
 }
 
@@ -582,15 +588,15 @@ function report(p: Plan): void {
   console.log(`\n■ ${p.setId}`);
   const label = (s: Plan["skills"][number]) => (s.original === s.name ? s.name : `${s.original} → ${s.name}`);
   const by = (u: string) => p.skills.filter((s) => s.upstream === u).map(label);
-  line("new", by("new"));
-  line("changed", by("changed"));
-  line("removed", p.removed);
-  line("unselected", p.unselected);
-  line("adopt", p.adopted);
-  line("clean up", p.strays.map((at) => at.replace(`${process.env.HOME}/`, "~/")));
+  printItems("new", by("new"));
+  printItems("changed", by("changed"));
+  printItems("removed", p.removed);
+  printItems("unselected", p.unselected);
+  printItems("adopt", p.adopted);
+  printItems("clean up", p.strays.map((at) => at.replace(`${process.env.HOME}/`, "~/")));
   const same = by("unchanged").length;
   if (same) console.log(`  ${"unchanged".padEnd(11)}${count(same, "skill")}`);
-  line("local edits", p.skills.filter((s) => s.localEdits && s.write).map((s) => s.name));
+  printItems("local edits", p.skills.filter((s) => s.localEdits && s.write).map((s) => s.name));
   for (const { file, change } of p.rewrites) {
     console.log(`  rewrite    ${file}:${change.line} \`${change.from}\` → \`${change.to}\``);
   }
@@ -666,11 +672,11 @@ function checkCli(ctx: Ctx, id: string, set: SkillsCliSet): void {
     lock,
     state: readState(ctx.paths.stateDir),
   });
-  const up = upstreamChanges(lock, p.update);
-  p.update = [...up.changed, ...up.unknown];
-  reportCli(p, up.unknown);
-  for (const [name, url] of Object.entries(up.links)) console.log(`    ${name}: ${url}`);
-  if (up.unknown.length) console.log("  can't tell = not on GitHub, or GitHub did not answer; update re-fetches them.");
+  const upstream = upstreamChanges(lock, p.update);
+  p.update = [...upstream.changed, ...upstream.unknown];
+  reportCli(p, upstream.unknown);
+  for (const [name, url] of Object.entries(upstream.links)) console.log(`    ${name}: ${url}`);
+  if (upstream.unknown.length) console.log("  can't tell = not on GitHub, or GitHub did not answer; update re-fetches them.");
   if (!p.add.length && !p.update.length && !p.remove.length) console.log("  up to date.");
 }
 
@@ -712,8 +718,8 @@ function status(ctx: Ctx): number {
     console.log("\nRename rules you can undo:");
     for (const f of stale) console.log(`  ${f.message}`);
   }
-  const more = found.filter((f) => f.kind !== "edited" && f.kind !== "stale-rule").length;
-  if (problems || more) console.log(`\n${count(problems + more, "problem")} found. Details: skl doctor`);
+  const otherProblems = found.filter((f) => f.kind !== "edited" && f.kind !== "stale-rule").length;
+  if (problems || otherProblems) console.log(`\n${count(problems + otherProblems, "problem")} found. Details: skl doctor`);
   return 0;
 }
 
