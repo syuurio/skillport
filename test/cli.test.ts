@@ -169,3 +169,50 @@ test("check and diff also report an installer stuck on a question as needing you
   assert.equal(diff.status, 0, diff.stderr);
   assert.match(diff.stdout, /waiting for answers/);
 });
+
+test("M1: when npx skills fails after adding, the added skills are still recorded as the set's", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "skillport-m1-"));
+  const paths = defaultPaths(home);
+  const bin = path.join(home, "bin");
+  fs.mkdirSync(bin);
+  // A stand-in npx: lists a, b; add creates the folder and lock entry; update fails.
+  fs.writeFileSync(
+    path.join(bin, "npx"),
+    `#!/usr/bin/env node
+const fs = require("fs"), path = require("path");
+const args = process.argv.slice(2).filter((a) => a !== "-y" && !a.startsWith("skills@"));
+const home = process.env.HOME, lockFile = path.join(home, ".agents", ".skill-lock.json");
+const lock = fs.existsSync(lockFile) ? JSON.parse(fs.readFileSync(lockFile, "utf8")) : { version: 3, skills: {} };
+if (args[0] === "add" && args.includes("--list")) { console.log("│    a\\n│    b"); process.exit(0); }
+if (args[0] === "add") {
+  for (let i = 0; i < args.length; i++) if (args[i] === "-s") {
+    const n = args[i + 1];
+    fs.mkdirSync(path.join(home, ".agents", "skills", n), { recursive: true });
+    fs.writeFileSync(path.join(home, ".agents", "skills", n, "SKILL.md"), "x");
+    lock.skills[n] = { source: "acme/skills", skillPath: "", skillFolderHash: "", updatedAt: "" };
+  }
+  fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+  fs.writeFileSync(lockFile, JSON.stringify(lock));
+  process.exit(0);
+}
+if (args[0] === "update") { console.error("network down"); process.exit(1); }
+process.exit(0);
+`,
+  );
+  fs.chmodSync(path.join(bin, "npx"), 0o755);
+  fs.mkdirSync(path.dirname(paths.registry), { recursive: true });
+  fs.writeFileSync(paths.registry, JSON.stringify({ version: 1, sets: { acme: { type: "skills-cli", source: "acme/skills" } } }));
+  // a was added and recorded on an earlier run; this run adds b, then update of a fails.
+  fs.mkdirSync(path.join(paths.skillsDir, "a"), { recursive: true });
+  fs.writeFileSync(paths.skillLock, JSON.stringify({ version: 3, skills: { a: { source: "acme/skills", skillPath: "", skillFolderHash: "", updatedAt: "" } } }));
+  fs.mkdirSync(paths.stateDir, { recursive: true });
+  fs.writeFileSync(path.join(paths.stateDir, "state.json"), JSON.stringify({ version: 1, sets: {}, cli: { acme: { syncedAt: "", skills: ["a"] } } }));
+  const r = spawnSync(BIN, ["update", "acme", "-y"], {
+    env: { ...process.env, SKILLPORT_HOME: home, PATH: `${bin}:${process.env.PATH}` },
+    encoding: "utf8",
+  });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /npx skills update failed/);
+  const state = JSON.parse(fs.readFileSync(path.join(paths.stateDir, "state.json"), "utf8"));
+  assert.deepEqual(state.cli.acme.skills, ["a", "b"]);
+});

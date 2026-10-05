@@ -179,15 +179,35 @@ export function removeCliSkills(paths: Paths, names: string[]): void {
   if (r.status !== 0) throw new Error(`npx skills remove failed.\n${r.out.slice(-2000)}`);
 }
 
-export function applyCli(paths: Paths, p: CliPlan, links: string[]): void {
+/**
+ * Run the plan through npx skills: remove, add, update. `done` is called
+ * after each step that succeeded, so the caller can record ownership as it
+ * changes; a later step failing then cannot leave skills that were already
+ * added without an owner.
+ */
+export function applyCli(
+  paths: Paths,
+  p: CliPlan,
+  links: string[],
+  done: (step: "remove" | "add" | "update", names: string[]) => void = () => {},
+): void {
   const agents = agentArgs(links, paths.linkTargets["claude-code"]);
   const step = (args: string[]) => {
     const r = run(paths, args);
     if (r.status !== 0) throw new Error(`npx skills ${args[0]} failed.\n${r.out.slice(-2000)}`);
   };
-  if (p.remove.length) step(["remove", ...p.remove, "-g", "-y"]);
-  if (p.add.length) step(["add", p.source, "-g", ...agents, ...p.add.flatMap((n) => ["-s", n]), "-y"]);
-  if (p.update.length) step(["update", ...p.update, "-g", "-y"]);
+  if (p.remove.length) {
+    step(["remove", ...p.remove, "-g", "-y"]);
+    done("remove", p.remove);
+  }
+  if (p.add.length) {
+    step(["add", p.source, "-g", ...agents, ...p.add.flatMap((n) => ["-s", n]), "-y"]);
+    done("add", p.add);
+  }
+  if (p.update.length) {
+    step(["update", ...p.update, "-g", "-y"]);
+    done("update", p.update);
+  }
 }
 
 /**

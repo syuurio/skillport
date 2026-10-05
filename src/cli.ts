@@ -270,6 +270,8 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
     console.log(`  applied.${fs.existsSync(trash) ? ` Previous versions: ${trash}` : ""}`);
     return 0;
   } catch (e) {
+    // "Stop", Esc or Ctrl-C ends the whole command, not just this set.
+    if (e instanceof Cancelled) throw e;
     // Not a failure of the set: it needs you. Reported, not counted as an error.
     if (noticeIfNeedsYou(e, id)) return 0;
     console.error(`✗ ${id}: ${(e as Error).message}`);
@@ -325,11 +327,19 @@ async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
     if (fresh.length) {
       throw new Error(`Something changed since the plan was made:\n  ${fresh.map((c) => `${c.name} now collides with ${c.holder}`).join("\n  ")}`);
     }
-    applyCli(ctx.paths, p, links);
+    // Ownership is written after every npx skills step that succeeds.
+    const record = (skills: string[]) => {
+      const state = readState(ctx.paths.stateDir);
+      state.cli = { ...(state.cli ?? {}), [id]: { syncedAt: new Date().toISOString(), skills: [...new Set(skills)].sort() } };
+      writeState(ctx.paths.stateDir, state);
+    };
+    let owned = [...before];
+    applyCli(ctx.paths, p, links, (step, names) => {
+      owned = step === "remove" ? owned.filter((n) => !names.includes(n)) : [...owned, ...names];
+      record(owned);
+    });
+    record(ownedAfter);
     applyCliLinks(ctx.paths, linkChanges);
-    const state = readState(ctx.paths.stateDir);
-    state.cli = { ...(state.cli ?? {}), [id]: { syncedAt: new Date().toISOString(), skills: ownedAfter } };
-    writeState(ctx.paths.stateDir, state);
     if (resolved) ctx.saveRegistry(draft.registry);
     ctx.registry = draft.registry;
     console.log("  applied.");
