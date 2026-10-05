@@ -83,7 +83,7 @@
 - **`-a` 要重複寫**：`-a codex -a claude-code`。逗號寫法 `-a codex,claude-code` 會被拒絕（`Invalid agents`，已驗證）。M0 當時記錄的逗號寫法是錯的：那次測試的參數被 zsh 當成一個字串傳入，結果不成立；同一次測得的「只給 `-a codex` 也會建 Claude symlink」也一併作廢。
 - `-a codex` 讓實體放在 `~/.agents/skills`；`links` 含 Claude Code 時加 `-a claude-code`，得到相對 symlink（已驗證）。只給 `-a claude-code` 會把實體寫進 `~/.claude/skills`。
 - **`npx skills add` 會直接覆蓋同名目錄，不警告**（已驗證：在沙盒 `~/.agents/skills/tdd` 放自己的 `SKILL.md`，安裝後被換掉）。所以呼叫前先檢查：撞到 skillport 管理的 skill、其他 `npx skills` 來源、`~/.agents/skills` 下的無主目錄、或 `~/.claude/skills` 下的非 symlink，就中止。
-- **每個 set 只動自己裝的 skill**：lock 只記「從哪個來源來」，不記「是哪個 set 要的」，所以 skillport 在 state 的 `cli` 欄位記下每個 skills-cli set 叫 `npx skills` 裝過哪些 skill。`update` 與 `remove` 只會移除記錄裡、而且這個 set 不再要的 skill；同一來源的其他 skill（你手動裝的、別處裝的）列為「left alone」，不碰（`npx skills remove` 是真的刪除，不進 trash）。同一個來源只能有一個 skills-cli set（registry 讀取時檢查）。
+- **每個 set 只動自己裝的 skill**：lock 只記「從哪個來源來」，不記「是哪個 set 要的」，所以 skillport 在 state 的 `cli` 欄位記下每個 skills-cli set 叫 `npx skills` 裝過哪些 skill。`update` 與 `remove` 只會移除記錄裡、而且這個 set 不再要的 skill；同一來源中不在記錄裡的 skill（你手動裝的、別處裝的）列為「left alone」，不更新、不記錄、不移除，**即使這個 set 也想要同名的 skill**（`npx skills remove` 是真的刪除，不進 trash；收為己有會讓之後的 remove 刪掉它）。要讓 set 接手一個手動裝的 skill：先 `npx skills remove <name> -g`，再 `skl update <set>`。同一個來源只能有一個 skills-cli set（registry 讀取時檢查）。
 - skills-cli 的名稱屬於 `npx skills`，skillport 不改名；撞名時只能在這一邊 `exclude`，或去改另一邊（skillport 管理的 set）的名稱。
 - 執行時用真實 `HOME`（它要寫進 `~/.agents`），但環境變數一樣是最小集合（§9）。
 
@@ -435,7 +435,7 @@ skills-cli set 不需要 adopt：`npx skills` 自己決定要不要覆蓋，skil
 - `register` 執行 installer 的 `--help` 前會先徵求同意，因為那就是在執行 vendor 的程式碼。
 - 所有 npm/npx 子行程設 `logs-max=0`、`logs-dir` 指向 staging：npm 會把完整 argv（含 `--token=`）寫進 debug log（已驗證並修正）。npm 指令的 cwd 設在 staging，專案層的 `.npmrc` 無法改 registry。
 - npm 的 `path` 與 installer 的 `harvest` 從根目錄一路往下，每一層都必須是真的資料夾：`package/skills -> /某個本機資料夾` 這種 symlink 會被拒絕（已驗證：macOS 的 tar 會保留封包裡的 symlink）。
-- 憑證旗標以「字」比對：旗標名稱拆成字（以 `-`、`_` 分隔）後，含 token、key、apikey、secret、auth、password、passwd、credential(s)、license、pat 其中之一就算；`--author`、`--keyboard` 不算，`--no-*` 不算；值是路徑或網址時也不算。
+- 憑證旗標以「字」比對：旗標名稱拆成字（以 `-`、`_` 與 camelCase 分隔）後，含 token、key、apikey、secret、auth、password、passwd、credential(s)、license、pat 其中之一就算；`--author`、`--keyboard`、`--no-*` 不算；最後一個字是 file、path、dir、method、type、mode、url、host、server、endpoint、name 時不算（`--key-file` 不算，`--host-token` 算）；值是路徑或網址不算；只有名稱恰為 `--license`、值為標準授權代號（MIT、Apache-2.0…）時不算。
 - vendor 內容只接受一般檔案與目錄；symlink、FIFO 等在讀取前就拒絕（symlink 會把本機任意檔案帶進每個 agent 都讀的 skill，FIFO 會讓讀取永久卡住）。名稱在寫入任何檔案前驗證。
 
 ## 10. 可還原性

@@ -148,3 +148,13 @@ test("round 4: credential matching skips file, method and license-id flags", () 
   assert.equal(found("--license", "ABCD-1234-EFGH"), "ABCD-1234-EFGH");
   assert.equal(found("--accessToken=abc"), "abc");
 });
+
+test("exceptions do not open bypasses: a qualifier counts only as the last word, SPDX only on --license", () => {
+  const found = (...argv: string[]) => extractSecret(["npx", "x@1.0.0", ...argv]).secret;
+  assert.equal(found("--license-key=CC-ABCD-SECRET"), "CC-ABCD-SECRET");
+  assert.equal(found("--host-token=abc"), "abc");
+  assert.equal(found("--file-token", "abc"), "abc");
+  assert.equal(found("--license", "Apache-2.0"), undefined);
+  assert.equal(found("--license", "GPL-3.0-or-later"), undefined);
+  assert.equal(found("--key-file", "id.pem"), undefined);
+});

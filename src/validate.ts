@@ -30,21 +30,27 @@ const SECRET_WORDS = new Set([
   "token", "key", "apikey", "secret", "auth", "password", "passwd", "credential", "credentials", "license", "pat",
 ]);
 
-// Words that make a flag about a credential rather than the credential itself:
-// --key-file, --auth-method, --token-url.
+// A last word that makes a flag about a credential rather than the credential
+// itself: --key-file, --auth-method, --token-url. Only the last word counts:
+// --host-token and --file-token still carry a token.
 const NOT_THE_SECRET = new Set(["file", "path", "dir", "method", "type", "mode", "url", "host", "server", "endpoint", "name"]);
-// License identifiers are not secrets: --license MIT.
-const SPDX_LIKE = /^(MIT|ISC|Unlicense|0BSD|(Apache|BSD|GPL|LGPL|AGPL|MPL|EPL|CC|BSL)[A-Za-z0-9.+-]*)$/i;
+// Exact license identifiers, for a flag named exactly --license: --license MIT.
+const SPDX_IDS = new Set([
+  "mit", "isc", "unlicense", "0bsd", "apache-2.0", "bsd-2-clause", "bsd-3-clause", "mpl-2.0", "epl-2.0", "bsl-1.0", "cc0-1.0",
+  "gpl-2.0", "gpl-3.0", "lgpl-2.1", "lgpl-3.0", "agpl-3.0",
+]);
+const isSpdx = (v: string) => SPDX_IDS.has(v.toLowerCase().replace(/-(only|or-later)$/, ""));
 
 function isSecretFlag(flag: string): boolean {
   if (!/^--?[A-Za-z]/.test(flag) || /^--no-/.test(flag)) return false;
   // Words split on -, _ and camelCase humps: --accessToken -> access, token.
-  return flag
+  const words = flag
     .replace(/^-+/, "")
     .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
     .toLowerCase()
-    .split(/[-_]/)
-    .reduce((hit, w, _, words) => hit || (SECRET_WORDS.has(w) && !words.some((x) => NOT_THE_SECRET.has(x))), false);
+    .split(/[-_]/);
+  if (NOT_THE_SECRET.has(words[words.length - 1])) return false;
+  return words.some((w) => SECRET_WORDS.has(w));
 }
 // Values that are clearly not a credential: a path or a URL.
 const NOT_A_SECRET = /^(\.{0,2}\/|~\/|https?:\/\/)/;
@@ -62,7 +68,7 @@ export function extractSecret(argv: string[]): { command: string[]; secret?: str
     if (!isSecretFlag(flag)) continue;
     const value = eq > 0 ? command[i].slice(eq + 1) : command[i + 1];
     if (!value || value === "{secret}" || value.startsWith("-") || NOT_A_SECRET.test(value)) continue;
-    if (/license/i.test(flag) && SPDX_LIKE.test(value)) continue;
+    if (/^--?license$/i.test(flag) && isSpdx(value)) continue;
     if (eq > 0) command[i] = `${flag}={secret}`;
     else command.splice(i, 2, `${flag}={secret}`);
     return { command, secret: value };
