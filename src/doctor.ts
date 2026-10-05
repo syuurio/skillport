@@ -3,6 +3,7 @@ import path from "node:path";
 import { isOursOrFree, moveToTrash, trashDir } from "./apply.ts";
 import { type Paths, type Registry, isManaged, linkDirsFor } from "./registry.ts";
 import type { LockEntry, State } from "./state.ts";
+import { RENAMED_IN_INSTALLER } from "./plan.ts";
 import { isValidSkillName } from "./transform.ts";
 import { treeHash, treeHashWithout } from "./treehash.ts";
 
@@ -28,6 +29,8 @@ interface Owned {
   /** Folders that should hold our link to it. */
   links: string[];
   owner: string;
+  /** The skillport set that owns it; absent for npx skills. */
+  setId?: string;
 }
 
 /**
@@ -53,7 +56,7 @@ function ownedSkills(
     const links = set ? linkDirsFor(paths, set) : [];
     for (const [name, s] of Object.entries(st.skills)) {
       if (!valid(name, `state.json (set "${id}")`)) continue;
-      out.push({ name, dest: path.join(paths.skillsDir, name), installed: s.installed, links, owner: `set "${id}"` });
+      out.push({ name, dest: path.join(paths.skillsDir, name), installed: s.installed, links, owner: `set "${id}"`, setId: id });
     }
   }
   for (const name of Object.keys(lock)) {
@@ -188,8 +191,15 @@ export function diagnose(paths: Paths, reg: Registry, state: State, lock: Record
         findings.push({ kind: "stale-rule", message: `${id}: ${original} is no longer shipped, so rename ${original} → ${rule.to} does nothing; remove it with ${undo}` });
         continue;
       }
-      const held = owned.some((o) => o.name === original && o.owner !== `set "${id}"`);
-      if (!held && rule.reason !== "renamed in installer") {
+      // Still needed while anything else holds the original name: another
+      // owner, an unowned folder in skillsDir, or a link skillport did not make.
+      const originalDest = path.join(paths.skillsDir, original);
+      const ownOwn = owned.some((o) => o.name === original && o.setId === id);
+      const held =
+        owned.some((o) => o.name === original && o.setId !== id) ||
+        (!ownOwn && Boolean(fs.lstatSync(originalDest, { throwIfNoEntry: false }))) ||
+        (!ownOwn && paths.links.some((d) => !isOursOrFree(path.join(d, original), originalDest)));
+      if (!held && rule.reason !== RENAMED_IN_INSTALLER) {
         findings.push({ kind: "stale-rule", message: `${id}: rename ${original} → ${rule.to} (${rule.reason}) is no longer needed; undo with ${undo}` });
       }
     }

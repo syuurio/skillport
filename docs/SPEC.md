@@ -191,7 +191,10 @@
 | `unattended` | installer | 非互動執行時附加的旗標，例如 `["-y"]`；不需要就寫 `[]`；省略 = 只能互動執行 |
 | `stage` / `harvest` | installer | 預設 `[".claude"]` / `".claude/skills"` |
 | `secret` | installer | `"keychain"`：從 Keychain（service `skillport`、account = set 名稱）讀取 |
-| `package` / `path` | npm | 固定版本的套件、套件內 skill 目錄 |
+| `package` / `path` | npm | 固定到 `name@x.y.z` 的 registry 套件（git URL、`owner/repo`、網址、本機路徑一律拒絕）、套件內 skill 目錄（相對路徑，不得有 `..`） |
+| `stage` / `harvest` | installer | 沙盒 HOME 裡的相對路徑，不得有 `..` |
+
+registry 每次讀取都完整驗證（不只 wizard 寫入時），有問題就停止並列出。
 
 版本一律固定在 `command` / `package` 裡。升級 installer 是你的決定（§7.3 只提示）。
 
@@ -310,13 +313,15 @@ skills-cli 有改動的 skill 附上該資料夾在 GitHub 的 commit 歷史連�
 | 問題 | 例子 | `--fix` 的處理 |
 |---|---|---|
 | 散落的 vendor 副本 | 手動重跑了 Emil installer，`~/.codex/skills/animate` 又出現 | 內容和受管版本相同 → 移到 trash；不同 → 只報告 |
-| 斷掉的 symlink | `~/.claude/skills/x` 指向不存在的目錄 | 移除 symlink |
+| 斷掉的 symlink | `~/.claude/skills/x` 指向不存在的目錄 | 指向 `~/.agents/skills` 的：移到 trash；指向別處的：只報告（不是 skillport 的） |
 | 缺少的 symlink | 受管 skill 在 `~/.claude/skills` 沒有 link | 補建 |
 | 撞名 | 兩個負責者想要同一個目錄名 | 只報告 |
 | 偏離 | 受管 skill 的 tree hash 和記錄不同（有人手動改過） | 只報告 |
 | 無主目錄 | `~/.agents/skills` 下有目錄不屬於任何負責者 | 只報告（用 `skl adopt` 或撞名提示裡的「收進來」） |
 | 不合法的名稱 | state 或 lock 裡有 `../x` 這類名稱 | 只報告，且絕不拿來組路徑 |
-| 不再需要的改名規則 | 撞名的對象已經不在；或 vendor 已不再提供原本那個 skill。在 installer 裡自己選的改名是偏好，不算 | 只報告，附上 `skl resolve <set> <skill> --undo` |
+| 不再需要的改名規則 | 原名已經沒有別的佔用者（其他 set、`npx skills`、`~/.agents/skills` 的資料夾、不是 skillport 建的 link 都算佔用）；或 vendor 已不再提供原本那個 skill。在 installer 裡自己選的改名是偏好，不算 | 只報告（`status` 也會列出），附上 `skl resolve <set> <skill> --undo` |
+
+每個修正在執行當下都會再確認一次對象仍是報告時的狀態（例如 link 還是同一條、副本仍相同），不是就跳過。
 
 「散落副本」的判定：目錄名稱等於某個受管 skill（skillport 或 `npx skills` 管理），且位於已知 agent 目錄（`~/.claude/skills`、`~/.codex/skills`、`~/.cursor/skills`、`~/.config/opencode/skills`、`~/.gemini/skills`），且不是指向 `~/.agents/skills` 的 symlink。內容和受管版本相同，或只多了 installer 為 Codex 加的 `agents/openai.yaml`（`agents/` 裡只有這一個檔案，且受管版本沒有 `agents/`）時，算「相同」；你自己加的任何檔案都讓它算「不同」，`--fix` 會移到 trash；內容不同只報告。
 
@@ -343,11 +348,11 @@ skills-cli set 不需要 adopt：`npx skills` 自己決定要不要覆蓋，skil
 4. 多選要連結的 agent（目前只有已驗證的 Claude Code）；Codex、Cursor、OpenCode 直接讀 `~/.agents/skills`，只做說明。
 5. 顯示 registry 內容，確認後寫入，接著詢問是否立刻安裝：installer 會在沙盒內互動執行，**由 vendor 自己的問題**決定裝哪些 skill、要不要改名，結果寫回 registry（§5.4）。
 
-「假裝成哪個 agent」（`stage`/`harvest`）不再詢問，固定 `.claude`；需要時用 `--json` 指定。沒有終端機時用 `--json` 傳入整筆設定。寫入前驗證：set id、必要欄位、npm 版本固定、`{secret}` 與 `secret` 一致、`links` 為已知目標，且拒絕 token 明文。
+「假裝成哪個 agent」（`stage`/`harvest`）不再詢問，固定 `.claude`；需要時用 `--json` 指定。沒有終端機時用 `--json` 傳入整筆設定：先印出要寫入的內容，`--dry-run` 停在這裡，沒有終端機要加 `-y`。寫入前驗證：set id、必要欄位、npm 版本固定、`{secret}` 與 `secret` 一致、`links` 為已知目標，且拒絕 token 明文。
 
 ### 7.10 `skl resolve <set> <skill> (--prefix [p] | --rename <name> | --exclude | --undo)`
 
-非互動處理撞名，結果和互動選擇一樣寫進 registry 與 state（§8.4）。`--undo` 撤銷一條 `rename` 或 `exclude`。
+非互動處理撞名，結果和互動選擇一樣寫進 registry 與 state（§8.4）。先印出「原本 → 之後」，`--dry-run` 停在這裡，終端機上確認，沒有終端機要加 `-y`。`--undo` 撤銷一條 `rename` 或 `exclude`。skills-cli set 只能 `--exclude` / `--undo`。
 
 ## 8. 撞名
 
@@ -378,7 +383,7 @@ skills-cli set 不需要 adopt：`npx skills` 自己決定要不要覆蓋，skil
 ```
 
 - 每個選項的新名稱都先驗證規則；仍然撞名時，下一輪規劃會再問一次。
-- 「收進來」只在撞到無主目錄時出現：內容和這個 set 要裝的版本相同才會收進來，不同就再問一次（這時不再提供收進來）。
+- 「收進來」只在撞到無主目錄時出現，而且只作用在這一個 skill（含清理它在 agent 目錄裡的相同副本）：內容和這個 set 要裝的版本相同才會收進來，不同就再問一次（這時不再提供收進來）。`skl adopt` 才是整個 set 一起收。
 - 「改另一邊」在另一邊是 skillport 管理、且能非互動執行的 set 時可選：輸入那邊 skill 的新名稱，規則立即寫進 registry（原因記為 `made room for set "<這個 set>"`），並先更新那個 set 讓出名稱，再繼續這個 set。另一邊是 `npx skills`、只能互動執行，或正在 `--dry-run` 時不可選，並說明原因。
 - 這個 set 自己的回答（加前綴、改名、排除）先放在草稿裡，套用後才寫進 registry；`--dry-run` 或回答「不套用」都不會寫入。
 - skills-cli set 撞名時只能在自己這邊排除，或去改另一邊（skillport 管理的 set）。
@@ -418,7 +423,7 @@ skills-cli set 不需要 adopt：`npx skills` 自己決定要不要覆蓋，skil
 - 已知限制：vendor installer 只接受命令列參數傳入 token，執行期間同使用者的其他行程可用 `ps` 看到。
 - 寫入 Keychain 時，token 一律經由 stdin 交給 `security -i`，不放在命令列；只接受 token 常見字元（`A-Za-z0-9._~+/=:-`），其他字元要改用 `skl secret` 的終端機提示輸入。
 - `@animationsdev/install@0.2.3` 預設 API 是 `http://animations.dev`，token 會先以明文送出再被 308 轉到 HTTPS。registry 範例固定加上 `--api=https://animations.dev`。
-- `npm` 類型不執行套件程式碼，只解開檔案。
+- `npm` 類型不執行套件程式碼，只解開檔案：只接受固定版本的 registry 套件，`npm pack` 一律帶 `--ignore-scripts`，並使用最小環境變數。npm 本身也接受 git URL 與 `owner/repo`，而對 git 來源會執行 repo 的 `prepare` script，所以這些寫法在讀 registry 與 wizard 兩處都被擋下（已驗證：用含 `prepare` 的本機 git repo 測試）。
 - vendor 行程（installer、`--help` 偵測）只拿到最小環境變數：`PATH`、`TMPDIR`、語系與終端機設定、proxy 與 CA 設定，加上假 `HOME` 與 npm 設定。shell 裡的 API key、token、`SSH_AUTH_SOCK` 都不會傳過去。
 - `register` 執行 installer 的 `--help` 前會先徵求同意，因為那就是在執行 vendor 的程式碼。
 - 所有 npm/npx 子行程設 `logs-max=0`、`logs-dir` 指向 staging：npm 會把完整 argv（含 `--token=`）寫進 debug log（已驗證並修正）。npm 指令的 cwd 設在 staging，專案層的 `.npmrc` 無法改 registry。
@@ -436,7 +441,7 @@ skills-cli set 不需要 adopt：`npx skills` 自己決定要不要覆蓋，skil
 |---|---|
 | Emil 的 skill 已移到 `~/.agents/_archive-2026-10-05/` | `skl add aiforui`、`skl add animationsdev` 重新安裝 |
 | `~/.agents/skills/motion` 與 `~/.claude/skills/motion`（與 `motion-ai@14.1.0` 完全相同） | `skl adopt` 收進 `motion` set |
-| `~/.claude/skills/motion-brief`（animationsdev 舊版，不受管理） | `adopt` 時移到 trash，由 `animationsdev` set 的新版取代 |
+| `~/.claude/skills/motion-brief`（animationsdev 舊版，不受管理，內容和新版不同） | `adopt` 只收相同的副本，所以不會自動處理；2026-10-05 由你手動清掉，新版由 `animationsdev` set 安裝 |
 | Matt：Claude plugin `mattpocock-skills@claude-community` | 改成 `matt` skills-cli set；你自己從 marketplace 移除 plugin |
 | `~/dev/skillport` 現有程式碼 | 保留 acquire、staging、trash、Keychain；移除前綴與內文改寫 |
 

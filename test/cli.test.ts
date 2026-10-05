@@ -154,3 +154,13 @@ test("status counts a skills-cli set's skills whatever spelling its source uses"
   const r = spawnSync(BIN, ["status"], { env: { ...process.env, SKILLPORT_HOME: home }, encoding: "utf8" });
   assert.match(r.stdout, /m\s+skills-cli\s+1 skill\b/);
 });
+
+test("check and diff also report an installer stuck on a question as needing you", () => {
+  const t = sandbox({ command: ["node", "-e", "console.log('Continue? (y/n)');process.exit(1)", "--"] });
+  const check = t.skl("check", "emil");
+  assert.equal(check.status, 0, check.stderr);
+  assert.match(check.stdout, /waiting for answers/);
+  const diff = t.skl("diff", "emil", "animate");
+  assert.equal(diff.status, 0, diff.stderr);
+  assert.match(diff.stdout, /waiting for answers/);
+});

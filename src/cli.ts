@@ -79,7 +79,7 @@ async function main(argv: string[]): Promise<number> {
   if (writes.includes(cmd) || (cmd === "doctor" && rest.includes("--fix"))) cleanups.add(acquireLock(paths));
   switch (cmd) {
     case "register":
-      return register(ctx, args[0], rest);
+      return register(ctx, args[0], rest, flags);
     case "status":
       return status(ctx);
     case "doctor":
@@ -105,7 +105,7 @@ async function main(argv: string[]): Promise<number> {
     case "remove":
       return remove(ctx, args[0], flags);
     case "resolve":
-      return resolveCmd(ctx, rest);
+      return resolveCmd(ctx, args, rest, flags);
     case "secret":
       getSet(ctx.registry, args[0]);
       storeSecret(args[0]);
@@ -117,11 +117,21 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-async function register(ctx: Ctx, id: string | undefined, rest: string[]): Promise<number> {
+async function register(ctx: Ctx, id: string | undefined, rest: string[], flags: Flags): Promise<number> {
   const jsonAt = rest.indexOf("--json");
   if (jsonAt >= 0) {
     if (!id) throw new Error(USAGE);
     const set = JSON.parse(rest[jsonAt + 1] ?? "") as SkillSet;
+    const problems = validateSet(id, set, ctx.registry);
+    if (problems.length) throw new Error(`Not registered:\n  ${problems.join("\n  ")}`);
+    console.log(`Plan: add to ${ctx.paths.registry}\n${JSON.stringify({ [id]: set }, null, 2)}`);
+    if (flags.dryRun) {
+      console.log("dry run: registry unchanged.");
+      return 0;
+    }
+    const refuse = needsYes(flags);
+    if (refuse) throw new Error(refuse);
+    if (!flags.yes && !(await confirm("Save it?"))) return 0;
     return saveSet(ctx, id, set);
   }
   if (!isInteractive()) throw new Error("register asks questions; without a terminal pass: skl register <set> --json '<entry>'");
@@ -196,7 +206,7 @@ function dropStaging(staging: string): void {
 }
 
 /** Fetch a set into staging; `replan` reads `ctx.registry` each time. */
-function fetchSet(ctx: Ctx, id: string, set: ManagedSet, staging: string, interactive: boolean, adopt = false) {
+function fetchSet(ctx: Ctx, id: string, set: ManagedSet, staging: string, interactive: boolean, adopt: boolean | string[] = false) {
   const vendorDir = acquire(id, set, staging, { interactive });
   return (adoptNow = adopt) =>
     plan({
@@ -239,11 +249,12 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
   }
   // Collision answers go into a draft and reach the registry file only when
   // the plan is applied, never on --dry-run or a "no".
-  const draft: Ctx = { ...ctx, registry: structuredClone(ctx.registry), saveRegistry: () => {} };
+  const draft = draftOf(ctx);
   let resolved = false;
   const staging = stagingFor(ctx, id);
   try {
-    let adopt = Boolean(flags.adopt);
+    // `skl adopt` takes over everything; "take over" in the prompt, one name.
+    let adopt: boolean | string[] = flags.adopt ? true : [];
     const replan = fetchSet(draft, id, set, staging, interactive, adopt);
     let p = replan(adopt);
     while (p.collisions.length) {
@@ -253,8 +264,8 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
         return 1;
       }
       for (const c of p.collisions) {
-        const outcome = await resolveInteractively(ctx, draft, id, c, { adopt, dryRun: flags.dryRun });
-        if (outcome === "adopt") adopt = true;
+        const outcome = await resolveInteractively(ctx, draft, id, c, { adopt: adopt === true || adopt.includes(c.name), dryRun: flags.dryRun });
+        if (outcome === "adopt" && Array.isArray(adopt)) adopt = [...adopt, c.name];
         else if (outcome === "other" && c.holderId) draft.registry.sets[c.holderId] = structuredClone(ctx.registry.sets[c.holderId]);
         else resolved = true;
       }
@@ -305,7 +316,7 @@ async function gate(flags: Flags, work: boolean, resolved: boolean): Promise<boo
 async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
   const refuse = needsYes(flags);
   if (refuse) throw new Error(refuse);
-  const draft: Ctx = { ...ctx, registry: structuredClone(ctx.registry), saveRegistry: () => {} };
+  const draft = draftOf(ctx);
   let resolved = false;
   try {
     const { source } = getSet(draft.registry, id) as SkillsCliSet;
@@ -318,6 +329,7 @@ async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
         available,
         lock: readSkillLock(ctx.paths.skillLock),
         state: readState(ctx.paths.stateDir),
+        pluginSkills: pluginSkillNames(ctx.paths.claudePlugins),
       });
     let p = replan();
     while (p.collisions.length) {
@@ -333,14 +345,25 @@ async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
       }
       for (const c of p.collisions) {
         log.warn(`Name collision: ${c.name}\nalready held by ${c.holder}\nincoming from "${id}" (npx skills; its names cannot be changed)`);
+        const blocked = otherSideBlocked(ctx, c, flags.dryRun);
         const action = await choose(`What should happen to ${c.name}?`, [
           { value: "exclude", label: `Don't install it from "${id}"` },
-          { value: "abort", label: "Stop", hint: c.kind === "set" ? "then rename the other side with skl resolve" : undefined },
+          {
+            value: "other",
+            label: c.kind === "set" ? `Rename it in set "${c.holderId}" instead` : "Rename the other one",
+            disabled: blocked,
+          },
+          { value: "abort", label: "Stop" },
         ]);
         if (action === "abort") throw new Cancelled();
-        setResolution(draft, id, c.name, { exclude: true });
+        if (action === "other" && c.holderId) {
+          await renameOtherSide(ctx, c.holderId, c.name, id);
+          draft.registry.sets[c.holderId] = structuredClone(ctx.registry.sets[c.holderId]);
+        } else {
+          setResolution(draft, id, c.name, { exclude: true });
+          resolved = true;
+        }
       }
-      resolved = true;
       p = replan();
     }
     const lock = readSkillLock(ctx.paths.skillLock);
@@ -390,6 +413,36 @@ function reportCli(p: CliPlan, unknown: string[]): void {
   line("removed", p.remove);
   line("unselected", p.unselected);
   for (const c of p.collisions) console.log(`  ✗ ${c.name} collides with ${c.holder}`);
+  for (const w of p.warnings) console.log(`  ⚠ ${w}`);
+}
+
+/** Why "rename the other side" is not offered for this collision, if it is not. */
+function otherSideBlocked(ctx: Ctx, c: Pick<Collision, "kind" | "holderId">, dryRun: boolean): string | undefined {
+  const holder = c.kind === "set" && c.holderId ? ctx.registry.sets[c.holderId] : undefined;
+  if (!holder) return "skillport only renames skills it installs";
+  if (!isManaged(holder)) return "that set belongs to npx skills";
+  if (!runsUnattended(holder)) return `set "${c.holderId}" only runs interactively`;
+  if (dryRun) return "not in --dry-run: it updates the other set";
+  return undefined;
+}
+
+/**
+ * Free a name by renaming the skillport set that holds it: the rule is saved
+ * to the registry right away (you chose it explicitly) and that set is
+ * updated first. If you decline its update, the rule stays and the same
+ * collision comes back.
+ */
+async function renameOtherSide(ctx: Ctx, holderId: string, name: string, forSet: string): Promise<void> {
+  const holder = getSet(ctx.registry, holderId) as ManagedSet;
+  const theirs = readState(ctx.paths.stateDir).sets[holderId]?.skills[name]?.original ?? name;
+  const to = await ask(`New name for ${holderId}'s ${theirs}`, {
+    initial: withPrefix(theirs, holder.prefix ?? holderId),
+    validate: (v) => (!isValidSkillName(v) ? "Use a-z, 0-9 and single hyphens." : v === name ? "That is the colliding name." : undefined),
+  });
+  setResolution(ctx, holderId, theirs, { to, reason: `made room for set "${forSet}"` });
+  log.info(`Saved. Updating set "${holderId}" first so ${name} is free.`);
+  const code = await sync(ctx, holderId, { yes: false, interactive: false, dryRun: false });
+  if (code !== 0) log.warn(`Set "${holderId}" was not updated; ${name} is still taken.`);
 }
 
 /**
@@ -408,15 +461,7 @@ async function resolveInteractively(
   const set = getSet(draft.registry, id) as ManagedSet;
   const prefixed = withPrefix(c.original, set.prefix ?? id);
   const holder = c.kind === "set" && c.holderId ? ctx.registry.sets[c.holderId] : undefined;
-  const otherBlocked = !holder
-    ? "skillport only renames skills it installs"
-    : !isManaged(holder)
-      ? "that set belongs to npx skills"
-      : !runsUnattended(holder)
-        ? `set "${c.holderId}" only runs interactively`
-        : opts.dryRun
-          ? "not in --dry-run: it updates the other set"
-          : undefined;
+  const otherBlocked = otherSideBlocked(ctx, c, opts.dryRun);
   log.warn(`Name collision: ${c.name}\nalready held by ${c.holder}\nincoming from set "${id}"`);
   const action = await choose(`How should "${id}" install ${c.original}?`, [
     { value: "prefix", label: "Add a prefix", hint: isValidSkillName(prefixed) ? prefixed : undefined },
@@ -440,15 +485,8 @@ async function resolveInteractively(
   }
   const valid = (v: string) =>
     !isValidSkillName(v) ? "Use a-z, 0-9 and single hyphens." : v === c.name ? "That is the colliding name." : undefined;
-  if (action === "other" && holder && isManaged(holder) && c.holderId) {
-    const theirs = readState(ctx.paths.stateDir).sets[c.holderId]?.skills[c.name]?.original ?? c.name;
-    const to = await ask(`New name for ${c.holderId}'s ${theirs}`, {
-      initial: withPrefix(theirs, holder.prefix ?? c.holderId),
-      validate: valid,
-    });
-    setResolution(ctx, c.holderId, theirs, { to, reason: `made room for set "${id}"` });
-    log.info(`Saved. Updating set "${c.holderId}" first so ${c.name} is free.`);
-    await sync(ctx, c.holderId, { yes: false, interactive: false, dryRun: false });
+  if (action === "other" && c.holderId) {
+    await renameOtherSide(ctx, c.holderId, c.name, id);
     return "other";
   }
   // The name is editable and validated; one that still collides is caught by
@@ -485,20 +523,50 @@ function setResolution(ctx: Ctx, id: string, original: string, r: Resolution): v
   ctx.saveRegistry(ctx.registry);
 }
 
-function resolveCmd(ctx: Ctx, rest: string[]): number {
-  const [id, skill, mode, value] = rest;
+/**
+ * `skl resolve`: one registry edit, shown as a before/after plan first like
+ * every other change (--dry-run stops there; a terminal confirms; -y without).
+ */
+async function resolveCmd(ctx: Ctx, args: string[], rest: string[], flags: Flags): Promise<number> {
+  const [id, skill] = args;
+  const modeAt = rest.findIndex((a) => ["--exclude", "--undo", "--prefix", "--rename"].includes(a));
+  const mode = rest[modeAt];
+  const value = rest[modeAt + 1] && !rest[modeAt + 1].startsWith("-") ? rest[modeAt + 1] : undefined;
+  if (!id || !skill || !mode) throw new Error(USAGE);
   const set = getSet(ctx.registry, id);
-  if (!skill || !mode) throw new Error(USAGE);
-  if (mode === "--exclude") setResolution(ctx, id, skill, { exclude: true });
-  else if (mode === "--undo") setResolution(ctx, id, skill, { undo: true });
-  else if (mode === "--prefix" || mode === "--rename") {
+  let change: Resolution;
+  if (mode === "--exclude") change = { exclude: true };
+  else if (mode === "--undo") change = { undo: true };
+  else {
     const prefix = value ?? (isManaged(set) ? (set.prefix ?? id) : id);
     const to = mode === "--prefix" ? withPrefix(skill, prefix) : value;
     if (!to || !isValidSkillName(to)) throw new Error(`"${to ?? ""}" is not a valid skill name.`);
-    setResolution(ctx, id, skill, { to, reason: "resolved by hand" });
-  } else throw new Error(USAGE);
-  console.log(`Recorded in ${ctx.paths.registry}. Run: skl update ${id}`);
+    change = { to, reason: "resolved by hand" };
+  }
+  const draft = draftOf(ctx);
+  setResolution(draft, id, skill, change);
+  const show = (r: Registry) => {
+    const e = r.sets[id] as { rename?: Record<string, { to: string }>; exclude?: string[] };
+    const renamed = e.rename?.[skill]?.to;
+    return renamed ? `renamed to ${renamed}` : e.exclude?.includes(skill) ? "excluded" : "installed as is";
+  };
+  console.log(`Plan: ${id}/${skill}: ${show(ctx.registry)} → ${show(draft.registry)} (in ${ctx.paths.registry})`);
+  if (flags.dryRun) {
+    console.log("dry run: registry unchanged.");
+    return 0;
+  }
+  const refuse = needsYes(flags);
+  if (refuse) throw new Error(refuse);
+  if (!flags.yes && !(await confirm("Save it?"))) return 0;
+  ctx.registry = draft.registry;
+  ctx.saveRegistry(ctx.registry);
+  console.log(`Recorded. Run: skl update ${id}`);
   return 0;
+}
+
+/** A copy of the context whose registry edits stay in memory until saved. */
+function draftOf(ctx: Ctx): Ctx {
+  return { ...ctx, registry: structuredClone(ctx.registry), saveRegistry: () => {} };
 }
 
 function printResolveHints(p: Plan): void {
@@ -563,7 +631,7 @@ async function check(ctx: Ctx, ids: string[]): Promise<number> {
             continue;
           }
           const upgraded: ManagedSet = { ...set, package: `${pin.name}@${latest}` };
-          const draft: Ctx = { ...ctx, registry: structuredClone(ctx.registry), saveRegistry: () => {} };
+          const draft = draftOf(ctx);
           draft.registry.sets[id] = upgraded;
           const p = fetchSet(draft, id, upgraded, staging, false)();
           console.log(`\n${pin.name}@${latest} is out (pinned ${pin.version}). If you bump it in the registry:`);
@@ -577,6 +645,10 @@ async function check(ctx: Ctx, ids: string[]): Promise<number> {
         dropStaging(staging);
       }
     } catch (e) {
+      if (e instanceof NeedsInteraction) {
+        console.log(`\n■ ${id}: ${e.message}`);
+        continue;
+      }
       failed++;
       console.error(`✗ ${id}: ${(e as Error).message}`);
     }
@@ -634,7 +706,13 @@ function status(ctx: Ctx): number {
     if (set.exclude?.length) console.log(`${pad}  excluded: ${set.exclude.join(", ")}`);
   }
   if (!Object.keys(ctx.registry.sets).length) console.log(`No sets registered. Run: skl register`);
-  const more = diagnose(ctx.paths, ctx.registry, state, lock).filter((f) => f.kind !== "edited").length;
+  const found = diagnose(ctx.paths, ctx.registry, state, lock);
+  const stale = found.filter((f) => f.kind === "stale-rule");
+  if (stale.length) {
+    console.log("\nRename rules you can undo:");
+    for (const f of stale) console.log(`  ${f.message}`);
+  }
+  const more = found.filter((f) => f.kind !== "edited" && f.kind !== "stale-rule").length;
   if (problems || more) console.log(`\n${count(problems + more, "problem")} found. Details: skl doctor`);
   return 0;
 }
@@ -684,7 +762,15 @@ function diff(ctx: Ctx, id: string | undefined, skill: string | undefined): numb
   if (!isManaged(set)) throw new Error(`"${id}" is installed by npx skills; compare upstream on its source instead.`);
   const staging = stagingFor(ctx, id);
   try {
-    const s = fetchSet(ctx, id, set, staging, false)().skills.find((x) => x.name === skill || x.original === skill);
+    let found: Plan["skills"][number] | undefined;
+    try {
+      found = fetchSet(ctx, id, set, staging, false)().skills.find((x) => x.name === skill || x.original === skill);
+    } catch (e) {
+      if (!(e instanceof NeedsInteraction)) throw e;
+      console.log(`■ ${id}: ${e.message}`);
+      return 0;
+    }
+    const s = found;
     if (!s) throw new Error(`"${skill}" is not in set "${id}".`);
     spawnSync("diff", ["-ru", path.join(ctx.paths.skillsDir, s.name), s.staged], { stdio: "inherit" });
     return 0;
@@ -710,7 +796,7 @@ async function remove(ctx: Ctx, id: string | undefined, flags: Flags): Promise<n
   if (!flags.yes && !(await confirm("Continue?"))) return 0;
   // Re-read after the prompt so what is removed is what is there now.
   if (isManaged(set)) removeManaged(ctx.paths, id!, readState(ctx.paths.stateDir));
-  else if (names.length) applyCli(ctx.paths, { setId: id!, source: set.source, add: [], update: [], remove: names, unselected: [], collisions: [] }, []);
+  else if (names.length) applyCli(ctx.paths, { setId: id!, source: set.source, add: [], update: [], remove: names, unselected: [], collisions: [], warnings: [] }, []);
   delete ctx.registry.sets[id!];
   ctx.saveRegistry(ctx.registry);
   console.log("Done.");

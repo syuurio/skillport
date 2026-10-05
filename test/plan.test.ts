@@ -357,3 +357,18 @@ test("N3: a dangling symlink of yours in ~/.agents/skills is a collision, not fr
   assert.throws(() => t.commit(p));
   assert.ok(fs.lstatSync(path.join(t.paths.skillsDir, "animate")).isSymbolicLink());
 });
+
+test("taking over one folder in the prompt adopts only that skill", () => {
+  const t = sandbox();
+  t.skill("animate");
+  t.skill("gesture-ui");
+  const codex = path.join(t.home, ".codex", "skills");
+  for (const n of ["animate", "gesture-ui"]) {
+    fs.cpSync(path.join(t.vendor, n), path.join(t.paths.skillsDir, n), { recursive: true });
+    fs.cpSync(path.join(t.vendor, n), path.join(codex, n), { recursive: true });
+  }
+  const p = t.run({ adopt: ["animate"] });
+  assert.deepEqual(p.adopted, ["animate"]);
+  assert.deepEqual(p.strays, [path.join(codex, "animate")]);
+  assert.deepEqual(p.collisions.map((c) => c.name), ["gesture-ui"]);
+});

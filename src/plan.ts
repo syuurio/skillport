@@ -16,6 +16,9 @@ import { treeHash } from "./treehash.ts";
 
 export type Upstream = "new" | "changed" | "unchanged";
 
+/** Reason recorded for a rename you chose inside the vendor's installer. */
+export const RENAMED_IN_INSTALLER = "renamed in installer";
+
 export interface SkillPlan {
   original: string;
   name: string;
@@ -89,8 +92,12 @@ export interface PlanInput {
   links: string[];
   /** The installer ran interactively; read selection and renames from it. */
   fromInteractiveRun: boolean;
-  /** Take over identical copies already on disk instead of calling them collisions. */
-  adopt?: boolean;
+  /**
+   * Take over identical copies already on disk instead of calling them
+   * collisions: every skill (`skl adopt`), or only the named ones (chosen in
+   * the collision prompt).
+   */
+  adopt?: boolean | string[];
   today?: string;
 }
 
@@ -122,7 +129,7 @@ export function plan(input: PlanInput): Plan {
   if (input.fromInteractiveRun) {
     for (const v of vendor) {
       if (v.folder !== v.original) {
-        rename[v.original] = { to: v.folder, reason: "renamed in installer", at: today };
+        rename[v.original] = { to: v.folder, reason: RENAMED_IN_INSTALLER, at: today };
       }
     }
     captured = {
@@ -250,8 +257,9 @@ function findCollisions(
     const dest = path.join(paths.skillsDir, s.name);
     // Adopting: a copy identical to what skillport would install is the same
     // skill a vendor already put there, not a conflict.
+    const adopting = input.adopt === true || (Array.isArray(input.adopt) && input.adopt.includes(s.name));
     const identical = (at: string) => {
-      if (!input.adopt) return false;
+      if (!adopting) return false;
       const st = fs.lstatSync(at, { throwIfNoEntry: false });
       return Boolean(st?.isDirectory()) && [s.installed, s.hash].includes(treeHash(at));
     };
@@ -259,11 +267,11 @@ function findCollisions(
     if (fs.lstatSync(dest, { throwIfNoEntry: false }) && !(s.name in prev)) {
       if (identical(dest)) adoption.adopted.push(s.name);
       else {
-        add("unowned", `an unmanaged folder ${dest}${input.adopt ? " with different content" : ""}`);
+        add("unowned", `an unmanaged folder ${dest}${adopting ? " with different content" : ""}`);
         continue;
       }
     }
-    for (const dir of new Set([...input.links, ...(input.adopt ? paths.agentDirs : [])])) {
+    for (const dir of new Set([...input.links, ...(adopting ? paths.agentDirs : [])])) {
       const at = path.join(dir, s.name);
       if (isOursOrFree(at, dest)) continue;
       if (identical(at)) adoption.strays.push(at);

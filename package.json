@@ -2,7 +2,7 @@
   "name": "skillport",
   "version": "0.1.0",
   "private": true,
-  "description": "Install third-party agent skills into ~/.agents/skills with a namespace prefix, and link them into agents that do not read that directory.",
+  "description": "One place for agent skills from vendor installers, npm packages and npx skills: install into ~/.agents/skills, link into agents that need it, check and apply updates.",
   "type": "module",
   "bin": {
     "skillport": "./bin/skillport"

@@ -132,3 +132,14 @@ test("stale rules: a hand-made rename with no collision left, and a rule for a s
   assert.ok(stale.some((m) => /animate → emil-animate \(resolved by hand\) is no longer needed/.test(m)));
   assert.ok(stale.some((m) => /gone is no longer shipped/.test(m)));
 });
+
+test("a rename made against an unowned folder is not stale while that folder exists", () => {
+  const w = world();
+  w.skill(w.paths.skillsDir, "loose");
+  w.registry.sets.emil = { type: "npm", package: "x@1.0.0", path: "s", rename: { loose: { to: "emil-loose", reason: "collides with an unmanaged folder", at: "" } } };
+  w.state.sets.emil.skills["emil-loose"] = { original: "loose", hash: "", installed: "", updatedAt: "" };
+  const stale = () => diagnose(w.paths, w.registry, w.state, {}).filter((x) => x.kind === "stale-rule");
+  assert.equal(stale().length, 0);
+  fs.rmSync(path.join(w.paths.skillsDir, "loose"), { recursive: true });
+  assert.equal(stale().length, 1);
+});

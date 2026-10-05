@@ -49,12 +49,14 @@ test("register --json writes a validated entry; without a terminal it needs --js
     });
   assert.match(run("register", "newvendor").stderr, /without a terminal.*--json/);
   const entry = { type: "installer", command: ["npx", "@nv/install@1.0.0", "--token={secret}"], unattended: ["--yes"], secret: "keychain" };
-  const r = run("register", "newvendor", "--json", JSON.stringify(entry));
+  assert.match(run("register", "newvendor", "--json", JSON.stringify(entry)).stderr, /pass -y/);
+  assert.match(run("register", "newvendor", "--json", JSON.stringify(entry), "--dry-run").stdout, /dry run: registry unchanged/);
+  const r = run("register", "newvendor", "--json", JSON.stringify(entry), "-y");
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /skl secret newvendor/);
   const reg = JSON.parse(fs.readFileSync(path.join(home, ".config", "skillport", "registry.json"), "utf8"));
   assert.deepEqual(reg.sets.newvendor, entry);
-  assert.match(run("register", "newvendor", "--json", JSON.stringify(entry)).stderr, /already exists/);
+  assert.match(run("register", "newvendor", "--json", JSON.stringify(entry), "-y").stderr, /already exists/);
 });
 
 test("extractSecret moves a pasted token out of the command", () => {

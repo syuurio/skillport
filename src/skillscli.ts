@@ -79,6 +79,8 @@ export interface CliPlan {
   remove: string[];
   unselected: string[];
   collisions: Omit<Collision, "original">[];
+  /** Names that a Claude Code plugin also ships; namespaced, so only a note. */
+  warnings: string[];
 }
 
 /** What to ask npx skills for, and which names it must not touch. */
@@ -89,6 +91,7 @@ export function planCli(input: {
   available: string[];
   lock: Record<string, LockEntry>;
   state: State;
+  pluginSkills?: Map<string, string>;
 }): CliPlan {
   const { paths, setId, set, available, lock, state } = input;
   const excluded = new Set(set.exclude ?? []);
@@ -128,6 +131,9 @@ export function planCli(input: {
     remove: [...installed].filter((n) => !wanted.includes(n)),
     unselected,
     collisions,
+    warnings: add
+      .filter((n) => input.pluginSkills?.has(n))
+      .map((n) => `"${n}" also exists as plugin skill ${input.pluginSkills!.get(n)}:${n} (namespaced, no conflict).`),
   };
 }
 
