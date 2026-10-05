@@ -1,0 +1,464 @@
+# skillport 設計規格
+
+> 狀態：草稿，待確認 · 2026-10-05
+> 工具名稱 `skillport`，指令範例以 alias `skl` 簡寫。
+
+## 1. 問題
+
+有些 skill 包不走 marketplace，而是用作者自己的 installer 發布（Emil 的 `@aiforui/install`、`@animationsdev/install`，Motion 的 `motion-ai`）。這些 installer 把同一份 skill 複製進每個偵測到的 agent 目錄（`~/.claude/skills`、`~/.codex/skills`、`~/.cursor/skills`…），沒有 lock、沒有更新指令。結果：
+
+- 同一個 skill 散落成 5 份實體副本，改一份不會同步其他份。
+- 不知道哪個 skill 從哪來、什麼時候裝的、有沒有新版。
+- 更新只能重跑 installer，再手動清理舊副本。
+
+## 2. 目標
+
+一個地方註冊「我要追蹤的 skill 集」，用同一組指令查看、檢查更新、更新、移除，不論 skill 集透過 vendor installer 還是 `npx skills add` 安裝。
+
+### 非目標
+
+- **預設不改名、不加 namespace、不改寫 skill 內容。** 只有撞名且你選擇改名時，才改那一個 skill（§8）。
+- 不取代 `npx skills` 或 Claude Code plugin marketplace；能委派就委派。
+- 不管理 MCP 設定、Claude agent 定義等 installer 的附帶產物。
+- 不做跨機器同步。
+
+## 3. 名詞
+
+| 名詞 | 意思 |
+|---|---|
+| **skill 集（set）** | 一個註冊單位，對應一個來源，例如 `aiforui`、`matt`。一個 set 產出一到多個 skill |
+| **負責者（owner）** | 實際寫入某個 skill 目錄、並記錄它的工具。每個 skill 目錄只有一個負責者：`npx skills` 或 skillport |
+| **暫存區（staging）** | skillport 執行 installer、比對差異用的目錄，不在任何 agent 會掃描的路徑下 |
+| **trash** | 被取代或移除的 skill 目錄移到這裡，skillport 從不 `rm` |
+
+## 4. 架構
+
+```
+             ~/.config/skillport/registry.json  （你註冊的 skill 集）
+                              │
+            ┌─────────────────┴─────────────────┐
+     type: skills-cli                    type: installer | npm
+     (委派給 npx skills)                  (skillport 自己負責)
+            │                                   │
+   npx skills add <repo> -g              假 $HOME → 暫存區 → 比對
+     -a codex,claude-code -s … -y               │
+            │                                   │
+   ~/.agents/.skill-lock.json            ~/.agents/.skillport/state.json
+            └─────────────────┬─────────────────┘
+                     ~/.agents/skills/   ← 唯一的實體位置
+                     ~/.claude/skills/   ← 只放 symlink
+```
+
+### 為什麼只有一個實體位置就夠
+
+| Agent | 讀 `~/.agents/skills` | 依據 |
+|---|---|---|
+| Codex | 是 | 官方文件 |
+| Cursor | 是 | 官方文件 |
+| OpenCode | 是 | 官方文件 |
+| Claude Code | **否**，需要 symlink 到 `~/.claude/skills` | 官方文件；文件確認支援 symlink 目錄 |
+| Grok | 未確認，納入第一版 | 見 §12；需要時加 symlink 或 `~/.grok/config.toml` 的 `[skills] paths` |
+
+### 負責者規則
+
+- `skills-cli` set：`npx skills` 寫入目錄、symlink、lock。skillport 只呼叫它、讀它的 lock。
+- `installer` / `npm` set：skillport 寫入目錄、symlink、state。
+- skillport 讀兩份記錄，合併成一個視圖（status、check、撞名偵測）。
+- 任何人寫入 `~/.agents/skills` 下一個不屬於自己的目錄 → skillport 拒絕執行（§8）。
+
+## 5. Skill 集類型
+
+### 5.1 `skills-cli`
+
+委派給 `npx skills`（目前 `skills@1.7.0`）。
+
+| 動作 | 執行 |
+|---|---|
+| 安裝 | `npx skills@<ver> add <source> -g -a codex,claude-code -s <skills> -y` |
+| 更新 | `npx skills@<ver> update <skills> -g -y` |
+| 移除 | `npx skills@<ver> remove <skills> -g -y` |
+| 檢查 | skillport 自己做，見 §7.2 |
+
+**委派前先檢查撞名**：`npx skills add` 遇到同名目錄的行為未驗證（推測會覆寫）。skillport 在呼叫它之前，先用 §8 的規則檢查要安裝的名稱，撞到 skillport 管理的 skill 時中止，由你決定處理方式。
+
+`-a codex,claude-code`：實體放在 `~/.agents/skills`，Claude Code 拿到指向它的相對 symlink（已驗證，M0）。**只給 `-a claude-code` 不行**：它會把實體目錄直接寫進 `~/.claude/skills`，`~/.agents/skills` 不會產生。
+
+### 5.2 `installer`
+
+執行 vendor installer，用假 `$HOME` 讓它只寫進暫存區。
+
+```
+假 $HOME = <staging>/home，其中只建立 .claude/
+執行：HOME=<staging>/home  <command> --global -y
+取出：<staging>/home/.claude/skills/*
+```
+
+- installer 用 `os.homedir()` 決定寫入位置與偵測 agent；Node 在 POSIX 上從 `$HOME` 取值（已驗證）。
+- 只放 `.claude` 讓它只偵測到 Claude Code，產出就是 vendor 的原始檔案，不會多出 Codex 的 `agents/openai.yaml`（選用的 metadata，已驗證）。
+- `npm_config_cache` 指回真實的 `~/.npm`，避免每次重新下載。
+- 換寫入目標只需改設定（`stage`、`harvest`），不改程式。
+
+### 5.3 `npm`
+
+給不能非互動執行的 installer（`motion-ai` 在非 TTY 下直接拒絕執行）。`npm pack <package>@<ver>`，解開後從指定路徑取出 skill。不執行套件內的任何程式碼。
+
+### 5.4 有互動問題的 installer
+
+依序嘗試，用第一個可行的：
+
+| 順序 | 做法 | 適用 | 例子 |
+|---|---|---|---|
+| 1 | **非互動旗標**：`-y`、`--global` 等，加上不給 TTY | installer 有非互動模式 | Emil 的兩個 installer：非 TTY 或 `-y` 時 4 個問題全部跳過，用預設值（global、全部偵測到的 agent、全部 skill、不改名） |
+| 2 | **`npm` 類型**：不執行，直接取出套件內容 | skill 內容打包在套件裡 | `motion-ai` |
+| 3 | **`capture` 模式**：你在 skillport 準備好的沙盒裡親自回答問題 | 只能互動執行、內容又是執行時才下載 | 目前沒有 |
+
+不採用的做法：用 pseudo-terminal 自動回答（expect 式）。問題文字或順序一改就會答錯，而且答錯時不一定會失敗，可能靜靜裝錯東西。
+
+#### 互動安裝，之後用記錄重播更新
+
+`skl add` 對 installer 類型**預設互動**（決定紀錄 #6）；`skl add <set> -y` 改為非互動、安裝全部。`skl update` 預設非互動，`skl update <set> -i` 重新互動。
+
+- installer 拿到真正的 TTY，但仍在沙盒裡執行。skillport 帶 `--global`，沙盒裡只有 `.claude`，所以「裝在哪裡」和「裝到哪些 agent」兩題不會出現（位置由 skillport 決定）；**「裝哪些 skill」和「要不要改名」照常由你回答**（依 `@aiforui/install@0.1.4` 原始碼第 320、350、395、413 行）。
+- installer 結束後，skillport 把你的回答轉成 registry 記錄：
+  - 勾選的 skill → `skills` 允許清單。
+  - 在 installer 裡改的名稱（目錄名 ≠ frontmatter `name`）→ `rename`，`reason` 記為 `"renamed in installer"`，並補改 frontmatter 與引用（§8.3）。installer 的改名功能只改目錄名、不改 `name`，不補改的話 Codex 會用舊名稱識別它。
+- 之後的 `skl update`（不加 `-i`）用非互動模式執行，並套用記錄下來的 `skills` 與 `rename`，結果和你上次互動選擇的一樣。
+- 上游新增的 skill 不在允許清單裡，所以不會自動安裝；`check` 會列為「新增，未選」。想加入就跑一次 `-i`，或把名稱加進 `skills`。
+
+#### 防止卡住
+
+自動執行時，installer 的 stdin 一律接 `/dev/null`，並設逾時（預設 5 分鐘）。installer 如果還是跳出問題，會讀到 EOF 而結束，不會無限等待。skillport 把這種情況回報為「installer 需要互動」，提示改用 `capture` 模式，不會當成一般錯誤。
+
+#### `capture` 模式
+
+```
+$ skl capture newvendor
+準備沙盒：HOME=~/.agents/.skillport/staging/newvendor/home（只有 .claude/）
+執行：npx @newvendor/install --token=***
+────── 以下由你回答 installer 的問題 ──────
+◆ Where do you want to install?  ● Globally
+◆ Which skills?                  ◼ a  ◼ b
+...
+────── installer 結束 ──────
+取出 2 個 skill，接下來和一般 update 相同：比對 → 撞名檢查 → 確認 → 套用
+```
+
+- installer 拿到真正的 TTY，問題由你回答；檔案仍然只寫進沙盒，不會散落。
+- registry 裡這類 set 標記 `"interactive": true`。`check` 和 `update --all` 會略過它們並提示「需要手動執行 `skl capture <set>`」，不會在背景卡住。
+- 已知限制：installer 如果寫入 `$HOME` 以外的位置（例如 `/usr/local`），沙盒攔不到。執行時的 cwd 設在沙盒內，可以攔住 project 模式的寫入。
+
+## 6. 資料格式
+
+### 6.1 Registry（使用者編輯）
+
+位置：`~/.config/skillport/registry.json`（可用 `SKILLPORT_REGISTRY` 覆寫）。
+
+```json
+{
+  "version": 1,
+  "sets": {
+    "matt": {
+      "type": "skills-cli",
+      "source": "mattpocock/skills",
+      "skills": ["tdd", "code-review", "grilling", "diagnosing-bugs"]
+    },
+    "aiforui": {
+      "type": "installer",
+      "command": ["npx", "-y", "@aiforui/install@0.1.4", "--token={secret}"],
+      "secret": "keychain"
+    },
+    "animationsdev": {
+      "type": "installer",
+      "command": ["npx", "-y", "@animationsdev/install@0.2.3", "--token={secret}",
+                  "--api=https://animations.dev"],
+      "secret": "keychain",
+      "prefix": "anim",
+      "rename": {
+        "prototype": { "to": "anim-prototype", "reason": "collides with matt/prototype", "at": "2026-10-05" }
+      }
+    },
+    "motion": {
+      "type": "npm",
+      "package": "motion-ai@14.1.0",
+      "path": "content/skills"
+    }
+  }
+}
+```
+
+| 欄位 | 適用類型 | 說明 |
+|---|---|---|
+| `skills` | skills-cli | 要裝哪些 skill；省略 = 全部 |
+| `exclude` | 全部 | 不安裝的 skill（用 vendor 原名） |
+| `prefix` | installer、npm | 撞名時「加前綴」選項的預設前綴；省略 = set 名稱 |
+| `rename` | installer、npm | vendor 原名 → 安裝名稱，附原因與日期；由撞名處理寫入，也可手動編輯 |
+| `command` | installer | argv；`{secret}` 執行時替換。`--global -y` 由 skillport 附加 |
+| `stage` / `harvest` | installer | 預設 `[".claude"]` / `".claude/skills"` |
+| `secret` | installer | `"keychain"`：從 Keychain（service `skillport`、account = set 名稱）讀取 |
+| `package` / `path` | npm | 固定版本的套件、套件內 skill 目錄 |
+
+版本一律固定在 `command` / `package` 裡。升級 installer 是你的決定（§7.3 只提示）。
+
+### 6.2 State（skillport 寫入）
+
+位置：`~/.agents/.skillport/state.json`。只記錄 skillport 負責的 set；`skills-cli` set 的狀態讀 `~/.agents/.skill-lock.json`。
+
+```json
+{
+  "version": 1,
+  "sets": {
+    "aiforui": {
+      "installer": "@aiforui/install@0.1.4",
+      "syncedAt": "2026-10-05T08:30:00Z",
+      "skills": {
+        "emil-color": { "hash": "9f2c…", "updatedAt": "2026-10-05T08:30:00Z" }
+      }
+    },
+    "animationsdev": {
+      "skills": {
+        "anim-prototype": { "original": "prototype", "hash": "c41d…", "updatedAt": "2026-10-05T08:30:00Z" }
+      }
+    }
+  }
+}
+```
+
+`hash` 用 **git tree hash**，和 `npx skills` 的 `skillFolderHash` 同一種演算法（已驗證：本機 16 個 skill 中 13 個與 lock 記錄一致，另 3 個是本機內容已偏離安裝時的版本）。同一種 hash 讓兩種負責者的 skill 能用同一套比對邏輯。
+
+改過名的 skill，`hash` 算的是 **vendor 原始內容**（改名、改寫引用之前），所以下次 check 時，改名本身不會被當成「有改動」或「偏離」。
+
+### 6.3 目錄配置
+
+```
+~/.agents/
+  skills/                  實體 skill（兩種負責者共用）
+  .skill-lock.json         npx skills 的 lock（只讀）
+  .skillport/
+    state.json
+    staging/<set>/         比對用，執行完清空
+    trash/<時間>-<set>/    被取代、移除的舊版本
+```
+
+staging 和 trash 不放在 `skills/` 底下：Cursor 會遞迴掃描 skill 根目錄，留在裡面的 `SKILL.md` 都會被載入（官方文件）。
+
+## 7. 指令
+
+所有會改動檔案的指令都先印出計畫，確認後才執行；`-y` 跳過確認，`--dry-run` 只印計畫。
+
+### 7.1 `skl status`
+
+列出所有 set 與 skill，資料來自 state 與 lock，不連網。
+
+```
+aiforui        installer   28 skills   10/05 更新
+animationsdev  installer   15 skills   10/05 更新   排除: prototype
+motion         npm          1 skill    10/05 更新
+matt           skills-cli   4 skills   10/05 更新
+
+⚠ 2 個問題，執行 skl doctor 查看
+```
+
+### 7.2 `skl check [set...]`
+
+只讀，檢查有沒有新版，不改動任何檔案。
+
+| 類型 | 做法 | 成本 |
+|---|---|---|
+| installer | 執行到暫存區，逐一比對 tree hash | 每個 set 一次完整下載 |
+| npm | `npm view` 比對版本；有新版才下載比對 | 一次 registry 查詢 |
+| skills-cli | 用 GitHub API 取得上游該 skill 目錄的 tree hash，和 `skillFolderHash` 比對 | 每個 set 一次 API 查詢 |
+
+```
+aiforui        有改動 emil-color, emil-typography · 新增 emil-charts
+animationsdev  沒有改動
+motion         沒有改動 · installer 有新版 motion-ai@14.2.0（目前固定 14.1.0）
+matt           有改動 tdd, code-review · 上游新增 implement-spec, pr（未註冊）
+               https://github.com/mattpocock/skills/compare/84fdeff...f6abdeb
+```
+
+### 7.3 `skl update [set...]`
+
+執行 check，列出計畫，確認後套用：
+
+- installer / npm：有改動的 skill 整個目錄替換（舊目錄移到 trash，新目錄 rename 進來），不做逐檔覆寫，所以 vendor 刪掉的檔案不會殘留。
+- skills-cli：呼叫 `npx skills update`。
+- installer 的新版本只提示，不自動升級；要升級就改 registry 裡的版本號。
+
+### 7.4 `skl diff <set> <skill>`
+
+把暫存區的新版本和已安裝版本做 `diff -ru`，看改了什麼。
+
+### 7.5 `skl add <set> [-y]`
+
+在 registry 新增 set 後執行第一次安裝。需要 secret 時提示存進 Keychain。installer 類型預設互動執行（§5.4），由你勾選 skill、決定改名；`-y` 跳過，安裝全部。
+
+### 7.6 `skl remove <set>`
+
+移除該 set 所有 skill：skillport 負責的移到 trash 並移除 symlink；skills-cli 呼叫 `npx skills remove`。從 registry 刪除該 set。
+
+### 7.7 `skl secret <set>`
+
+把 token 存進 Keychain。終端機下用 `security` 的互動提示；非終端機（`!`、pipe）從 stdin 讀。拒絕空值，寫入後讀回驗證。
+
+### 7.8 `skl doctor [--fix]`
+
+找出並（加 `--fix` 時）修正：
+
+| 問題 | 例子 | `--fix` 的處理 |
+|---|---|---|
+| 散落的 vendor 副本 | 手動重跑了 Emil installer，`~/.codex/skills/animate` 又出現 | 內容和受管版本相同 → 移到 trash；不同 → 只報告 |
+| 斷掉的 symlink | `~/.claude/skills/x` 指向不存在的目錄 | 移除 symlink |
+| 缺少的 symlink | 受管 skill 在 `~/.claude/skills` 沒有 link | 補建 |
+| 撞名 | 兩個負責者想要同一個目錄名 | 只報告 |
+| 偏離 | 受管 skill 的 tree hash 和記錄不同（有人手動改過） | 只報告 |
+| 無主目錄 | `~/.agents/skills` 下有目錄不屬於任何負責者 | 只報告 |
+
+「散落副本」的判定：目錄名稱等於某個受管 skill，且位於已知 agent 目錄（`~/.claude/skills`、`~/.codex/skills`、`~/.cursor/skills`、`~/.config/opencode/skills`、`~/.gemini/skills`），且不是指向 `~/.agents/skills` 的 symlink。
+
+### 7.9 `skl adopt`
+
+第一次使用時，把現有散落的安裝收進來：
+
+1. 掃描 §7.8 列出的 agent 目錄，依 registry 的 set 比對名稱。
+2. 對每個 set 執行一次安裝到暫存區，用 tree hash 判斷現有副本是不是同一份內容。
+3. 列出計畫：保留哪份、哪些移到 trash、哪些內容不同需要你決定。
+4. 確認後套用，寫入 state。
+
+### 7.10 `skl resolve <set> <skill> (--prefix [p] | --rename <name> | --exclude | --undo)`
+
+非互動處理撞名，結果和互動選擇一樣寫進 registry 與 state（§8.4）。`--undo` 撤銷一條 `rename` 或 `exclude`。
+
+## 8. 撞名
+
+一個 skill 名稱在 `~/.agents/skills` 只能對應一個目錄。撞名在寫入任何檔案之前偵測；`add`、`update`、`check`、`--dry-run`、`doctor` 都會檢查。
+
+### 8.1 偵測與處理方式
+
+| 撞到的對象 | 處理 |
+|---|---|
+| 另一個 set 的 skill（不論負責者） | **詢問**（§8.2） |
+| `~/.agents/skills` 下不屬於任何負責者的目錄 | **詢問**，多一個「收進來（adopt）」選項 |
+| `~/.claude/skills` 裡不是我們建立的項目 | **詢問** |
+| Claude Code plugin 的 skill | **只警告**：plugin 有自己的 namespace（`plugin:skill`），不會覆蓋 |
+
+### 8.2 互動提示
+
+```
+⚠ 撞名：prototype
+  已安裝   matt           skills-cli   ~/.agents/skills/prototype
+  新來源   animationsdev  installer    "Build multiple genuinely different versions…"
+
+  要怎麼處理 animationsdev 的 prototype？
+  ❯ 加前綴   → anim-prototype                 （前綴來自 registry 的 prefix，可修改）
+    改名     → 自訂名稱
+    排除     → 不安裝這個 skill
+    改另一邊 → 不可用：matt 由 npx skills 管理，名稱由它決定
+    中止
+```
+
+- 每個選項都先驗證新名稱：符合 skill 名稱規則、且不會再撞到別的 skill。
+- 選擇後顯示會連帶改動的地方（§8.3），確認才套用。
+- 非互動（`-y` 或沒有終端機）時不猜：中止，並印出可以直接執行的處理指令：
+  ```
+  skl resolve animationsdev prototype --prefix        # → anim-prototype
+  skl resolve animationsdev prototype --rename <name>
+  skl resolve animationsdev prototype --exclude
+  ```
+
+### 8.3 改名會連帶改動什麼
+
+改名只作用在 skillport 負責的 skill（installer、npm）。skills-cli 的 skill 名稱由 `npx skills` 決定，skillport 不改。
+
+| 改動 | 原因 |
+|---|---|
+| 目錄名稱 | 安裝位置 |
+| `SKILL.md` frontmatter 的 `name` | 規格要求 `name` 等於目錄名；Codex 以 `name` 識別 skill |
+| 同一個 set 內其他 skill 引用它的地方（`` `prototype` ``） | 否則引用會指向錯的 skill（例如 Matt 的 `prototype`） |
+
+引用改寫的規則沿用現有實作：帶連字號的名稱一律改；單字名稱（`prototype`、`animate`）只在該行看得出是 skill 引用時改，其餘列出讓你確認。
+
+### 8.4 記錄與追蹤
+
+- **意圖記在 registry**（`rename` 或 `exclude`，附原因與日期）。這是可以手動編輯、可以放進版本控制的那一份。
+- **結果記在 state**（安裝名稱、vendor 原名、原始內容的 hash）。
+- `skl status` 會標示改過名的 skill：
+  ```
+  animationsdev  installer  15 skills   10/05 更新
+                 prototype → anim-prototype   （撞名：matt/prototype，10/05）
+  ```
+- 之後如果撞名的對象消失（例如移除了 matt 的 `prototype`），`status` 會提示這條 `rename` 可以撤銷；vendor 把原 skill 改名或刪除時，提示這條規則已經沒有對象。
+
+## 9. 安全
+
+- Token 存在 macOS Keychain，不寫進 registry、state 或 log。錯誤訊息裡出現的 token 一律遮蔽。
+- 已知限制：vendor installer 只接受命令列參數傳入 token，執行期間同使用者的其他行程可用 `ps` 看到。
+- `@animationsdev/install@0.2.3` 預設 API 是 `http://animations.dev`，token 會先以明文送出再被 308 轉到 HTTPS。registry 範例固定加上 `--api=https://animations.dev`。
+- `npm` 類型不執行套件程式碼，只解開檔案。
+
+## 10. 可還原性
+
+- 被取代、移除、`doctor --fix` 清掉的目錄都移到 `~/.agents/.skillport/trash/`，不刪除。
+- 目錄替換是 rename（staging 與 skills 在同一個檔案系統），單一 skill 不會停在半寫入狀態。
+- 已知限制：一次 update 多個 skill 時，中途失敗會留下「部分已更新」的狀態；trash 保有舊版，`doctor` 會報告不一致。
+
+## 11. 從現況遷移
+
+| 現況 | 遷移後 |
+|---|---|
+| Emil 的 skill 已移到 `~/.agents/_archive-2026-10-05/` | `skl add aiforui`、`skl add animationsdev` 重新安裝 |
+| `~/.agents/skills/motion` 與 `~/.claude/skills/motion`（與 `motion-ai@14.1.0` 完全相同） | `skl adopt` 收進 `motion` set |
+| `~/.claude/skills/motion-brief`（animationsdev 舊版，不受管理） | `adopt` 時移到 trash，由 `animationsdev` set 的新版取代 |
+| Matt：Claude plugin `mattpocock-skills@claude-community` | 改成 `matt` skills-cli set；你自己從 marketplace 移除 plugin |
+| `~/dev/skillport` 現有程式碼 | 保留 acquire、staging、trash、Keychain；移除前綴與內文改寫 |
+
+## 12. 已驗證與待驗證
+
+### 已驗證
+
+| 事實 | 依據 |
+|---|---|
+| Codex、Cursor、OpenCode 讀 `~/.agents/skills` | 各家官方文件 |
+| Claude Code 只讀 `~/.claude/skills`，支援 symlink 目錄 | 官方文件 |
+| Cursor 遞迴掃描 skill 根目錄 | 官方文件 |
+| Skill 名稱規則：`^[a-z0-9]+(-[a-z0-9]+)*$`，需等於目錄名 | Agent Skills 規格、OpenCode 文件 |
+| Emil installer 用 `os.homedir()` 偵測與寫入；`-y` 寫入所有偵測到的 agent | `@aiforui/install@0.1.4`、`@animationsdev/install@0.2.3` 原始碼 |
+| Node `os.homedir()` 跟隨 `$HOME` | 本機測試 |
+| 假 `$HOME` 的流程能完整產出 aiforui（28）、animationsdev（16）skill | 用真實 token 跑過 dry run（以 Codex 為目標） |
+| `motion-ai` 非 TTY 拒絕執行；skill 內容放在 `content/skills` | 原始碼 |
+| `npx skills` 1.7.0 有 `add -a/-s/-y`、`update`、`remove`，沒有 `check` | `--help` |
+| `skillFolderHash` 是 skill 目錄的 git tree hash | 本機 13/16 吻合 |
+| Codex 的 `agents/openai.yaml` 是選用 metadata | 官方文件 |
+| 以 `.claude` 為目標時，產出和 Codex 目標相同（28 個 skill，只差 `agents/`） | M0：真 token 各跑一次，`diff -rq` |
+| `npx skills -a codex,claude-code` 把實體放 `~/.agents/skills`、為 Claude 建相對 symlink；只給 `-a claude-code` 會把實體寫進 `~/.claude/skills` | M0：在假 `$HOME` 安裝 `mattpocock/skills` 的 `tdd` |
+| GitHub API 取得子目錄 tree hash，和 `skillFolderHash` 相同 | M0：`contents/<parent>` 的 dir `sha` 與 `git/trees/HEAD:<path>` 都等於 lock 值 |
+| `skills@1.7.0` 的 lock 是 `version: 3`，新增欄位 `pluginName` | M0 |
+
+### 待驗證（實作第一步）
+
+| 項目 | 驗證方法 | 不成立時 |
+|---|---|---|
+| `.skill-lock.json` 的 `version: 3` 格式在 `skills@latest` 不變 | 讀取時檢查 `version`，不符就停止並提示 | 固定 `npx skills` 版本 |
+| Grok 是否讀 `~/.agents/skills` 或 `~/.claude/skills` | 放一個測試 skill，用 `grok -p` 問它看得到哪些 skill | 在 `~/.grok/config.toml` 的 `[skills] paths` 加入 `~/.agents/skills` |
+| `~/.agents/skills` 有 symlink 時，Cursor、OpenCode 會不會因為也讀 `~/.claude/skills` 而看到兩份 | 各開一次，看 skill 清單 | 文件記錄；必要時改由 Claude Code 用 `--add-dir` 等方式讀取 |
+
+## 13. 里程碑
+
+| 階段 | 內容 | 預估 |
+|---|---|---|
+| M0 | 驗證 §12 待驗證項目 | 1 小時 · **完成**（Grok 待 CLI 升級；Cursor/OpenCode 待實際安裝後檢查） |
+| M1 | registry / state、installer 與 npm 類型、`status`、`check`、`update`、`diff`、`secret`、`remove`、撞名處理與 `resolve` | 半天多 · **完成**（互動模式需真實終端機，尚未實測） |
+| M2 | skills-cli 類型（委派 + GitHub hash 檢查） | 2–3 小時 |
+| M3 | `doctor`、`adopt`，完成 §11 遷移 | 2–3 小時 |
+
+每個階段結束都附測試，且先在 scratchpad 的假目錄跑過才碰真實的 `~/.agents`。
+
+## 14. 決定紀錄
+
+| # | 問題 | 決定 | 日期 |
+|---|---|---|---|
+| 1 | Matt 改用 skills-cli set | 是；plugin 由你從 marketplace 移除 | 2026-10-05 |
+| 2 | 撞名處理 | 互動詢問：加前綴 / 改名 / 排除；記錄在 registry 與 state（§8） | 2026-10-05 |
+| 3 | 還原 8 個 Emil skill 的 `"off"` 設定 | 不還原 | 2026-10-05 |
+| 4 | Grok 納入第一版 | 是；M0 驗證它讀哪個目錄 | 2026-10-05 |
+| 5 | 工具名稱 | 沿用 `skillport`；指令 alias `skl` | 2026-10-05 |
+| 6 | `skl add` 對 installer 預設互動 | 是；第一次安裝由你勾選 skill，之後 update 重播記錄 | 2026-10-05 |
