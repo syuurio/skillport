@@ -86,6 +86,7 @@
 - **每個 set 只動自己裝的 skill**：lock 只記「從哪個來源來」，不記「是哪個 set 要的」，所以 skillport 在 state 的 `cli` 欄位記下每個 skills-cli set 叫 `npx skills` 裝過哪些 skill。`update` 與 `remove` 只會移除記錄裡、而且這個 set 不再要的 skill；同一來源中不在記錄裡的 skill（你手動裝的、別處裝的）列為「left alone」，不更新、不記錄、不移除，**即使這個 set 也想要同名的 skill**（`npx skills remove` 是真的刪除，不進 trash；收為己有會讓之後的 remove 刪掉它）。要讓 set 接手一個手動裝的 skill：先 `npx skills remove <name> -g`，再 `skl update <set>`。同一個來源只能有一個 skills-cli set（registry 讀取時檢查）。
 - skills-cli 的名稱屬於 `npx skills`，skillport 不改名；撞名時只能在這一邊 `exclude`，或去改另一邊（skillport 管理的 set）的名稱。
 - 執行時用真實 `HOME`（它要寫進 `~/.agents`），但環境變數一樣是最小集合（§9）。
+- `links` 對 skills-cli set 也成立：npx skills 只在 add 時建 link，所以 skillport 每次 update 會替已安裝的 skill 補上或移除 Claude Code 的 link，讓它符合設定；不是 skillport 或 npx skills 建的東西不動。`status` 只算這個 set 記錄擁有的 skill，並列出同一來源中「留著不動」的。
 
 ### 5.2 `installer`
 
@@ -275,7 +276,7 @@ matt           skills-cli   4 skills   10/05 更新
 | 類型 | 做法 | 成本 |
 |---|---|---|
 | installer | 執行到暫存區，逐一比對 tree hash | 每個 set 一次完整下載 |
-| npm | `npm view` 比對版本；有新版才下載新版，照「把版本號改成新版」規劃一次，列出會變的 skill 與撞名 | 一次 registry 查詢；有新版時一次下載 |
+| npm | `npm view` 比對版本。有新版：下載新版，照「把版本號改成新版」規劃一次，列出會變的 skill 與撞名。已是最新：仍下載目前版本並規劃一次，回報撞名與手動修改（套件內容固定，但其他 set 與資料夾可能變了） | 一次 registry 查詢加一次下載 |
 | skills-cli | 上游該 skill 目錄的 tree hash（GitHub `git/trees/HEAD:<dir>`）對 `skillFolderHash`；先用 `gh`，沒有登入時改用公開 API（curl，每小時 60 次） | 每個已安裝 skill 一次 API 查詢 |
 
 ```
@@ -293,7 +294,7 @@ skills-cli 有改動的 skill 附上該資料夾在 GitHub 的 commit 歷史連�
 執行 check，列出計畫，確認後套用：
 
 - installer / npm：有改動的 skill 整個目錄替換（舊目錄移到 trash，新目錄 rename 進來），不做逐檔覆寫，所以 vendor 刪掉的檔案不會殘留。
-- 你手動改過的 skill：只要 skillport 要寫的內容沒變（上游沒改、改名規則沒變），就保留你的修改，只回報「local edits」；有新內容要寫時才替換，你的版本留在 trash。
+- 你手動改過的 skill：只要 skillport 要寫的內容沒變（上游沒改、改名規則沒變），就保留你的修改，回報「edits kept」；有新內容要寫時才替換並回報「edits replaced」，你的版本留在 trash。
 - skills-cli：呼叫 `npx skills update`。
 - installer 的新版本只提示，不自動升級；要升級就改 registry 裡的版本號。
 
@@ -443,7 +444,7 @@ skills-cli set 不需要 adopt：`npx skills` 自己決定要不要覆蓋，skil
 - 被取代、移除、`doctor --fix` 清掉的目錄都移到 `~/.agents/.skillport/trash/`，不刪除。
 - 目錄替換是 rename（staging 與 skills 在同一個檔案系統），單一 skill 不會停在半寫入狀態。
 - 已知限制：一次 update 多個 skill 時，中途失敗會留下「部分已更新」的狀態；trash 保有舊版，`doctor` 會報告不一致。
-- 已知限制：lock 被接手的瞬間若同時有三個 skillport 在跑，可能兩個都拿到 lock；兩個 run 已被處理（接手後會確認搬走的是過期的 lock，不是就放回去）。
+- 已知限制：lock 被接手的瞬間若同時有三個 skillport 在跑，可能兩個都拿到 lock；兩個 run 已被處理（接手後會確認搬走的是過期的 lock，不是就放回去）。 被擱置的 `lock.d.stale-*` 在下次取得 lock 時清掉（擁有者已不存在的才清）。
 
 ## 11. 從現況遷移
 

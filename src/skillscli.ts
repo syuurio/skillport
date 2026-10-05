@@ -143,6 +143,36 @@ export function planCli(input: {
   };
 }
 
+/**
+ * Links a skills-cli set's installed skills need so that `links` holds for
+ * them too: npx skills only links on add, so a changed `links` setting would
+ * otherwise never reach skills already installed. Only links skillport (or
+ * npx skills) made are removed; anything else at the path is left alone.
+ */
+export function cliLinkChanges(paths: Paths, names: string[], links: string[]): { add: string[]; remove: string[] } {
+  const add: string[] = [];
+  const remove: string[] = [];
+  for (const name of names) {
+    const dest = path.join(paths.skillsDir, name);
+    if (!fs.existsSync(dest)) continue;
+    for (const dir of paths.links) {
+      const at = path.join(dir, name);
+      const present = Boolean(fs.lstatSync(at, { throwIfNoEntry: false }));
+      if (links.includes(dir) && !present) add.push(at);
+      if (!links.includes(dir) && present && isOursOrFree(at, dest)) remove.push(at);
+    }
+  }
+  return { add, remove };
+}
+
+export function applyCliLinks(paths: Paths, changes: { add: string[]; remove: string[] }): void {
+  for (const at of changes.remove) fs.unlinkSync(at);
+  for (const at of changes.add) {
+    fs.mkdirSync(path.dirname(at), { recursive: true });
+    fs.symlinkSync(path.join(paths.skillsDir, path.basename(at)), at);
+  }
+}
+
 export function applyCli(paths: Paths, p: CliPlan, links: string[]): void {
   const agents = agentArgs(links, paths.linkTargets["claude-code"]);
   const step = (args: string[]) => {

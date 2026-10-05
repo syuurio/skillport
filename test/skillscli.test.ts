@@ -115,3 +115,23 @@ test("S2: a skills-cli set never removes what it did not install; one set per so
   fs.writeFileSync(paths.registry, JSON.stringify({ version: 1, sets: { a: { type: "skills-cli", source: "mattpocock/skills" }, b: { type: "skills-cli", source: "https://github.com/mattpocock/skills" } } }));
   assert.throws(() => readRegistry(paths.registry), /already used by set "a"/);
 });
+
+test("a skills-cli set's links follow its setting for skills already installed", async () => {
+  const { cliLinkChanges, applyCliLinks } = await import("../src/skillscli.ts");
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "skillport-clilinks-"));
+  const paths = defaultPaths(home);
+  fs.mkdirSync(path.join(paths.skillsDir, "tdd"), { recursive: true });
+  const claude = paths.links[0];
+  // links includes Claude Code, no link yet: add it.
+  let c = cliLinkChanges(paths, ["tdd"], [claude]);
+  assert.deepEqual(c, { add: [path.join(claude, "tdd")], remove: [] });
+  applyCliLinks(paths, c);
+  assert.equal(fs.readlinkSync(path.join(claude, "tdd")), path.join(paths.skillsDir, "tdd"));
+  // Claude Code dropped from links: our link goes; a folder of yours would stay.
+  c = cliLinkChanges(paths, ["tdd"], []);
+  assert.deepEqual(c.remove, [path.join(claude, "tdd")]);
+  applyCliLinks(paths, c);
+  assert.ok(!fs.lstatSync(path.join(claude, "tdd"), { throwIfNoEntry: false }));
+  fs.mkdirSync(path.join(claude, "tdd"));
+  assert.deepEqual(cliLinkChanges(paths, ["tdd"], []).remove, []);
+});

@@ -151,8 +151,13 @@ test("status counts a skills-cli set's skills whatever spelling its source uses"
   fs.writeFileSync(paths.registry, JSON.stringify({ version: 1, sets: { m: { type: "skills-cli", source: "https://github.com/mattpocock/skills" } } }));
   fs.mkdirSync(path.dirname(paths.skillLock), { recursive: true });
   fs.writeFileSync(paths.skillLock, JSON.stringify({ version: 3, skills: { tdd: { source: "mattpocock/skills", skillPath: "", skillFolderHash: "", updatedAt: "" } } }));
-  const r = spawnSync(BIN, ["status"], { env: { ...process.env, SKILLPORT_HOME: home }, encoding: "utf8" });
-  assert.match(r.stdout, /m\s+skills-cli\s+1 skill\b/);
+  const status = () => spawnSync(BIN, ["status"], { env: { ...process.env, SKILLPORT_HOME: home }, encoding: "utf8" }).stdout;
+  // Not recorded as the set's: shown as left alone, not counted.
+  assert.match(status(), /m\s+skills-cli\s+0 skills/);
+  assert.match(status(), /left alone \(installed outside this set\): tdd/);
+  fs.mkdirSync(paths.stateDir, { recursive: true });
+  fs.writeFileSync(path.join(paths.stateDir, "state.json"), JSON.stringify({ version: 1, sets: {}, cli: { m: { syncedAt: "2026-10-06T00:00:00Z", skills: ["tdd"] } } }));
+  assert.match(status(), /m\s+skills-cli\s+1 skill\b/);
 });
 
 test("check and diff also report an installer stuck on a question as needing you", () => {

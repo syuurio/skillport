@@ -160,6 +160,7 @@ export function acquireLock(paths: Paths): () => void {
     try {
       fs.mkdirSync(dir);
       fs.writeFileSync(path.join(dir, "pid"), String(process.pid));
+      removeDeadLocks(paths.stateDir);
       return () => fs.rmSync(dir, { recursive: true, force: true });
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
@@ -199,6 +200,20 @@ export function acquireLock(paths: Paths): () => void {
     fs.rmSync(aside, { recursive: true, force: true });
   }
   throw new Error(`Could not take the lock in ${paths.stateDir}.`);
+}
+
+/** Locks a takeover set aside (lock.d.stale-*) whose owner is gone. */
+function removeDeadLocks(stateDir: string): void {
+  for (const name of fs.readdirSync(stateDir)) {
+    if (!name.startsWith("lock.d.stale-")) continue;
+    let pid = 0;
+    try {
+      pid = Number(fs.readFileSync(path.join(stateDir, name, "pid"), "utf8"));
+    } catch {
+      // no pid file: nothing alive owns it
+    }
+    if (!pid || !isAlive(pid)) fs.rmSync(path.join(stateDir, name), { recursive: true, force: true });
+  }
 }
 
 function isAlive(pid: number): boolean {

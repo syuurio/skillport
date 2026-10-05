@@ -12,7 +12,7 @@ import {
   rewriteReferences,
   setFrontmatterName,
 } from "./transform.ts";
-import { treeHash } from "./treehash.ts";
+import { sameSkill, treeHash } from "./treehash.ts";
 
 export type Upstream = "new" | "changed" | "unchanged";
 
@@ -277,7 +277,7 @@ function findCollisions(
     const identical = (at: string) => {
       if (!adopting) return false;
       const st = fs.lstatSync(at, { throwIfNoEntry: false });
-      return Boolean(st?.isDirectory()) && [s.installed, s.hash].includes(treeHash(at));
+      return Boolean(st?.isDirectory()) && sameSkill(at, s.staged, [s.installed, s.hash]);
     };
     // lstat: a dangling symlink (your own skill, moved for now) is occupied.
     if (fs.lstatSync(dest, { throwIfNoEntry: false }) && !(s.name in prev)) {

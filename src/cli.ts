@@ -5,7 +5,7 @@ import { NeedsInteraction, acquire, latestVersion, pinnedPackage } from "./acqui
 import { acquireLock, apply, removeManaged } from "./apply.ts";
 import { hasSecret, storeSecret, storeSecretValue } from "./keychain.ts";
 import { type Kind, diagnose } from "./doctor.ts";
-import { type CliPlan, applyCli, listSource, lockedFor, planCli, upstreamChanges } from "./skillscli.ts";
+import { type CliPlan, applyCli, applyCliLinks, cliLinkChanges, listSource, lockedFor, planCli, upstreamChanges } from "./skillscli.ts";
 import { type Collision, type HolderKind, type Plan, plan } from "./plan.ts";
 import { pluginSkillNames } from "./plugins.ts";
 import { askForSet, validateSet } from "./register.ts";
@@ -370,7 +370,14 @@ async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
     const links = linkDirsFor(ctx.paths, getSet(draft.registry, id));
     const before = readState(ctx.paths.stateDir).cli?.[id]?.skills ?? [];
     const recordChanged = ownedAfter.join() !== [...before].sort().join();
-    const work = p.add.length > 0 || p.update.length > 0 || p.remove.length > 0 || resolved || recordChanged;
+    // Skills that stay installed must follow the set's links too.
+    // (New skills get their links from npx skills itself.)
+    const linkChanges = cliLinkChanges(ctx.paths, ownedAfter.filter((n) => !p.add.includes(n)), links);
+    printItems("link", linkChanges.add.map(home));
+    printItems("unlink", linkChanges.remove.map(home));
+    const work =
+      p.add.length > 0 || p.update.length > 0 || p.remove.length > 0 || resolved || recordChanged ||
+      linkChanges.add.length > 0 || linkChanges.remove.length > 0;
     if (!(await confirmPlan(flags, work, resolved))) return 0;
     // The prompt may have sat for a while: check again right before npx
     // skills runs, since it overwrites whatever is at those paths.
@@ -380,6 +387,7 @@ async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
       throw new Error(`Something changed since the plan was made:\n  ${fresh.map((c) => `${c.name} now collides with ${c.holder}`).join("\n  ")}`);
     }
     applyCli(ctx.paths, p, links);
+    applyCliLinks(ctx.paths, linkChanges);
     const state = readState(ctx.paths.stateDir);
     state.cli = { ...(state.cli ?? {}), [id]: { syncedAt: new Date().toISOString(), skills: ownedAfter } };
     writeState(ctx.paths.stateDir, state);
@@ -393,6 +401,9 @@ async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
     return 1;
   }
 }
+
+/** A path shown with ~ for your home folder. */
+const home = (p: string) => p.replace(`${process.env.SKILLPORT_HOME ?? process.env.HOME}/`, "~/");
 
 const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
@@ -586,7 +597,8 @@ function report(p: Plan): void {
   printItems("clean up", p.strays.map((at) => at.replace(`${process.env.HOME}/`, "~/")));
   const same = by("unchanged").length;
   if (same) console.log(`  ${"unchanged".padEnd(11)}${count(same, "skill")}`);
-  printItems("local edits", p.skills.filter((s) => s.localEdits && s.write).map((s) => s.name));
+  printItems("edits kept", p.skills.filter((s) => s.localEdits && !s.write).map((s) => s.name));
+  printItems("edits replaced", p.skills.filter((s) => s.localEdits && s.write).map((s) => s.name));
   for (const { file, change } of p.rewrites) {
     console.log(`  rewrite    ${file}:${change.line} \`${change.from}\` → \`${change.to}\``);
   }
@@ -688,14 +700,20 @@ function status(ctx: Ctx): number {
   let problems = 0;
   for (const [id, set] of Object.entries(ctx.registry.sets)) {
     if (!isManaged(set)) {
-      const mine = lockedFor(lock, set.source).length;
-      console.log(`${id.padEnd(15)}${"skills-cli".padEnd(13)}${count(mine, "skill").padEnd(10)}${set.source}`);
+      const fromSource = lockedFor(lock, set.source);
+      const record = state.cli?.[id];
+      const owned = fromSource.filter((n) => record?.skills.includes(n));
+      const when = record ? `synced ${new Date(record.syncedAt).toLocaleString("sv").slice(0, 16)}  ` : "";
+      console.log(`${id.padEnd(15)}${"skills-cli".padEnd(13)}${count(owned.length, "skill").padEnd(10)}${when}${set.source}`);
+      if (set.exclude?.length) console.log(`${pad}  excluded: ${set.exclude.join(", ")}`);
+      const others = fromSource.filter((n) => !owned.includes(n));
+      if (others.length) console.log(`${pad}  left alone (installed outside this set): ${summarize(others)}`);
       continue;
     }
     const st = state.sets[id];
     const n = Object.keys(st?.skills ?? {}).length;
     const when = st
-      ? `${count(n, "skill").padEnd(10)}synced ${st.syncedAt.slice(0, 16).replace("T", " ")}${st.source ? `  ${st.source}` : ""}`
+      ? `${count(n, "skill").padEnd(10)}synced ${new Date(st.syncedAt).toLocaleString("sv").slice(0, 16)}${st.source ? `  ${st.source}` : ""}`
       : "not installed";
     console.log(`${id.padEnd(15)}${set.type.padEnd(13)}${when}`);
     for (const [name, s] of Object.entries(st?.skills ?? {})) {

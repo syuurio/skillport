@@ -5,7 +5,7 @@ import { type Paths, type Registry, isManaged, linkDirsFor } from "./registry.ts
 import type { LockEntry, State } from "./state.ts";
 import { RENAMED_IN_INSTALLER } from "./plan.ts";
 import { isValidSkillName } from "./transform.ts";
-import { treeHash, treeHashWithout } from "./treehash.ts";
+import { sameSkill, treeHash } from "./treehash.ts";
 
 // `skl doctor`: find what drifted from the registry, state and lock, and fix
 // what can be fixed without a judgement call. Everything removed goes to the
@@ -59,33 +59,21 @@ function ownedSkills(
       out.push({ name, dest: path.join(paths.skillsDir, name), installed: s.installed, links, owner: `set "${id}"`, setId: id });
     }
   }
+  // npx skills' skills: the skills-cli set that recorded one decides its links.
+  const cliOwner = new Map<string, string>();
+  for (const [id, rec] of Object.entries(state.cli ?? {})) for (const n of rec.skills) cliOwner.set(n, id);
   for (const name of Object.keys(lock)) {
     if (!valid(name, "~/.agents/.skill-lock.json")) continue;
-    out.push({ name, dest: path.join(paths.skillsDir, name), links: [], owner: `npx skills (${lock[name].source})` });
+    const setId = cliOwner.get(name);
+    const set = setId ? reg.sets[setId] : undefined;
+    out.push({
+      name,
+      dest: path.join(paths.skillsDir, name),
+      links: set ? linkDirsFor(paths, set) : [],
+      owner: `npx skills (${lock[name].source})`,
+    });
   }
   return out;
-}
-
-/**
- * Top-level entries installers add for one agent: Emil's installers write
- * `agents/openai.yaml` for Codex (verified). Only an `agents` folder holding
- * nothing but that file qualifies, and only when our copy has no `agents`.
- */
-function knownAgentExtras(copy: string, ours: string): string[] {
-  const agents = path.join(copy, "agents");
-  if (fs.existsSync(path.join(ours, "agents"))) return [];
-  const st = fs.lstatSync(agents, { throwIfNoEntry: false });
-  if (!st?.isDirectory()) return [];
-  const inside = fs.readdirSync(agents);
-  return inside.length === 1 && inside[0] === "openai.yaml" ? ["agents"] : [];
-}
-
-/** A copy matches ours exactly, or once known per-agent extras are left out. */
-function sameAsOurs(copy: string, ours: string): boolean {
-  if (!fs.existsSync(ours)) return false;
-  const disk = treeHash(ours);
-  const extras = knownAgentExtras(copy, ours);
-  return treeHash(copy) === disk || (extras.length > 0 && treeHashWithout(copy, extras) === disk);
 }
 
 export function diagnose(paths: Paths, reg: Registry, state: State, lock: Record<string, LockEntry>): Finding[] {
@@ -131,10 +119,10 @@ export function diagnose(paths: Paths, reg: Registry, state: State, lock: Record
       // Same skill if it matches exactly, or once the per-agent files an
       // installer is known to add are left out. Anything else you added makes
       // it a different copy, which --fix never touches.
-      const same = disk !== null && sameAsOurs(at, o.dest);
+      const same = disk !== null && sameSkill(at, o.dest);
       // Fixes run after a confirmation prompt: each one checks again that
       // the thing it acts on is still what was reported.
-      const stillSame = () => fs.lstatSync(at, { throwIfNoEntry: false })?.isDirectory() === true && sameAsOurs(at, o.dest);
+      const stillSame = () => fs.lstatSync(at, { throwIfNoEntry: false })?.isDirectory() === true && fs.existsSync(o.dest) && sameSkill(at, o.dest);
       findings.push({
         kind: "stray-copy",
         message: `${at} is a separate copy of ${o.name} (${o.owner})${same ? ", identical" : ", different content: keep or delete by hand"}`,

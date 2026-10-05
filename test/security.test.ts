@@ -158,3 +158,11 @@ test("exceptions do not open bypasses: a qualifier counts only as the last word,
   assert.equal(found("--license", "GPL-3.0-or-later"), undefined);
   assert.equal(found("--key-file", "id.pem"), undefined);
 });
+
+test("taking the lock clears lock folders set aside by runs that are gone", () => {
+  const paths = defaultPaths(tmp("stale"));
+  fs.mkdirSync(path.join(paths.stateDir, "lock.d.stale-1-0"), { recursive: true });
+  fs.writeFileSync(path.join(paths.stateDir, "lock.d.stale-1-0", "pid"), "999999");
+  acquireLock(paths)();
+  assert.ok(!fs.existsSync(path.join(paths.stateDir, "lock.d.stale-1-0")));
+});

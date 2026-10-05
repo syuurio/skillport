@@ -376,3 +376,23 @@ test("taking over one folder in the prompt adopts only that skill", () => {
   assert.deepEqual(p.strays, [path.join(codex, "animate")]);
   assert.deepEqual(p.collisions.map((c) => c.name), ["gesture-ui"]);
 });
+
+test("adopt treats a Codex copy with only agents/openai.yaml added as identical", () => {
+  const t = sandbox();
+  t.skill("animate");
+  const codex = path.join(t.home, ".codex", "skills", "animate");
+  fs.cpSync(path.join(t.vendor, "animate"), codex, { recursive: true });
+  fs.mkdirSync(path.join(codex, "agents"));
+  fs.writeFileSync(path.join(codex, "agents", "openai.yaml"), "interface: {}\n");
+  const p = t.run({ adopt: true });
+  assert.deepEqual(p.strays, [codex]);
+});
+
+test("kept local edits are reported, not hidden behind up to date", () => {
+  const t = sandbox();
+  t.skill("animate");
+  t.commit(t.run());
+  fs.appendFileSync(path.join(t.paths.skillsDir, "animate", "SKILL.md"), "mine\n");
+  const s = t.run().skills[0];
+  assert.equal(s.localEdits && !s.write, true);
+});

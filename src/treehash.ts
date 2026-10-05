@@ -61,3 +61,28 @@ export function treeHashWithout(dir: string, skip: string[]): string {
     return treeHash(tmp);
   });
 }
+
+/**
+ * Top-level entries installers add for one agent: Emil's installers write
+ * `agents/openai.yaml` for Codex (verified). Only an `agents` folder holding
+ * nothing but that file qualifies, and only when our copy has no `agents`.
+ */
+function agentExtras(copy: string, ours: string): string[] {
+  if (fs.existsSync(path.join(ours, "agents"))) return [];
+  const agents = path.join(copy, "agents");
+  const st = fs.lstatSync(agents, { throwIfNoEntry: false });
+  if (!st?.isDirectory()) return [];
+  const inside = fs.readdirSync(agents);
+  return inside.length === 1 && inside[0] === "openai.yaml" ? ["agents"] : [];
+}
+
+/**
+ * Whether `copy` is the same skill as our folder `ours`: its tree hash is one
+ * of `hashes` (by default, our folder's), exactly or once the per-agent files
+ * an installer adds are left out. Anything else you added makes it different.
+ */
+export function sameSkill(copy: string, ours: string, hashes: string[] = [treeHash(ours)]): boolean {
+  if (hashes.includes(treeHash(copy))) return true;
+  const extras = agentExtras(copy, ours);
+  return extras.length > 0 && hashes.includes(treeHashWithout(copy, extras));
+}
