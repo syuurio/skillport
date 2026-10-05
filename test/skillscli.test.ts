@@ -67,3 +67,20 @@ test("planCli splits add / update / remove / unselected and refuses collisions",
     [["prototype", "set"], ["loose", "an"], ["other", "npx"]],
   );
 });
+
+test("planCli refuses to let npx skills replace your own symlink in ~/.claude/skills", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "skillport-cli-link-"));
+  const paths = defaultPaths(home);
+  fs.mkdirSync(paths.links[0], { recursive: true });
+  fs.mkdirSync(path.join(home, "dev", "bar"), { recursive: true });
+  fs.symlinkSync(path.join(home, "dev", "bar"), path.join(paths.links[0], "bar"));
+  const p = planCli({
+    paths,
+    setId: "m",
+    set: { type: "skills-cli", source: "a/b" },
+    available: ["bar"],
+    lock: {},
+    state: { version: 1, sets: {} },
+  });
+  assert.match(p.collisions[0]?.holder ?? "", /which skillport did not create/);
+});

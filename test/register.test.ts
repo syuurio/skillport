@@ -109,3 +109,13 @@ test("skillRootsIn lists every folder in a package that holds skills, most first
 test("localDate uses the local calendar day", () => {
   assert.equal(localDate(new Date(2026, 9, 6, 0, 30)), "2026-10-06");
 });
+
+test("validateSet refuses every literal token form and a {secret} without secret", () => {
+  const bad = (command: string[], secret?: "keychain") =>
+    validateSet("x", { type: "installer", command, ...(secret ? { secret } : {}) }, empty).join();
+  assert.match(bad(["npx", "i", "--api-key=abc"]), /literal token/);
+  assert.match(bad(["npx", "i", "--token", "abc"]), /literal token/);
+  assert.match(bad(["npx", "i", "--auth=abc"]), /literal token/);
+  assert.match(bad(["npx", "i", "--token={secret}"]), /"secret" is not "keychain"/);
+  assert.equal(bad(["npx", "i", "--token={secret}"], "keychain"), "");
+});

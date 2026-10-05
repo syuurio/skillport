@@ -60,8 +60,11 @@ export function validateSet(id: string, set: SkillSet, reg: Registry): string[] 
       if (set.secret === "keychain" && !set.command?.some((a) => a.includes("{secret}"))) {
         problems.push("secret is set but no command word contains {secret}");
       }
-      if (set.command?.some((a) => /--token=(?!\{secret\})\S/.test(a))) {
+      if (isWords(set.command) && extractSecret(set.command).secret !== undefined) {
         problems.push("command contains a literal token; use {secret} and store it with skl secret");
+      }
+      if (set.command?.some((a) => a.includes("{secret}")) && set.secret !== "keychain") {
+        problems.push('command uses {secret} but "secret" is not "keychain"');
       }
       break;
     case "npm":

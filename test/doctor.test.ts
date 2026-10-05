@@ -103,3 +103,13 @@ test("names from state or the lock that are not skill names never become paths",
   assert.ok(fs.existsSync(path.join(victim, "SKILL.md")));
   assert.equal(f.filter((x) => /invalid skill name/.test(x.message)).length, 2);
 });
+
+test("--fix never treats a copy with your own additions as identical", () => {
+  const w = world();
+  const codex = w.skill(path.join(w.home, ".codex", "skills"), "animate");
+  fs.writeFileSync(path.join(codex, "MY-NOTES.md"), "mine");
+  const f = diagnose(w.paths, w.registry, w.state, {});
+  const stray = f.find((x) => x.kind === "stray-copy" && x.message.includes(".codex"));
+  assert.ok(stray && !stray.fix);
+  assert.match(stray.message, /different content/);
+});

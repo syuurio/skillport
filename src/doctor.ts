@@ -63,6 +63,20 @@ function ownedSkills(
   return out;
 }
 
+/**
+ * Top-level entries installers add for one agent: Emil's installers write
+ * `agents/openai.yaml` for Codex (verified). Only an `agents` folder holding
+ * nothing but that file qualifies, and only when our copy has no `agents`.
+ */
+function knownAgentExtras(copy: string, ours: string): string[] {
+  const agents = path.join(copy, "agents");
+  if (fs.existsSync(path.join(ours, "agents"))) return [];
+  const st = fs.lstatSync(agents, { throwIfNoEntry: false });
+  if (!st?.isDirectory()) return [];
+  const inside = fs.readdirSync(agents);
+  return inside.length === 1 && inside[0] === "openai.yaml" ? ["agents"] : [];
+}
+
 export function diagnose(paths: Paths, reg: Registry, state: State, lock: Record<string, LockEntry>): Finding[] {
   const findings: Finding[] = [];
   const owned = ownedSkills(paths, reg, state, lock, findings);
@@ -107,9 +121,10 @@ export function diagnose(paths: Paths, reg: Registry, state: State, lock: Record
       if (!st || isOursOrFree(at, o.dest)) continue;
       if (st.isSymbolicLink()) continue; // someone else's link; not a copy
       if (!st.isDirectory()) continue;
-      // Same skill if it matches exactly, or once per-agent extras the
-      // installer added (and our copy lacks) are left out.
-      const extras = fs.readdirSync(at).filter((e) => !fs.existsSync(path.join(o.dest, e)));
+      // Same skill if it matches exactly, or once the per-agent files an
+      // installer is known to add are left out. Anything else you added makes
+      // it a different copy, which --fix never touches.
+      const extras = knownAgentExtras(at, o.dest);
       const same = disk !== null && (treeHash(at) === disk || (extras.length > 0 && treeHashWithout(at, extras) === disk));
       findings.push({
         kind: "stray-copy",

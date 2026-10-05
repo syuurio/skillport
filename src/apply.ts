@@ -64,7 +64,7 @@ function recheck(paths: Paths, p: Plan, owned: Set<string>): void {
     if (fs.existsSync(dest) && !owned.has(s.name)) problems.push(`${dest} appeared and is not managed by "${p.setId}"`);
     for (const dir of p.links) {
       const at = path.join(dir, s.name);
-      if (!isOursOrFree(at, dest)) problems.push(`${at} is not skillport's link`);
+      if (!p.strays.includes(at) && !isOursOrFree(at, dest)) problems.push(`${at} is not skillport's link`);
     }
   }
   if (problems.length) throw new Error(`Something changed since the plan was made:\n  ${problems.join("\n  ")}`);
@@ -84,6 +84,7 @@ export function apply(
   if (p.errors.length || p.collisions.length) throw new Error("Refusing to apply a plan with unresolved problems.");
   const prev = state.sets[p.setId]?.skills ?? {};
   const trash = trashDir(paths, p.setId);
+  recheck(paths, p, new Set([...Object.keys(prev), ...p.adopted]));
   // Adopting: identical copies scattered in agent folders go to the trash
   // first, so the links can take their place.
   for (const at of p.strays) {
@@ -91,7 +92,6 @@ export function apply(
     fs.mkdirSync(path.dirname(to), { recursive: true });
     fs.renameSync(at, to);
   }
-  recheck(paths, p, new Set([...Object.keys(prev), ...p.adopted]));
   fs.mkdirSync(paths.skillsDir, { recursive: true });
 
   for (const name of p.removed) {
@@ -143,23 +143,43 @@ export function removeManaged(paths: Paths, setId: string, state: State): string
 }
 
 /**
- * One skillport run at a time: two runs share staging and state. The lock
- * file holds the pid; a lock whose process is gone is taken over.
+ * One skillport run at a time: runs share staging and state. The lock is a
+ * directory (mkdir is atomic) holding the owner's pid. A lock whose process
+ * is gone is taken over by renaming it aside first, so of two runs that both
+ * see it stale, only one wins the rename.
+ *
+ * The state folder is made private (0700): staging holds the installer's fake
+ * HOME, where an installer may write your token.
  */
 export function acquireLock(paths: Paths): () => void {
-  fs.mkdirSync(paths.stateDir, { recursive: true });
-  const file = path.join(paths.stateDir, "lock");
-  for (let attempt = 0; attempt < 2; attempt++) {
+  fs.mkdirSync(paths.stateDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(paths.stateDir, 0o700);
+  const dir = path.join(paths.stateDir, "lock.d");
+  for (let attempt = 0; attempt < 5; attempt++) {
     try {
-      fs.writeFileSync(file, String(process.pid), { flag: "wx" });
-      return () => fs.rmSync(file, { force: true });
+      fs.mkdirSync(dir);
+      fs.writeFileSync(path.join(dir, "pid"), String(process.pid));
+      return () => fs.rmSync(dir, { recursive: true, force: true });
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    }
+    let pid = 0;
+    try {
+      pid = Number(fs.readFileSync(path.join(dir, "pid"), "utf8"));
     } catch {
-      const pid = Number(fs.readFileSync(file, "utf8"));
-      if (pid && isAlive(pid)) throw new Error(`Another skillport run (pid ${pid}) is in progress.`);
-      fs.rmSync(file, { force: true });
+      // The owner is between mkdir and writing its pid, or just released.
+    }
+    if (pid && isAlive(pid)) throw new Error(`Another skillport run (pid ${pid}) is in progress.`);
+    if (!pid) continue;
+    const aside = `${dir}.stale-${process.pid}-${attempt}`;
+    try {
+      fs.renameSync(dir, aside);
+      fs.rmSync(aside, { recursive: true, force: true });
+    } catch {
+      // Someone else took it over first; try again.
     }
   }
-  throw new Error(`Could not take ${file}.`);
+  throw new Error(`Could not take the lock in ${paths.stateDir}.`);
 }
 
 function isAlive(pid: number): boolean {

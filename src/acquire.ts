@@ -55,7 +55,7 @@ export function acquire(
   opts: AcquireOptions,
 ): string {
   fs.rmSync(staging, { recursive: true, force: true });
-  fs.mkdirSync(staging, { recursive: true });
+  fs.mkdirSync(staging, { recursive: true, mode: 0o700 });
   return set.type === "installer"
     ? runInstaller(id, set, staging, opts)
     : extractNpm(set, staging);
@@ -70,6 +70,10 @@ function runInstaller(
   const fakeHome = path.join(staging, "home");
   for (const d of set.stage ?? [".claude"]) {
     fs.mkdirSync(path.join(fakeHome, d), { recursive: true });
+  }
+  if (set.secret !== "keychain" && set.command.some((a) => a.includes("{secret}"))) {
+    // Running it would pass an empty token; a registry typo, not a choice.
+    throw new Error(`"${id}" uses {secret} in its command but has no "secret": "keychain".`);
   }
   const secret = set.secret === "keychain" ? readSecret(id) : "";
   const redact = (s: string) => (secret ? s.replaceAll(secret, "***") : s);

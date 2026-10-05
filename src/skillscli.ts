@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { sandboxEnv } from "./acquire.ts";
+import { isOursOrFree } from "./apply.ts";
 import type { Paths, SkillsCliSet } from "./registry.ts";
 import type { LockEntry, State } from "./state.ts";
 import { isValidSkillName } from "./transform.ts";
@@ -114,10 +115,11 @@ export function planCli(input: {
       collisions.push({ name, holder: `an unmanaged folder ${dest}` });
       continue;
     }
+    // Anything already at the link path that is not a link to our folder
+    // (a real folder, or your own symlink elsewhere) would be replaced.
     for (const dir of paths.links) {
       const at = path.join(dir, name);
-      const st = fs.lstatSync(at, { throwIfNoEntry: false });
-      if (st && !st.isSymbolicLink()) collisions.push({ name, holder: `${at}, which is not a symlink` });
+      if (!isOursOrFree(at, dest)) collisions.push({ name, holder: `${at}, which skillport did not create` });
     }
   }
   return {

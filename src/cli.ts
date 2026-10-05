@@ -73,7 +73,10 @@ async function main(argv: string[]): Promise<number> {
     registry: readRegistry(paths.registry),
     saveRegistry: (r) => writeRegistry(paths.registry, r),
   };
-  if (["add", "update", "check", "diff", "remove", "adopt"].includes(cmd) || (cmd === "doctor" && rest.includes("--fix"))) cleanups.add(acquireLock(paths));
+  // Every command that writes state, staging, the registry or the Keychain
+  // takes the lock; status, plain doctor and help do not.
+  const writes = ["add", "update", "check", "diff", "remove", "adopt", "register", "resolve", "secret"];
+  if (writes.includes(cmd) || (cmd === "doctor" && rest.includes("--fix"))) cleanups.add(acquireLock(paths));
   switch (cmd) {
     case "register":
       return register(ctx, args[0], rest);
@@ -336,6 +339,13 @@ async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
       return 0;
     }
     if (!flags.yes && !(await confirm("Apply?"))) return 0;
+    // The prompt may have sat for a while: check again right before npx
+    // skills runs, since it overwrites whatever is at those paths.
+    const again = replan();
+    const fresh = again.collisions.filter((c) => p.add.includes(c.name));
+    if (fresh.length) {
+      throw new Error(`Something changed since the plan was made:\n  ${fresh.map((c) => `${c.name} now collides with ${c.holder}`).join("\n  ")}`);
+    }
     applyCli(ctx.paths, p, links);
     if (resolved) ctx.saveRegistry(draft.registry);
     ctx.registry = draft.registry;
@@ -612,7 +622,8 @@ async function remove(ctx: Ctx, id: string | undefined, flags: Flags): Promise<n
   const refuse = needsYes(flags);
   if (refuse) throw new Error(refuse);
   if (!flags.yes && !(await confirm("Continue?"))) return 0;
-  if (isManaged(set)) removeManaged(ctx.paths, id!, state);
+  // Re-read after the prompt so what is removed is what is there now.
+  if (isManaged(set)) removeManaged(ctx.paths, id!, readState(ctx.paths.stateDir));
   else if (names.length) applyCli(ctx.paths, { setId: id!, source: set.source, add: [], update: [], remove: names, unselected: [], collisions: [] }, []);
   delete ctx.registry.sets[id!];
   ctx.saveRegistry(ctx.registry);

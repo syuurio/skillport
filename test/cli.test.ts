@@ -43,7 +43,7 @@ test("remove --dry-run removes nothing; staging is gone after every run", () => 
   assert.ok(fs.existsSync(path.join(t.paths.skillsDir, "animate")));
   assert.ok(readRegistry(t.paths.registry).sets.emil);
   assert.ok(!fs.existsSync(path.join(t.paths.stateDir, "staging", "emil")));
-  assert.ok(!fs.existsSync(path.join(t.paths.stateDir, "lock")));
+  assert.ok(!fs.existsSync(path.join(t.paths.stateDir, "lock.d")));
 });
 
 test("a failing installer leaves no staging behind", () => {
@@ -71,8 +71,10 @@ test("the run lock refuses a second live run and takes over a stale one", () => 
   const release = acquireLock(paths);
   assert.throws(() => acquireLock(paths), /in progress/);
   release();
-  fs.writeFileSync(path.join(paths.stateDir, "lock"), "999999");
+  fs.mkdirSync(path.join(paths.stateDir, "lock.d"));
+  fs.writeFileSync(path.join(paths.stateDir, "lock.d", "pid"), "999999");
   acquireLock(paths)();
+  assert.equal((fs.statSync(paths.stateDir).mode & 0o777).toString(8), "700");
 });
 
 test("an installer without `unattended` is skipped by update, not run with guessed flags", () => {
