@@ -15,6 +15,7 @@ import {
   getSet,
   isManaged,
   readRegistry,
+  runsUnattended,
   writeRegistry,
 } from "./registry.ts";
 import { readSkillLock, readState } from "./state.ts";
@@ -146,6 +147,10 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
   if (!set) return 0;
   const interactive = flags.interactive && set.type === "installer";
   if (interactive && !isInteractive()) throw new Error("Interactive install needs a terminal; pass -y to install everything.");
+  if (!interactive && !runsUnattended(set)) {
+    console.log(`■ ${id}: only runs interactively; skipped. Run: skl update ${id} -i`);
+    return 0;
+  }
   const refuse = needsYes(flags);
   if (refuse) throw new Error(refuse);
   // Collision answers go into a draft and reach the registry file only when
@@ -286,6 +291,10 @@ async function check(ctx: Ctx, ids: string[]): Promise<number> {
   for (const id of ids.length ? ids : Object.keys(ctx.registry.sets)) {
     const set = managed(ctx, id);
     if (!set) continue;
+    if (!runsUnattended(set)) {
+      console.log(`■ ${id}: only runs interactively; check skipped. Run: skl update ${id} -i`);
+      continue;
+    }
     const staging = stagingFor(ctx, id);
     try {
       report(fetchSet(ctx, id, set, staging, false)());

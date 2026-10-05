@@ -88,15 +88,16 @@
 執行 vendor installer，用假 `$HOME` 讓它只寫進暫存區。
 
 ```
-假 $HOME = <staging>/home，其中只建立 .claude/
-執行：HOME=<staging>/home  <command> --global -y
-取出：<staging>/home/.claude/skills/*
+假 $HOME = <staging>/home，其中只建立 .claude/（stage）
+執行：HOME=<staging>/home  <command> <unattended…>
+取出：<staging>/home/.claude/skills/*（harvest）
 ```
 
 - installer 用 `os.homedir()` 決定寫入位置與偵測 agent；Node 在 POSIX 上從 `$HOME` 取值（已驗證）。
 - 只放 `.claude` 讓它只偵測到 Claude Code，產出就是 vendor 的原始檔案，不會多出 Codex 的 `agents/openai.yaml`（選用的 metadata，已驗證）。
 - `npm_config_cache` 指回真實的 `~/.npm`，避免每次重新下載。
 - 換寫入目標只需改設定（`stage`、`harvest`），不改程式。
+- **skillport 不替 installer 加任何旗標。** 範圍旗標（Emil 的 `--global`）寫在 `command` 裡；非互動旗標寫在 `unattended`（Emil 的 `["-y"]`）。沒有 `unattended` 的 set 只能互動執行，`update`、`check` 會略過並提示 `-i`。
 
 ### 5.3 `npm`
 
@@ -164,13 +165,15 @@ $ skl capture newvendor
     },
     "aiforui": {
       "type": "installer",
-      "command": ["npx", "-y", "@aiforui/install@0.1.4", "--token={secret}"],
+      "command": ["npx", "-y", "@aiforui/install@0.1.4", "--token={secret}", "--global"],
+      "unattended": ["-y"],
       "secret": "keychain"
     },
     "animationsdev": {
       "type": "installer",
       "command": ["npx", "-y", "@animationsdev/install@0.2.3", "--token={secret}",
-                  "--api=https://animations.dev"],
+                  "--api=https://animations.dev", "--global"],
+      "unattended": ["-y"],
       "secret": "keychain",
       "prefix": "anim",
       "rename": {
@@ -188,11 +191,12 @@ $ skl capture newvendor
 
 | 欄位 | 適用類型 | 說明 |
 |---|---|---|
-| `skills` | skills-cli | 要裝哪些 skill；省略 = 全部 |
+| `skills` | 全部 | 要裝哪些 skill；省略 = 全部。installer 互動安裝後由你的勾選寫入 |
 | `exclude` | 全部 | 不安裝的 skill（用 vendor 原名） |
 | `prefix` | installer、npm | 撞名時「加前綴」選項的預設前綴；省略 = set 名稱 |
 | `rename` | installer、npm | vendor 原名 → 安裝名稱，附原因與日期；由撞名處理寫入，也可手動編輯 |
-| `command` | installer | argv；`{secret}` 執行時替換。`--global -y` 由 skillport 附加 |
+| `command` | installer | 完整 argv，含範圍旗標；`{secret}` 執行時替換。skillport 不另加旗標 |
+| `unattended` | installer | 非互動執行時附加的旗標，例如 `["-y"]`；不需要就寫 `[]`；省略 = 只能互動執行 |
 | `stage` / `harvest` | installer | 預設 `[".claude"]` / `".claude/skills"` |
 | `secret` | installer | `"keychain"`：從 Keychain（service `skillport`、account = set 名稱）讀取 |
 | `package` / `path` | npm | 固定版本的套件、套件內 skill 目錄 |
@@ -394,6 +398,8 @@ matt           有改動 tdd, code-review · 上游新增 implement-spec, pr（�
 - 已知限制：vendor installer 只接受命令列參數傳入 token，執行期間同使用者的其他行程可用 `ps` 看到。
 - `@animationsdev/install@0.2.3` 預設 API 是 `http://animations.dev`，token 會先以明文送出再被 308 轉到 HTTPS。registry 範例固定加上 `--api=https://animations.dev`。
 - `npm` 類型不執行套件程式碼，只解開檔案。
+- 所有 npm/npx 子行程設 `logs-max=0`、`logs-dir` 指向 staging：npm 會把完整 argv（含 `--token=`）寫進 debug log（已驗證並修正）。npm 指令的 cwd 設在 staging，專案層的 `.npmrc` 無法改 registry。
+- vendor 內容只接受一般檔案與目錄；symlink、FIFO 等在讀取前就拒絕（symlink 會把本機任意檔案帶進每個 agent 都讀的 skill，FIFO 會讓讀取永久卡住）。名稱在寫入任何檔案前驗證。
 
 ## 10. 可還原性
 

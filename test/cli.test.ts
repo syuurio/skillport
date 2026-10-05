@@ -16,7 +16,7 @@ function sandbox(extra: Record<string, unknown> = {}) {
   const script = `const fs=require("fs"),p=require("os").homedir()+"/.claude/skills/animate";fs.mkdirSync(p,{recursive:true});fs.writeFileSync(p+"/SKILL.md","---\\nname: animate\\ndescription: d\\n---\\n")`;
   const registry = {
     version: 1,
-    sets: { emil: { type: "installer", command: ["node", "-e", script, "--"], ...extra } },
+    sets: { emil: { type: "installer", command: ["node", "-e", script, "--"], unattended: [], ...extra } },
   };
   fs.mkdirSync(path.join(home, ".config", "skillport"), { recursive: true });
   fs.writeFileSync(path.join(home, ".config", "skillport", "registry.json"), JSON.stringify(registry));
@@ -73,4 +73,20 @@ test("the run lock refuses a second live run and takes over a stale one", () => 
   release();
   fs.writeFileSync(path.join(paths.stateDir, "lock"), "999999");
   acquireLock(paths)();
+});
+
+test("an installer without `unattended` is skipped by update, not run with guessed flags", () => {
+  const t = sandbox({ unattended: undefined });
+  const r = t.skl("update", "emil", "-y");
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /only runs interactively; skipped/);
+  assert.ok(!fs.existsSync(path.join(t.paths.skillsDir, "animate")));
+});
+
+test("the installer gets exactly command + unattended, nothing added", () => {
+  const argsFile = path.join(os.tmpdir(), `skillport-args-${process.pid}`);
+  const script = `require("fs").writeFileSync(${JSON.stringify(argsFile)},JSON.stringify(process.argv.slice(1)));const fs=require("fs"),p=require("os").homedir()+"/.claude/skills/animate";fs.mkdirSync(p,{recursive:true});fs.writeFileSync(p+"/SKILL.md","---\\nname: animate\\n---\\n")`;
+  const t = sandbox({ command: ["node", "-e", script, "--", "--scope", "user"], unattended: ["--non-interactive"] });
+  assert.equal(t.skl("update", "emil", "-y").status, 0);
+  assert.deepEqual(JSON.parse(fs.readFileSync(argsFile, "utf8")), ["--scope", "user", "--non-interactive"]);
 });

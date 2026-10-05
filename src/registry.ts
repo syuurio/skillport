@@ -19,8 +19,17 @@ interface SetCommon {
 
 export interface InstallerSet extends SetCommon {
   type: "installer";
-  /** argv without `--global`/`-y`; `{secret}` is replaced at run time. */
+  /**
+   * argv as you would type it, including any scope flag the installer needs
+   * (e.g. `--global`); `{secret}` is replaced at run time.
+   */
   command: string[];
+  /**
+   * Extra args for an unattended run (stdin closed), e.g. `["-y"]`; `[]` if
+   * the installer needs none. Omitted: the installer can only run
+   * interactively, so `update` skips it until you pass `-i`.
+   */
+  unattended?: string[];
   secret?: "keychain";
   /** Folders created under the fake HOME so the installer detects one agent. */
   stage?: string[];
@@ -101,6 +110,11 @@ export function readRegistry(file: string): Registry {
 export function writeRegistry(file: string, reg: Registry): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(reg, null, 2)}\n`);
+}
+
+/** Whether skillport may run this set without you at the terminal. */
+export function runsUnattended(set: ManagedSet): boolean {
+  return set.type === "npm" || set.unattended !== undefined;
 }
 
 export function isManaged(set: SkillSet): set is ManagedSet {

@@ -33,7 +33,8 @@ skl secret <set>                 store a set's token in macOS Keychain
   "sets": {
     "aiforui": {
       "type": "installer",
-      "command": ["npx", "-y", "@aiforui/install@0.1.4", "--token={secret}"],
+      "command": ["npx", "-y", "@aiforui/install@0.1.4", "--token={secret}", "--global"],
+      "unattended": ["-y"],
       "secret": "keychain"
     },
     "motion": { "type": "npm", "package": "motion-ai@14.1.0", "path": "content/skills" }
@@ -41,9 +42,11 @@ skl secret <set>                 store a set's token in macOS Keychain
 }
 ```
 
-- `installer`: runs the command with `HOME` pointed at a sandbox that only
-  contains `.claude/`, adding `--global` (and `-y` unless interactive), then
-  takes `.claude/skills/*`. `{secret}` comes from Keychain (service
+- `installer`: runs `command` exactly as written, with `HOME` pointed at a
+  sandbox that only contains `.claude/` (`stage`), then takes
+  `.claude/skills/*` (`harvest`). Unattended runs append `unattended`; a set
+  without it only runs interactively (`-i`) and `update` skips it. skillport
+  adds no flags of its own. `{secret}` comes from Keychain (service
   `skillport`, account = set name).
 - `npm`: `npm pack`s a pinned package and copies a directory out of it,
   without running it. For installers that refuse to run without a terminal.

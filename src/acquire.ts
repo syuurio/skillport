@@ -55,10 +55,14 @@ function runInstaller(
   }
   const secret = set.secret === "keychain" ? readSecret(id) : "";
   const redact = (s: string) => (secret ? s.replaceAll(secret, "***") : s);
+  // No vendor knowledge lives here: the scope flag is part of `command`, and
+  // the non-interactive switch is whatever the registry says it is.
+  if (!opts.interactive && set.unattended === undefined) {
+    throw new Error(`"${id}" declares no \`unattended\` args, so it only runs interactively: skl update ${id} -i`);
+  }
   const argv = [
     ...set.command.map((a) => a.replaceAll("{secret}", secret)),
-    "--global",
-    ...(opts.interactive ? [] : ["-y"]),
+    ...(opts.interactive ? [] : (set.unattended ?? [])),
   ];
 
   // Installers find agent folders through os.homedir(), which follows $HOME
