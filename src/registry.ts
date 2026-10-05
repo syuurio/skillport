@@ -15,7 +15,19 @@ interface SetCommon {
   /** Vendor skill names to install; omitted means all. */
   skills?: string[];
   exclude?: string[];
+  /**
+   * Agents that do not read ~/.agents/skills and get symlinks, by id from
+   * LINK_TARGETS. Omitted means ["claude-code"]. Codex, Cursor and OpenCode
+   * read ~/.agents/skills themselves and need nothing here.
+   */
+  links?: string[];
 }
+
+/** Agents skillport can link into. Only ones whose skill folder is verified. */
+export const LINK_TARGETS: Record<string, { label: string; dir: string[] }> = {
+  "claude-code": { label: "Claude Code", dir: [".claude", "skills"] },
+};
+export const DEFAULT_LINKS = ["claude-code"];
 
 export interface InstallerSet extends SetCommon {
   type: "installer";
@@ -65,7 +77,9 @@ export interface Paths {
   registry: string;
   skillsDir: string;
   stateDir: string;
-  /** Agent folders that do not read skillsDir and get symlinks. */
+  /** Every agent folder skillport may link into (LINK_TARGETS), by id. */
+  linkTargets: Record<string, string>;
+  /** All of linkTargets' folders: where stale links of ours are cleaned up. */
   links: string[];
   /** Folders vendor installers scatter copies into, scanned by doctor. */
   agentDirs: string[];
@@ -83,7 +97,8 @@ export function defaultPaths(home = process.env.SKILLPORT_HOME ?? os.homedir()):
     registry: process.env.SKILLPORT_REGISTRY ?? h(".config", "skillport", "registry.json"),
     skillsDir: h(".agents", "skills"),
     stateDir: h(".agents", ".skillport"),
-    links: [h(".claude", "skills")],
+    linkTargets: Object.fromEntries(Object.entries(LINK_TARGETS).map(([id, t]) => [id, h(...t.dir)])),
+    links: Object.values(LINK_TARGETS).map((t) => h(...t.dir)),
     agentDirs: [
       h(".claude", "skills"),
       h(".codex", "skills"),
@@ -110,6 +125,15 @@ export function readRegistry(file: string): Registry {
 export function writeRegistry(file: string, reg: Registry): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(reg, null, 2)}\n`);
+}
+
+/** The folders a set's skills are linked into. */
+export function linkDirsFor(paths: Paths, set: SkillSet): string[] {
+  return (set.links ?? DEFAULT_LINKS).map((id) => {
+    const dir = paths.linkTargets[id];
+    if (!dir) throw new Error(`Unknown link target "${id}". Known: ${Object.keys(paths.linkTargets).join(", ")}`);
+    return dir;
+  });
 }
 
 /** Whether skillport may run this set without you at the terminal. */

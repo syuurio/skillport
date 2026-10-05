@@ -26,9 +26,14 @@ export function isOursOrFree(at: string, target: string): boolean {
   return st.isSymbolicLink() && path.resolve(path.dirname(at), fs.readlinkSync(at)) === target;
 }
 
-export function link(paths: Paths, name: string): void {
+/** Link `name` into `dirs`; drop our links to it from every other known folder. */
+export function link(paths: Paths, name: string, dirs: string[]): void {
   const target = path.join(paths.skillsDir, name);
-  for (const dir of paths.links) {
+  for (const dir of paths.links.filter((d) => !dirs.includes(d))) {
+    const at = path.join(dir, name);
+    if (fs.lstatSync(at, { throwIfNoEntry: false }) && isOursOrFree(at, target)) fs.unlinkSync(at);
+  }
+  for (const dir of dirs) {
     const at = path.join(dir, name);
     if (!isOursOrFree(at, target)) throw new Error(`${at} exists and is not skillport's link; refusing to replace it.`);
     fs.mkdirSync(dir, { recursive: true });
@@ -57,7 +62,7 @@ function recheck(paths: Paths, p: Plan, owned: Set<string>): void {
   for (const s of p.skills) {
     const dest = path.join(paths.skillsDir, s.name);
     if (fs.existsSync(dest) && !owned.has(s.name)) problems.push(`${dest} appeared and is not managed by "${p.set}"`);
-    for (const dir of paths.links) {
+    for (const dir of p.links) {
       const at = path.join(dir, s.name);
       if (!isOursOrFree(at, dest)) problems.push(`${at} is not skillport's link`);
     }
@@ -94,7 +99,7 @@ export function apply(
       moveToTrash(trash, dest);
       fs.renameSync(s.staged, dest);
     }
-    link(paths, s.name);
+    link(paths, s.name, p.links);
     skills[s.name] = {
       ...(s.original !== s.name ? { original: s.original } : {}),
       hash: s.hash,

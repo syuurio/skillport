@@ -39,6 +39,10 @@ export interface Collision {
 
 export interface Plan {
   set: string;
+  /** Folders the skills are linked into. */
+  links: string[];
+  /** Some link is missing, or one of ours sits in a folder no longer chosen. */
+  relink: boolean;
   skills: SkillPlan[];
   /** Installed by this set before, gone or deselected now. */
   removed: string[];
@@ -63,6 +67,8 @@ export interface PlanInput {
   pluginSkills: Map<string, string>;
   vendorDir: string;
   staging: string;
+  /** Folders this set's skills are linked into. */
+  links: string[];
   /** The installer ran interactively; read selection and renames from it. */
   captured: boolean;
   today?: string;
@@ -180,7 +186,16 @@ export function plan(input: PlanInput): Plan {
     if (plugin) warnings.push(`"${s.name}" also exists as plugin skill ${plugin}:${s.name} (namespaced, no conflict).`);
   }
 
-  return { set: setId, skills, removed, unselected, collisions, warnings, errors, rewrites, keptAsCode, captured };
+  const relink = skills.some((s) => {
+    const dest = path.join(paths.skillsDir, s.name);
+    return paths.links.some((dir) => {
+      const at = path.join(dir, s.name);
+      const present = Boolean(fs.lstatSync(at, { throwIfNoEntry: false })) && isOursOrFree(at, dest);
+      return input.links.includes(dir) ? !present : present;
+    });
+  });
+
+  return { set: setId, links: input.links, relink, skills, removed, unselected, collisions, warnings, errors, rewrites, keptAsCode, captured };
 }
 
 function findCollisions(
@@ -213,7 +228,7 @@ function findCollisions(
       add(`an unmanaged folder ${dest}`);
       continue;
     }
-    const foreign = paths.links.map((d) => path.join(d, s.name)).find((at) => !isOursOrFree(at, dest));
+    const foreign = input.links.map((d) => path.join(d, s.name)).find((at) => !isOursOrFree(at, dest));
     if (foreign) add(`${foreign}, which skillport did not create`);
   }
   return found;

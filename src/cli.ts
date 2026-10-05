@@ -16,6 +16,7 @@ import {
   defaultPaths,
   getSet,
   isManaged,
+  linkDirsFor,
   readRegistry,
   runsUnattended,
   writeRegistry,
@@ -183,6 +184,7 @@ function fetchSet(ctx: Ctx, id: string, set: ManagedSet, staging: string, intera
       pluginSkills: pluginSkillNames(path.dirname(ctx.paths.pluginCache)),
       vendorDir,
       staging,
+      links: linkDirsFor(ctx.paths, getSet(ctx.registry, id)),
       captured: interactive,
     });
 }
@@ -224,7 +226,7 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
     }
     report(p);
     if (p.errors.length) return 1;
-    const work = p.skills.some((s) => s.write) || p.removed.length > 0 || p.captured !== undefined || resolved;
+    const work = p.skills.some((s) => s.write) || p.removed.length > 0 || p.relink || p.captured !== undefined || resolved;
     if (!work) {
       console.log("  up to date.");
       return 0;

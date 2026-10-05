@@ -34,6 +34,7 @@ function sandbox(set: Partial<ManagedSet> = {}) {
       pluginSkills,
       vendorDir: vendor,
       staging: path.join(paths.stateDir, "staging", "emil"),
+      links: paths.links,
       captured: false,
       today: "2026-10-05",
       ...opts,
@@ -289,4 +290,19 @@ test("invalid state keys are reported and never used as paths", () => {
   assert.deepEqual(p.removed, []);
   assert.match(p.errors.join("\n"), /invalid skill name "\.\.\/\.\.\/x"/);
   assert.deepEqual(removeManaged(t.paths, "emil", readState(t.paths.stateDir)), []);
+});
+
+test("links follow the set: none means no symlink, and dropping a target removes our link", () => {
+  const t = sandbox();
+  t.skill("animate");
+  t.commit(t.run());
+  const at = path.join(t.paths.links[0], "animate");
+  assert.ok(fs.lstatSync(at).isSymbolicLink());
+  assert.equal(t.run().relink, false);
+  const p = t.run({ links: [] });
+  assert.equal(p.relink, true);
+  t.commit(p);
+  assert.ok(!fs.lstatSync(at, { throwIfNoEntry: false }));
+  assert.equal(t.run({ links: [] }).relink, false);
+  assert.ok(fs.existsSync(path.join(t.paths.skillsDir, "animate", "SKILL.md")));
 });

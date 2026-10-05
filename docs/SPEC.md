@@ -194,6 +194,7 @@ $ skl capture newvendor
 | `skills` | 全部 | 要裝哪些 skill；省略 = 全部。installer 互動安裝後由你的勾選寫入 |
 | `exclude` | 全部 | 不安裝的 skill（用 vendor 原名） |
 | `prefix` | installer、npm | 撞名時「加前綴」選項的預設前綴；省略 = set 名稱 |
+| `links` | 全部 | 要建 symlink 的 agent（`LINK_TARGETS` 的 id，目前只有 `claude-code`）；省略 = `["claude-code"]`；`[]` = 不連結。改掉某個目標時，skillport 只移除自己建的那條 symlink |
 | `rename` | installer、npm | vendor 原名 → 安裝名稱，附原因與日期；由撞名處理寫入，也可手動編輯 |
 | `command` | installer | 完整 argv，含範圍旗標；`{secret}` 執行時替換。skillport 不另加旗標 |
 | `unattended` | installer | 非互動執行時附加的旗標，例如 `["-y"]`；不需要就寫 `[]`；省略 = 只能互動執行 |
