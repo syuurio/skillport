@@ -6,11 +6,13 @@ import { acquireLock, apply, removeManaged } from "./apply.ts";
 import { storeSecret } from "./keychain.ts";
 import { type Collision, type Plan, plan } from "./plan.ts";
 import { pluginSkillNames } from "./plugins.ts";
+import { askForSet, validateSet } from "./register.ts";
 import { ask, choose, confirm, isInteractive } from "./prompt.ts";
 import {
   type ManagedSet,
   type Paths,
   type Registry,
+  type SkillSet,
   defaultPaths,
   getSet,
   isManaged,
@@ -24,6 +26,7 @@ import { treeHash } from "./treehash.ts";
 
 const USAGE = `skillport — one place for skills that vendor installers scatter
 
+  skl register <set> [--json '<entry>']   Add a set to the registry (asks, or takes JSON)
   skl status                       What is installed, from where (offline)
   skl check [set...]               Is anything new upstream? Changes nothing
   skl add <set> [-y]               First install; installers run interactively unless -y
@@ -64,6 +67,8 @@ async function main(argv: string[]): Promise<number> {
   };
   if (["add", "update", "check", "diff", "remove"].includes(cmd)) cleanups.add(acquireLock(paths));
   switch (cmd) {
+    case "register":
+      return register(ctx, args[0], rest);
     case "status":
       return status(ctx);
     case "check":
@@ -92,6 +97,31 @@ async function main(argv: string[]): Promise<number> {
       console.log(USAGE);
       return cmd ? 1 : 0;
   }
+}
+
+async function register(ctx: Ctx, id: string | undefined, rest: string[]): Promise<number> {
+  if (!id) throw new Error(USAGE);
+  const jsonAt = rest.indexOf("--json");
+  let set: SkillSet;
+  if (jsonAt >= 0) {
+    set = JSON.parse(rest[jsonAt + 1] ?? "") as SkillSet;
+  } else {
+    if (!isInteractive()) throw new Error("register asks questions; without a terminal pass --json '<entry>'.");
+    set = await askForSet(id);
+  }
+  const problems = validateSet(id, set, ctx.registry);
+  if (problems.length) throw new Error(`Not registered:\n  ${problems.join("\n  ")}`);
+  console.log(JSON.stringify({ [id]: set }, null, 2));
+  if (jsonAt < 0 && !(await confirm("Add it?"))) return 0;
+  ctx.registry.sets[id] = set;
+  ctx.saveRegistry(ctx.registry);
+  console.log(`Registered "${id}" in ${ctx.paths.registry}.`);
+  if (set.type === "installer" && set.secret === "keychain") {
+    if (isInteractive() && (await confirm(`Store the token for "${id}" in Keychain now?`))) storeSecret(id);
+    else console.log(`Store its token with: skl secret ${id}`);
+  }
+  console.log(`Install with: skl add ${id}${set.type === "installer" && set.unattended === undefined ? "  (interactive only)" : ""}`);
+  return 0;
 }
 
 function managed(ctx: Ctx, id: string): ManagedSet | null {

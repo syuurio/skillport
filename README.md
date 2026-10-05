@@ -11,6 +11,7 @@ came from so you can check for and apply updates.
 Design and decisions: [docs/SPEC.md](docs/SPEC.md).
 
 ```
+skl register <set> [--json '<entry>']   add a set (asks questions, or takes JSON)
 skl status                       what is installed, from where (offline)
 skl check [set...]               anything new upstream? changes nothing
 skl add <set> [-y]               first install (installers ask you which skills unless -y)

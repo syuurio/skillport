@@ -328,6 +328,10 @@ matt           有改動 tdd, code-review · 上游新增 implement-spec, pr（�
 3. 列出計畫：保留哪份、哪些移到 trash、哪些內容不同需要你決定。
 4. 確認後套用，寫入 state。
 
+### 7.11 `skl register <set> [--json '<entry>']`
+
+在 registry 新增一個 set。終端機下逐題詢問：類型、指令（token 寫成 `{secret}`）、非互動旗標、偵測的 agent 目錄、撞名時的前綴；npm 問套件與路徑；skills-cli 問 repo 與 skill 清單。顯示結果並確認後才寫入。沒有終端機時用 `--json` 傳入整筆設定。寫入前驗證：set id、必要欄位、npm 版本有固定、`{secret}` 與 `secret` 一致，且拒絕把 token 明文寫進 `command`。
+
 ### 7.10 `skl resolve <set> <skill> (--prefix [p] | --rename <name> | --exclude | --undo)`
 
 非互動處理撞名，結果和互動選擇一樣寫進 registry 與 state（§8.4）。`--undo` 撤銷一條 `rename` 或 `exclude`。
