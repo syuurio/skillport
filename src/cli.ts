@@ -550,10 +550,24 @@ async function check(ctx: Ctx, ids: string[]): Promise<number> {
       const staging = stagingFor(ctx, id);
       try {
         if (set.type === "npm") {
-          // A pinned package never changes; only a newer version can.
-          const hint = versionHint(set, staging);
-          console.log(`\n■ ${id}`);
-          console.log(hint ? `  ${hint}` : `  up to date (${set.package} is the latest).`);
+          // A pinned package never changes; only a newer version can. When
+          // there is one, plan against it to show what upgrading would do.
+          const pin = pinnedPackage(set);
+          const latest = pin && latestVersion(pin.name, staging);
+          if (!pin || !latest) {
+            console.log(`\n■ ${id}\n  could not look up the latest version of ${set.package}.`);
+            continue;
+          }
+          if (latest === pin.version) {
+            console.log(`\n■ ${id}\n  up to date (${set.package} is the latest).`);
+            continue;
+          }
+          const upgraded: ManagedSet = { ...set, package: `${pin.name}@${latest}` };
+          const draft: Ctx = { ...ctx, registry: structuredClone(ctx.registry), saveRegistry: () => {} };
+          draft.registry.sets[id] = upgraded;
+          const p = fetchSet(draft, id, upgraded, staging, false)();
+          console.log(`\n${pin.name}@${latest} is out (pinned ${pin.version}). If you bump it in the registry:`);
+          report(p);
           continue;
         }
         report(fetchSet(ctx, id, set, staging, false)());
@@ -583,6 +597,8 @@ function checkCli(ctx: Ctx, id: string, set: SkillsCliSet): void {
   const up = upstreamChanges(lock, p.update);
   p.update = [...up.changed, ...up.unknown];
   reportCli(p, up.unknown);
+  for (const [name, url] of Object.entries(up.links)) console.log(`    ${name}: ${url}`);
+  if (up.unknown.length) console.log("  can't tell = not on GitHub, or GitHub did not answer; update re-fetches them.");
   if (!p.add.length && !p.update.length && !p.remove.length) console.log("  up to date.");
 }
 

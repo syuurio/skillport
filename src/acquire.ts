@@ -160,6 +160,7 @@ export function pinnedPackage(set: ManagedSet): { name: string; version: string 
 }
 
 export function latestVersion(name: string, staging: string): string | null {
+  fs.mkdirSync(staging, { recursive: true, mode: 0o700 });
   const r = spawnSync("npm", ["view", name, "version"], {
     cwd: staging,
     encoding: "utf8",

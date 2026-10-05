@@ -150,12 +150,39 @@ export function applyCli(paths: Paths, p: CliPlan, links: string[]): void {
  * with the tree hash of its folder on GitHub's default branch. Non-GitHub
  * sources cannot be checked this way and are reported as such.
  */
-export function upstreamChanges(lock: Record<string, LockEntry>, names: string[]): {
-  changed: string[];
-  unknown: string[];
-} {
+/**
+ * Tree hash of a folder on a GitHub repo's default branch. Uses `gh` (5000
+ * requests an hour when logged in) and falls back to GitHub's public API
+ * through curl (60 an hour, no login). Empty when neither answers.
+ */
+export function treeShaOnGitHub(repo: string, dir: string): string {
+  const route = `repos/${repo}/git/trees/HEAD:${dir}`;
+  const gh = spawnSync("gh", ["api", route, "--jq", ".sha"], { encoding: "utf8" });
+  if (gh.status === 0 && gh.stdout.trim()) return gh.stdout.trim();
+  const curl = spawnSync("curl", ["-fsSL", "-H", "Accept: application/vnd.github+json", `https://api.github.com/${route}`], {
+    encoding: "utf8",
+  });
+  if (curl.status !== 0) return "";
+  try {
+    return (JSON.parse(curl.stdout) as { sha?: string }).sha ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Compare each installed skill's `skillFolderHash` (a git tree hash, verified)
+ * with its folder on GitHub's default branch. Changed skills come with a link
+ * to that folder's commit history. Non-GitHub sources, or no answer from
+ * GitHub, end up in `unknown`.
+ */
+export function upstreamChanges(
+  lock: Record<string, LockEntry>,
+  names: string[],
+): { changed: string[]; unknown: string[]; links: Record<string, string> } {
   const changed: string[] = [];
   const unknown: string[] = [];
+  const links: Record<string, string> = {};
   for (const name of names) {
     const e = lock[name];
     const repo = /github\.com[/:]([\w.-]+\/[\w.-]+?)(?:\.git)?$/.exec(e.sourceUrl ?? "")?.[1];
@@ -164,10 +191,12 @@ export function upstreamChanges(lock: Record<string, LockEntry>, names: string[]
       continue;
     }
     const dir = path.posix.dirname(e.skillPath);
-    const r = spawnSync("gh", ["api", `repos/${repo}/git/trees/HEAD:${dir}`, "--jq", ".sha"], { encoding: "utf8" });
-    const sha = r.status === 0 ? r.stdout.trim() : "";
+    const sha = treeShaOnGitHub(repo, dir);
     if (!sha) unknown.push(name);
-    else if (sha !== e.skillFolderHash) changed.push(name);
+    else if (sha !== e.skillFolderHash) {
+      changed.push(name);
+      links[name] = `https://github.com/${repo}/commits/HEAD/${dir}`;
+    }
   }
-  return { changed, unknown };
+  return { changed, unknown, links };
 }
