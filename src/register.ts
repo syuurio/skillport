@@ -1,8 +1,8 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { npmEnv, sandboxEnv } from "./acquire.ts";
+import { latestVersion, npmPack, sandboxEnv } from "./acquire.ts";
+import { withTempDir } from "./fsutil.ts";
 import { hasSecret } from "./keychain.ts";
 import { ask, askSecret, choose, chooseMany, confirm, log, spinner } from "./prompt.ts";
 import { DEFAULT_LINKS, LINK_TARGETS, type InstallerSet, type NpmSet, type Paths, type Registry, type SkillSet, type SkillsCliSet } from "./registry.ts";
@@ -119,39 +119,25 @@ export function isPinned(spec: string): boolean {
 
 const bareName = (spec: string) => spec.replace(/^(@?[^@]+)@.*$/, "$1");
 
-function latest(name: string): string | null {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "skillport-view-"));
-  try {
-    const r = spawnSync("npm", ["view", name, "version"], {
-      cwd: tmp,
-      encoding: "utf8",
-      env: { ...process.env, ...npmEnv(tmp) },
-    });
-    return r.status === 0 ? r.stdout.trim() : null;
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
-  }
-}
+const latest = (name: string) => withTempDir("view", (dir) => latestVersion(name, dir));
 
 /** Folders inside an npm package that hold skill folders, most skills first. */
-export function skillRootsIn(spec: string): string[] {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "skillport-pack-"));
-  try {
-    const env = { ...process.env, ...npmEnv(tmp) };
-    const pack = spawnSync("npm", ["pack", spec, "--silent", "--pack-destination", tmp], { cwd: tmp, encoding: "utf8", env });
-    if (pack.status !== 0) return [];
-    spawnSync("tar", ["xzf", path.join(tmp, pack.stdout.trim().split("\n").at(-1)!), "-C", tmp]);
-    const pkg = path.join(tmp, "package");
+export function skillRootsIn(spec: string): { root: string; count: number }[] {
+  return withTempDir("pack", (dir) => {
+    let pkg: string;
+    try {
+      pkg = npmPack(spec, dir);
+    } catch {
+      return [];
+    }
     const counts = new Map<string, number>();
     for (const e of fs.readdirSync(pkg, { withFileTypes: true, recursive: true })) {
       if (!e.isFile() || e.name !== "SKILL.md") continue;
       const root = path.relative(pkg, path.dirname(e.parentPath)) || ".";
       counts.set(root, (counts.get(root) ?? 0) + 1);
     }
-    return [...counts].sort((a, b) => b[1] - a[1]).map(([root, n]) => `${root}|${n}`);
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
-  }
+    return [...counts].sort((a, b) => b[1] - a[1]).map(([root, count]) => ({ root, count }));
+  });
 }
 
 /** Pin `spec` to its latest version, asking first. Returns the spec to use. */
@@ -188,8 +174,7 @@ export function suggestUnattendedFlag(helpText: string): string | null {
 }
 
 function readHelp(command: string[]): string {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "skillport-help-"));
-  try {
+  return withTempDir("help", (tmp) => {
     const argv = [...command.filter((a) => !a.includes("{secret}")), "--help"];
     const r = spawnSync(argv[0], argv.slice(1), {
       cwd: tmp,
@@ -199,9 +184,7 @@ function readHelp(command: string[]): string {
       timeout: 60_000,
     });
     return `${r.stdout ?? ""}${r.stderr ?? ""}`;
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
-  }
+  });
 }
 
 const SCOPE_FLAG = /^--?(global|user|g)$/;
@@ -236,10 +219,7 @@ export async function askForSet(id: string, paths: Paths): Promise<WizardResult>
     let where = "";
     if (roots.length) {
       where = await choose("Which folder holds the skills?", [
-        ...roots.map((r) => {
-          const [root, n] = r.split("|");
-          return { value: root, label: root, hint: `${n} skill${n === "1" ? "" : "s"}` };
-        }),
+        ...roots.map(({ root, count }) => ({ value: root, label: root, hint: `${count} skill${count === 1 ? "" : "s"}` })),
         { value: "", label: "Somewhere else…" },
       ]);
     }

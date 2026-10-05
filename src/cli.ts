@@ -221,9 +221,9 @@ function needsYes(flags: Flags): string | null {
 }
 
 async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
-  const any = getSet(ctx.registry, id);
-  if (!isManaged(any)) return syncCli(ctx, id, flags);
-  const set = any;
+  const entry = getSet(ctx.registry, id);
+  if (!isManaged(entry)) return syncCli(ctx, id, flags);
+  const set = entry;
   const interactive = flags.interactive && set.type === "installer";
   if (interactive && !isInteractive()) throw new Error("Interactive install needs a terminal; pass -y to install everything.");
   if (!interactive && !runsUnattended(set)) {
@@ -267,15 +267,7 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
     const work =
       p.skills.some((s) => s.write) || p.removed.length > 0 || p.relink || p.adopted.length > 0 || p.strays.length > 0 ||
       p.captured !== undefined || resolved;
-    if (!work) {
-      console.log("  up to date.");
-      return 0;
-    }
-    if (flags.dryRun) {
-      console.log(`  dry run: nothing installed${resolved ? ", collision answers not saved" : ""}.`);
-      return 0;
-    }
-    if (!flags.yes && !(await confirm("Apply?"))) return 0;
+    if (!(await gate(flags, work, resolved))) return 0;
     const trash = apply(ctx.paths, p, readState(ctx.paths.stateDir), draft.registry, ctx.saveRegistry);
     if (resolved) ctx.saveRegistry(draft.registry);
     ctx.registry = draft.registry;
@@ -294,14 +286,30 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
   }
 }
 
+/**
+ * The step between a plan and changing anything, shared by every set type:
+ * nothing to do, a dry run, or a "no" all stop here.
+ */
+async function gate(flags: Flags, work: boolean, resolved: boolean): Promise<boolean> {
+  if (!work) {
+    console.log("  up to date.");
+    return false;
+  }
+  if (flags.dryRun) {
+    console.log(`  dry run: nothing installed${resolved ? ", collision answers not saved" : ""}.`);
+    return false;
+  }
+  return flags.yes || (await confirm("Apply?"));
+}
+
 async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
   const refuse = needsYes(flags);
   if (refuse) throw new Error(refuse);
   const draft: Ctx = { ...ctx, registry: structuredClone(ctx.registry), saveRegistry: () => {} };
   let resolved = false;
   try {
-    const set0 = getSet(draft.registry, id) as SkillsCliSet;
-    const available = listSource(ctx.paths, set0.source);
+    const { source } = getSet(draft.registry, id) as SkillsCliSet;
+    const available = listSource(ctx.paths, source);
     const replan = () =>
       planCli({
         paths: ctx.paths,
@@ -340,15 +348,8 @@ async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
     p.update = [...up.changed, ...up.unknown];
     reportCli(p, up.unknown);
     const links = linkDirsFor(ctx.paths, getSet(draft.registry, id));
-    if (!p.add.length && !p.update.length && !p.remove.length && !resolved) {
-      console.log("  up to date.");
-      return 0;
-    }
-    if (flags.dryRun) {
-      console.log(`  dry run: nothing installed${resolved ? ", collision answers not saved" : ""}.`);
-      return 0;
-    }
-    if (!flags.yes && !(await confirm("Apply?"))) return 0;
+    const work = p.add.length > 0 || p.update.length > 0 || p.remove.length > 0 || resolved;
+    if (!(await gate(flags, work, resolved))) return 0;
     // The prompt may have sat for a while: check again right before npx
     // skills runs, since it overwrites whatever is at those paths.
     const again = replan();
@@ -370,6 +371,11 @@ async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
 
 const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
+/** One report line: a title and its items, skipped when there are none. */
+function line(title: string, items: string[]): void {
+  if (items.length) console.log(`  ${title.padEnd(11)}${summarize(items)}`);
+}
+
 /** A list for one report line; long ones are cut to a few names and a count. */
 function summarize(items: string[], max = 8): string {
   if (items.length <= max) return items.join(", ");
@@ -378,9 +384,6 @@ function summarize(items: string[], max = 8): string {
 
 function reportCli(p: CliPlan, unknown: string[]): void {
   console.log(`\n■ ${p.setId}  (npx skills · ${p.source})`);
-  const line = (title: string, items: string[]) => {
-    if (items.length) console.log(`  ${title.padEnd(11)}${summarize(items)}`);
-  };
   line("new", p.add);
   line("changed", p.update.filter((n) => !unknown.includes(n)));
   line("can't tell", unknown);
@@ -511,9 +514,6 @@ function report(p: Plan): void {
   console.log(`\n■ ${p.setId}`);
   const label = (s: Plan["skills"][number]) => (s.original === s.name ? s.name : `${s.original} → ${s.name}`);
   const by = (u: string) => p.skills.filter((s) => s.upstream === u).map(label);
-  const line = (title: string, items: string[]) => {
-    if (items.length) console.log(`  ${title.padEnd(11)}${summarize(items)}`);
-  };
   line("new", by("new"));
   line("changed", by("changed"));
   line("removed", p.removed);
@@ -609,7 +609,7 @@ function status(ctx: Ctx): number {
   let problems = 0;
   for (const [id, set] of Object.entries(ctx.registry.sets)) {
     if (!isManaged(set)) {
-      const mine = Object.values(lock).filter((e) => e.source === set.source).length;
+      const mine = lockedFor(lock, set.source).length;
       console.log(`${id.padEnd(15)}${"skills-cli".padEnd(13)}${count(mine, "skill").padEnd(10)}${set.source}`);
       continue;
     }

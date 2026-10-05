@@ -13,10 +13,15 @@ export function trashDir(paths: Paths, label: string): string {
   return path.join(paths.stateDir, "trash", `${stamp}-${label}`);
 }
 
-function moveToTrash(trash: string, from: string): void {
+/**
+ * Move `from` into the trash folder, at `rel` (its name by default). The one
+ * way skillport ever takes something away; a no-op when nothing is there.
+ */
+export function moveToTrash(trash: string, from: string, rel = path.basename(from)): void {
   if (!fs.lstatSync(from, { throwIfNoEntry: false })) return;
-  fs.mkdirSync(trash, { recursive: true });
-  fs.renameSync(from, path.join(trash, path.basename(from)));
+  const to = path.join(trash, rel);
+  fs.mkdirSync(path.dirname(to), { recursive: true, mode: 0o700 });
+  fs.renameSync(from, to);
 }
 
 /** Whether `at` is missing, or is a symlink to `target`. Anything else is someone else's. */
@@ -87,11 +92,7 @@ export function apply(
   recheck(paths, p, new Set([...Object.keys(prev), ...p.adopted]));
   // Adopting: identical copies scattered in agent folders go to the trash
   // first, so the links can take their place.
-  for (const at of p.strays) {
-    const to = path.join(trash, "strays", path.relative(paths.home, at));
-    fs.mkdirSync(path.dirname(to), { recursive: true });
-    fs.renameSync(at, to);
-  }
+  for (const at of p.strays) moveToTrash(trash, at, path.join("strays", path.relative(paths.home, at)));
   fs.mkdirSync(paths.skillsDir, { recursive: true });
 
   for (const name of p.removed) {

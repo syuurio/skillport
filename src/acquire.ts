@@ -128,19 +128,26 @@ export function looksLikeAPrompt(output: string): boolean {
   return /\?\s*(\(y\/n\)|\[y\/n\]|›|$)|ok to proceed|press enter|select |choose |◆|❯/im.test(tail);
 }
 
-function extractNpm(set: NpmSet, staging: string): string {
-  // cwd inside staging so a project .npmrc in wherever `skl` was started
-  // cannot redirect the registry.
-  const pack = spawnSync("npm", ["pack", set.package, "--silent", "--pack-destination", staging], {
-    cwd: staging,
+/**
+ * `npm pack` a package spec into `dir` and unpack it; returns the package
+ * root. Nothing in the package runs. cwd is `dir` so a project .npmrc in
+ * wherever `skl` was started cannot redirect the registry.
+ */
+export function npmPack(spec: string, dir: string): string {
+  const pack = spawnSync("npm", ["pack", spec, "--silent", "--pack-destination", dir], {
+    cwd: dir,
     encoding: "utf8",
-    env: { ...process.env, ...npmEnv(staging) },
+    env: { ...process.env, ...npmEnv(dir) },
   });
-  if (pack.status !== 0) throw new Error(`npm pack ${set.package} failed.\n${pack.stderr}`);
-  const tgz = path.join(staging, pack.stdout.trim().split("\n").at(-1)!);
-  const tar = spawnSync("tar", ["xzf", tgz, "-C", staging], { encoding: "utf8" });
+  if (pack.status !== 0) throw new Error(`npm pack ${spec} failed.\n${pack.stderr}`);
+  const tgz = path.join(dir, pack.stdout.trim().split("\n").at(-1)!);
+  const tar = spawnSync("tar", ["xzf", tgz, "-C", dir], { encoding: "utf8" });
   if (tar.status !== 0) throw new Error(`tar failed.\n${tar.stderr}`);
-  return path.join(staging, "package", set.path);
+  return path.join(dir, "package");
+}
+
+function extractNpm(set: NpmSet, staging: string): string {
+  return path.join(npmPack(set.package, staging), set.path);
 }
 
 export function listSkillDirs(root: string): string[] {

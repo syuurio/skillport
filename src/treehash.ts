@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+import { withTempDir } from "./fsutil.ts";
 
 // Git tree hash of a directory, computed in-process. It is the same value
 // `npx skills` stores as `skillFolderHash` and GitHub returns as a directory's
@@ -54,13 +54,10 @@ export function treeHash(dir: string): string {
  * not have.
  */
 export function treeHashWithout(dir: string, skip: string[]): string {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "skillport-th-"));
-  try {
+  return withTempDir("th", (tmp) => {
     for (const e of fs.readdirSync(dir)) {
       if (!skip.includes(e)) fs.cpSync(path.join(dir, e), path.join(tmp, e), { recursive: true, verbatimSymlinks: true });
     }
     return treeHash(tmp);
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
-  }
+  });
 }

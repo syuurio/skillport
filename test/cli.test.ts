@@ -143,3 +143,14 @@ test("doctor --fix shows a plan, honours --dry-run and needs -y without a termin
   assert.equal(t.skl("doctor", "--fix", "-y").status, 0);
   assert.ok(!fs.existsSync(path.join(codex, "animate")));
 });
+
+test("status counts a skills-cli set's skills whatever spelling its source uses", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "skillport-status-"));
+  const paths = defaultPaths(home);
+  fs.mkdirSync(path.dirname(paths.registry), { recursive: true });
+  fs.writeFileSync(paths.registry, JSON.stringify({ version: 1, sets: { m: { type: "skills-cli", source: "https://github.com/mattpocock/skills" } } }));
+  fs.mkdirSync(path.dirname(paths.skillLock), { recursive: true });
+  fs.writeFileSync(paths.skillLock, JSON.stringify({ version: 3, skills: { tdd: { source: "mattpocock/skills", skillPath: "", skillFolderHash: "", updatedAt: "" } } }));
+  const r = spawnSync(BIN, ["status"], { env: { ...process.env, SKILLPORT_HOME: home }, encoding: "utf8" });
+  assert.match(r.stdout, /m\s+skills-cli\s+1 skill\b/);
+});

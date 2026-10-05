@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { isOursOrFree, trashDir } from "./apply.ts";
+import { isOursOrFree, moveToTrash, trashDir } from "./apply.ts";
 import { type Paths, type Registry, isManaged, linkDirsFor } from "./registry.ts";
 import type { LockEntry, State } from "./state.ts";
 import { isValidSkillName } from "./transform.ts";
@@ -81,12 +81,7 @@ export function diagnose(paths: Paths, reg: Registry, state: State, lock: Record
   const findings: Finding[] = [];
   const owned = ownedSkills(paths, reg, state, lock, findings);
   const trash = trashDir(paths, "doctor");
-  const toTrash = (from: string) => () => {
-    const rel = path.relative(paths.home, from);
-    const to = path.join(trash, rel);
-    fs.mkdirSync(path.dirname(to), { recursive: true });
-    fs.renameSync(from, to);
-  };
+  const toTrash = (from: string) => () => moveToTrash(trash, from, path.relative(paths.home, from));
 
   // Two owners for one name.
   const byName = new Map<string, Owned[]>();

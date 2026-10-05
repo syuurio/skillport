@@ -103,7 +103,7 @@ test("skillRootsIn lists every folder in a package that holds skills, most first
   skill("skills/a");
   skill("skills/b");
   skill("extras/c");
-  assert.deepEqual(skillRootsIn(pkg), ["skills|2", "extras|1"]);
+  assert.deepEqual(skillRootsIn(pkg), [{ root: "skills", count: 2 }, { root: "extras", count: 1 }]);
 });
 
 test("localDate uses the local calendar day", () => {

@@ -95,7 +95,7 @@ export interface PlanInput {
 }
 
 export function plan(input: PlanInput): Plan {
-  const { paths, setId, set, state, lock, vendorDir, staging } = input;
+  const { paths, setId, set, state, vendorDir, staging } = input;
   const prev = state.sets[setId]?.skills ?? {};
   const today = input.today ?? localDate();
   const errors: string[] = [];

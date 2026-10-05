@@ -1,8 +1,8 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { sandboxEnv } from "./acquire.ts";
+import { withTempDir } from "./fsutil.ts";
 import { isOursOrFree } from "./apply.ts";
 import type { Paths, SkillsCliSet } from "./registry.ts";
 import type { Collision } from "./plan.ts";
@@ -23,8 +23,7 @@ export function normalizeSource(source: string): string {
 }
 
 function run(paths: Paths, args: string[]): { status: number | null; out: string } {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "skillport-skills-"));
-  try {
+  return withTempDir("skills", (tmp) => {
     // Real HOME: npx skills installs into ~/.agents. The environment is still
     // the minimal one, so it sees no shell secrets.
     const r = spawnSync("npx", ["-y", SKILLS_CLI, ...args], {
@@ -35,9 +34,7 @@ function run(paths: Paths, args: string[]): { status: number | null; out: string
       timeout: 5 * 60 * 1000,
     });
     return { status: r.status, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
-  }
+  });
 }
 
 /**
