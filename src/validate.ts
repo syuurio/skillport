@@ -94,6 +94,17 @@ export function normalizeSource(source: string): string {
   return m ? m[1].toLowerCase() : source.trim();
 }
 
+/**
+ * The set that already uses `source` (compared as normalizeSource does), if
+ * any. npx skills' lock cannot tell two sets on one source apart.
+ */
+export function setUsingSource(sets: Record<string, SkillSet>, source: string, exceptId?: string): string | undefined {
+  const key = normalizeSource(source);
+  return Object.entries(sets).find(
+    ([id, s]) => id !== exceptId && s.type === "skills-cli" && typeof s.source === "string" && normalizeSource(s.source) === key,
+  )?.[0];
+}
+
 /** A path inside a folder: relative, no `..` segments. */
 function isInside(p: unknown): boolean {
   return typeof p === "string" && p.length > 0 && !p.startsWith("/") && !p.split("/").includes("..");

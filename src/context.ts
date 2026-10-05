@@ -17,17 +17,17 @@ export interface Ctx {
   saveRegistry: (r: Registry) => void;
 }
 
-/**
- * The gate before a change that is not a sync plan (registry edits, removal,
- * doctor fixes): --dry-run stops after the plan, no terminal needs -y, a
- * terminal asks. Returns whether to go ahead.
- */
 /** Throw the "pass -y" error when nobody can confirm. */
 export function requireConfirmable(flags: Flags): void {
   const refuse = needsYes(flags);
   if (refuse) throw new Error(refuse);
 }
 
+/**
+ * The gate before a change that is not a sync plan (registry edits, removal,
+ * doctor fixes): --dry-run stops after the plan, no terminal needs -y, a
+ * terminal asks. Returns whether to go ahead.
+ */
 export async function confirmChange(flags: Flags, question: string, dryRunNote: string): Promise<boolean> {
   if (flags.dryRun) {
     console.log(dryRunNote);

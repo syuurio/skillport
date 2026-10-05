@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { localDate } from "./transform.ts";
-import { normalizeSource, validateEntry } from "./validate.ts";
+import { setUsingSource, validateEntry } from "./validate.ts";
 
 // The registry is what you want; it is hand-editable and the only file worth
 // keeping under version control. See docs/SPEC.md §6.1.
@@ -128,13 +128,12 @@ export function readRegistry(file: string): Registry {
     validateEntry(id, set, Object.keys(LINK_TARGETS)).map((p) => `${id}: ${p}`),
   );
   // One set per npx skills source: the lock cannot tell two of them apart.
-  const bySource = new Map<string, string>();
-  for (const [id, set] of Object.entries(reg.sets)) {
+  const ids = Object.keys(reg.sets);
+  for (const [i, id] of ids.entries()) {
+    const set = reg.sets[id];
     if (set.type !== "skills-cli" || typeof set.source !== "string") continue;
-    const key = normalizeSource(set.source);
-    const twin = bySource.get(key);
+    const twin = setUsingSource(Object.fromEntries(ids.slice(0, i).map((k) => [k, reg.sets[k]])), set.source);
     if (twin) problems.push(`${id}: source ${set.source} is already used by set "${twin}"`);
-    else bySource.set(key, id);
   }
   if (problems.length) throw new Error(`${file} has problems:\n  ${problems.join("\n  ")}`);
   return reg;
@@ -173,6 +172,11 @@ export function linkDirsFor(paths: Paths, set: SkillSet): string[] {
     if (!dir) throw new Error(`Unknown link target "${id}". Known: ${Object.keys(paths.linkTargets).join(", ")}`);
     return dir;
   });
+}
+
+/** The prefix offered for a set's collisions: its own setting, else its id. */
+export function prefixOf(set: SkillSet, id: string): string {
+  return (isManaged(set) && set.prefix) || id;
 }
 
 /** Whether skillport may run this set without you at the terminal. */

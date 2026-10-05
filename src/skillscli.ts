@@ -17,7 +17,6 @@ import { normalizeSource } from "./validate.ts";
 
 export const SKILLS_CLI = "skills@1.7.0";
 
-export { normalizeSource };
 
 function run(paths: Paths, args: string[]): { status: number | null; out: string } {
   return withTempDir("skills", (tmp) => {

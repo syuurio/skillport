@@ -7,7 +7,7 @@ import { hasSecret } from "./keychain.ts";
 import { ask, askSecret, choose, chooseMany, confirm, log, spinner } from "./prompt.ts";
 import { DEFAULT_LINKS, LINK_TARGETS, type InstallerSet, type NpmSet, type Paths, type Registry, type SkillSet, type SkillsCliSet } from "./registry.ts";
 import { listSource } from "./skillscli.ts";
-import { extractSecret, isPackageName, isPinnedSpec, normalizeSource, validateEntry } from "./validate.ts";
+import { extractSecret, isPackageName, isPinnedSpec, setUsingSource, validateEntry } from "./validate.ts";
 
 // `skl register`: add a set to the registry by answering questions, or from
 // `--json` for scripts and agents. Either way the entry is validated before
@@ -49,10 +49,8 @@ export function validateSet(id: string, set: SkillSet, reg: Registry): string[] 
   // Same rule readRegistry enforces, checked before saving so a second set
   // for one source cannot be written and then block every command.
   if (set.type === "skills-cli" && typeof set.source === "string") {
-    const twin = Object.entries(reg.sets).find(
-      ([other, s]) => other !== id && s.type === "skills-cli" && normalizeSource(s.source) === normalizeSource(set.source),
-    );
-    if (twin) problems.push(`source ${set.source} is already used by set "${twin[0]}"`);
+    const twin = setUsingSource(reg.sets, set.source, id);
+    if (twin) problems.push(`source ${set.source} is already used by set "${twin}"`);
   }
   return [...problems, ...validateEntry(id, set, Object.keys(LINK_TARGETS))];
 }

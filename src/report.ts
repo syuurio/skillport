@@ -1,7 +1,7 @@
 import type { HolderKind, Plan } from "./plan.ts";
 import type { CliPlan } from "./skillscli.ts";
 import type { Paths } from "./registry.ts";
-import { readState } from "./state.ts";
+import { vendorName } from "./state.ts";
 
 // Printing plans and hints.
 
@@ -53,7 +53,7 @@ export function printResolveHints(
     console.log(`    skl resolve ${setId} ${name} --exclude -y`);
     if (c.kind === "set" && c.holderId) {
       // Rules are keyed by the vendor's name, which differs if that set renamed it already.
-      const theirs = readState(paths.stateDir).sets[c.holderId]?.skills[c.name]?.original ?? c.name;
+      const theirs = vendorName(paths.stateDir, c.holderId, c.name);
       console.log(`    skl resolve ${c.holderId} ${theirs} --rename <name> -y   (then: skl update ${c.holderId})`);
     }
   }
@@ -68,7 +68,7 @@ export function report(p: Plan): void {
   printItems("removed", p.removed);
   printItems("unselected", p.unselected);
   printItems("adopt", p.adopted);
-  printItems("clean up", p.strays.map((at) => at.replace(`${process.env.HOME}/`, "~/")));
+  printItems("clean up", p.strays.map(home));
   const same = by("unchanged").length;
   if (same) console.log(`  ${"unchanged".padEnd(11)}${count(same, "skill")}`);
   printItems("edits kept", p.skills.filter((s) => s.localEdits && !s.write).map((s) => s.name));

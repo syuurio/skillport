@@ -20,6 +20,7 @@ import {
   getSet,
   isManaged,
   linkDirsFor,
+  prefixOf,
   readRegistry,
   runsUnattended,
   writeRegistry,
@@ -159,11 +160,16 @@ function saveSet(ctx: Ctx, id: string, set: SkillSet): number {
 }
 
 /** "A newer pinned package exists" line for installer and npm sets, or null. */
-function versionHint(set: ManagedSet, staging: string): string | null {
+/** The pinned package of a set and the latest published version (null if unknown). */
+function versions(set: ManagedSet, staging: string): { name: string; pinned: string; latest: string | null } | null {
   const pin = pinnedPackage(set);
-  const latest = pin && latestVersion(pin.name, staging);
-  if (!pin || !latest || latest === pin.version) return null;
-  return `⬆ ${pin.name}@${latest} is out (pinned ${pin.version}); bump it in the registry to upgrade.`;
+  return pin ? { name: pin.name, pinned: pin.version, latest: latestVersion(pin.name, staging) } : null;
+}
+
+function versionHint(set: ManagedSet, staging: string): string | null {
+  const v = versions(set, staging);
+  if (!v?.latest || v.latest === v.pinned) return null;
+  return `⬆ ${v.name}@${v.latest} is out (pinned ${v.pinned}); bump it in the registry to upgrade.`;
 }
 
 // Staging folders hold vendor content and the installer's fake HOME, where an
@@ -366,7 +372,7 @@ async function resolveCmd(ctx: Ctx, args: string[], rest: string[], flags: Flags
   if (mode === "--exclude") change = { exclude: true };
   else if (mode === "--undo") change = { undo: true };
   else {
-    const prefix = value ?? (isManaged(set) ? (set.prefix ?? id) : id);
+    const prefix = value ?? prefixOf(set, id);
     const to = mode === "--prefix" ? withPrefix(skill, prefix) : value;
     if (!to || !isValidSkillName(to)) throw new Error(`"${to ?? ""}" is not a valid skill name.`);
     change = { to, reason: "resolved by hand" };
@@ -404,25 +410,25 @@ async function check(ctx: Ctx, ids: string[]): Promise<number> {
         if (set.type === "npm") {
           // A pinned package never changes; only a newer version can. When
           // there is one, plan against it to show what upgrading would do.
-          const pin = pinnedPackage(set);
-          const latest = pin && latestVersion(pin.name, staging);
-          if (!pin || !latest) {
+          const v = versions(set, staging);
+          const latest = v?.latest;
+          if (!v || !latest) {
             report(fetchSet(ctx, id, set, staging, false)());
             console.log(`  could not look up the latest version of ${set.package}.`);
             continue;
           }
-          if (latest === pin.version) {
+          if (latest === v.pinned) {
             // Same version, but other sets or folders may have changed since:
             // plan it to report collisions and edits.
             report(fetchSet(ctx, id, set, staging, false)());
             console.log(`  ${set.package} is the latest.`);
             continue;
           }
-          const upgraded: ManagedSet = { ...set, package: `${pin.name}@${latest}` };
+          const upgraded: ManagedSet = { ...set, package: `${v.name}@${latest}` };
           const draft = draftOf(ctx);
           draft.registry.sets[id] = upgraded;
           const p = fetchSet(draft, id, upgraded, staging, false)();
-          console.log(`\n${pin.name}@${latest} is out (pinned ${pin.version}). If you bump it in the registry:`);
+          console.log(`\n${v.name}@${latest} is out (pinned ${v.pinned}). If you bump it in the registry:`);
           report(p);
           continue;
         }

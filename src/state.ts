@@ -33,6 +33,11 @@ export interface State {
   cli?: Record<string, { syncedAt: string; skills: string[] }>;
 }
 
+/** The vendor's name for a skill a set installed (its rule key), given the installed name. */
+export function vendorName(stateDir: string, setId: string, name: string): string {
+  return readState(stateDir).sets[setId]?.skills[name]?.original ?? name;
+}
+
 export function readState(stateDir: string): State {
   const file = path.join(stateDir, "state.json");
   if (!fs.existsSync(file)) return { version: 1, sets: {} };

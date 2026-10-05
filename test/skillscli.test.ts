@@ -4,7 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { defaultPaths, readRegistry } from "../src/registry.ts";
-import { agentArgs, lockedFor, normalizeSource, parseList, planCli } from "../src/skillscli.ts";
+import { agentArgs, lockedFor, parseList, planCli } from "../src/skillscli.ts";
+import { normalizeSource } from "../src/validate.ts";
 import type { LockEntry, State } from "../src/state.ts";
 
 // Shape of `npx skills@1.7.0 add mattpocock/skills --list`, colours included.
