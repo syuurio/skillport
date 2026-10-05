@@ -114,3 +114,17 @@ test("registry rules and lists are checked for shape", () => {
   assert.match(bad({ prefix: "My_Set" }), /prefix must be/);
   assert.equal(bad({ rename: { prototype: { to: "anim-prototype", reason: "x", at: "" } }, skills: ["tdd"] }), "");
 });
+
+test("credential flags in camelCase are caught too", () => {
+  for (const f of ["--accessToken=abc", "--authToken=abc", "--privateKey=abc", "--apiKey=abc", "--githubPat=abc"]) {
+    assert.equal(extractSecret(["npx", "x@1.0.0", f]).secret, "abc", f);
+  }
+  assert.equal(extractSecret(["npx", "x@1.0.0", "--authorName=alice"]).secret, undefined);
+});
+
+test("the package root itself may not be a symlink", () => {
+  const dir = tmp("root");
+  const elsewhere = tmp("elsewhere");
+  fs.symlinkSync(elsewhere, path.join(dir, "package"));
+  assert.throws(() => realFolderPath(dir, "package"), /goes through a symlink \(package\)/);
+});

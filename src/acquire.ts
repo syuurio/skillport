@@ -150,7 +150,8 @@ export function npmPack(spec: string, dir: string): string {
   const tgz = path.join(dir, pack.stdout.trim().split("\n").at(-1)!);
   const tar = spawnSync("tar", ["xzf", tgz, "-C", dir], { encoding: "utf8" });
   if (tar.status !== 0) throw new Error(`tar failed.\n${tar.stderr}`);
-  return path.join(dir, "package");
+  // The package root itself must be a real folder, not a link the archive made.
+  return realFolderPath(dir, "package");
 }
 
 function extractNpm(set: NpmSet, staging: string): string {

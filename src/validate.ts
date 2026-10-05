@@ -22,7 +22,7 @@ export function isPackageName(name: string): boolean {
   return /^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(name);
 }
 
-// A flag carries a credential when one of its words (split on - and _) is
+// A flag carries a credential when one of its words (split on -, _ and camelCase) is
 // one of these: --token, --api-key, --access-token, --license, --pat,
 // --secret, --auth, --password. Whole words only, so --author or --keyboard
 // do not match; --no-* switches never take a value.
@@ -32,7 +32,13 @@ const SECRET_WORDS = new Set([
 
 function isSecretFlag(flag: string): boolean {
   if (!/^--?[A-Za-z]/.test(flag) || /^--no-/.test(flag)) return false;
-  return flag.replace(/^-+/, "").toLowerCase().split(/[-_]/).some((w) => SECRET_WORDS.has(w));
+  // Words split on -, _ and camelCase humps: --accessToken -> access, token.
+  return flag
+    .replace(/^-+/, "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .toLowerCase()
+    .split(/[-_]/)
+    .some((w) => SECRET_WORDS.has(w));
 }
 // Values that are clearly not a credential: a path or a URL.
 const NOT_A_SECRET = /^(\.{0,2}\/|~\/|https?:\/\/)/;
