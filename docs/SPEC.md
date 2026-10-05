@@ -57,7 +57,7 @@
 | Cursor | 是 | 官方文件 |
 | OpenCode | 是 | 官方文件 |
 | Claude Code | **否**，需要 symlink 到 `~/.claude/skills` | 官方文件；文件確認支援 symlink 目錄 |
-| Grok | 未確認，納入第一版 | 見 §12；需要時加 symlink 或 `~/.grok/config.toml` 的 `[skills] paths` |
+| Grok | 是，也讀 `~/.claude/skills` | 已驗證（grok 1.0.46）：兩個目錄的 skill 都看得到；同一個 skill 經 symlink 出現在兩處時只算一份。不需要連結 |
 
 ### 負責者規則
 
@@ -446,6 +446,7 @@ skills-cli set 不需要 adopt：`npx skills` 自己決定要不要覆蓋，skil
 
 | 事實 | 依據 |
 |---|---|
+| Grok 讀 `~/.agents/skills` 與 `~/.claude/skills`；symlink 到同一目錄只列一次 | `grok -p` 測試 skill（grok 1.0.46） |
 | Codex、Cursor、OpenCode 讀 `~/.agents/skills` | 各家官方文件 |
 | Claude Code 只讀 `~/.claude/skills`，支援 symlink 目錄 | 官方文件 |
 | Cursor 遞迴掃描 skill 根目錄 | 官方文件 |
@@ -468,14 +469,13 @@ skills-cli set 不需要 adopt：`npx skills` 自己決定要不要覆蓋，skil
 | 項目 | 驗證方法 | 不成立時 |
 |---|---|---|
 | `.skill-lock.json` 的 `version: 3` 格式在 `skills@latest` 不變 | 讀取時檢查 `version`，不符就停止並提示 | 固定 `npx skills` 版本 |
-| Grok 是否讀 `~/.agents/skills` 或 `~/.claude/skills` | 放一個測試 skill，用 `grok -p` 問它看得到哪些 skill | 在 `~/.grok/config.toml` 的 `[skills] paths` 加入 `~/.agents/skills` |
-| `~/.agents/skills` 有 symlink 時，Cursor、OpenCode 會不會因為也讀 `~/.claude/skills` 而看到兩份 | 各開一次，看 skill 清單 | 文件記錄；必要時改由 Claude Code 用 `--add-dir` 等方式讀取 |
+| `~/.agents/skills` 有 symlink 時，Cursor、OpenCode 會不會因為也讀 `~/.claude/skills` 而看到兩份 | 各開一次，看 skill 清單（OpenCode CLI 在此環境被系統終止，Cursor 的 `cursor-agent -p` 會用你的帳號額度，未代跑） | 文件記錄；必要時改由 Claude Code 用 `--add-dir` 等方式讀取 |
 
 ## 13. 里程碑
 
 | 階段 | 內容 | 預估 |
 |---|---|---|
-| M0 | 驗證 §12 待驗證項目 | 1 小時 · **完成**（Grok 待 CLI 升級；Cursor/OpenCode 待實際安裝後檢查） |
+| M0 | 驗證 §12 待驗證項目 | 1 小時 · **完成**（Cursor/OpenCode 重複顯示待你在 app 內確認） |
 | M1 | registry / state、installer 與 npm 類型、`status`、`check`、`update`、`diff`、`secret`、`remove`、撞名處理與 `resolve` | 半天多 · **完成**（互動模式需真實終端機，尚未實測） |
 | M2 | skills-cli 類型（委派 + GitHub hash 檢查） | 2–3 小時 · **完成** |
 | M3 | `doctor`、`adopt`，完成 §11 遷移 | 2–3 小時 · **完成**（實際 `--fix` 由你執行） |
@@ -489,6 +489,6 @@ skills-cli set 不需要 adopt：`npx skills` 自己決定要不要覆蓋，skil
 | 1 | Matt 改用 skills-cli set | 是；plugin 由你從 marketplace 移除 | 2026-10-05 |
 | 2 | 撞名處理 | 互動詢問：加前綴 / 改名 / 排除；記錄在 registry 與 state（§8） | 2026-10-05 |
 | 3 | 還原 8 個 Emil skill 的 `"off"` 設定 | 不還原 | 2026-10-05 |
-| 4 | Grok 納入第一版 | 是；M0 驗證它讀哪個目錄 | 2026-10-05 |
+| 4 | Grok 納入第一版 | 是；驗證結果：直接讀 `~/.agents/skills`，不需連結 | 2026-10-05 |
 | 5 | 工具名稱 | 沿用 `skillport`；指令 alias `skl` | 2026-10-05 |
 | 6 | `skl add` 對 installer 預設互動 | 是；第一次安裝由你勾選 skill，之後 update 重播記錄 | 2026-10-05 |
