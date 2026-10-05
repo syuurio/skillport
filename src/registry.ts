@@ -29,7 +29,14 @@ export const LINK_TARGETS: Record<string, { label: string; dir: string[] }> = {
 };
 export const DEFAULT_LINKS = ["claude-code"];
 
-export interface InstallerSet extends SetCommon {
+/** Sets whose folders skillport writes, so it can rename their skills. */
+interface ManagedCommon extends SetCommon {
+  /** Default prefix offered when resolving a collision. */
+  prefix?: string;
+  rename?: Record<string, RenameRule>;
+}
+
+export interface InstallerSet extends ManagedCommon {
   type: "installer";
   /**
    * argv as you would type it, including any scope flag the installer needs
@@ -47,17 +54,12 @@ export interface InstallerSet extends SetCommon {
   stage?: string[];
   /** Where that agent's skills land under the fake HOME. */
   harvest?: string;
-  /** Default prefix offered when resolving a collision. */
-  prefix?: string;
-  rename?: Record<string, RenameRule>;
 }
 
-export interface NpmSet extends SetCommon {
+export interface NpmSet extends ManagedCommon {
   type: "npm";
   package: string;
   path: string;
-  prefix?: string;
-  rename?: Record<string, RenameRule>;
 }
 
 export interface SkillsCliSet extends SetCommon {
@@ -85,7 +87,8 @@ export interface Paths {
   /** Folders vendor installers scatter copies into, scanned by doctor. */
   agentDirs: string[];
   skillLock: string;
-  pluginCache: string;
+  /** ~/.claude/plugins, where installed_plugins.json lives. */
+  claudePlugins: string;
 }
 
 /**
@@ -109,7 +112,7 @@ export function defaultPaths(home = process.env.SKILLPORT_HOME ?? os.homedir()):
       h(".gemini", "skills"),
     ],
     skillLock: h(".agents", ".skill-lock.json"),
-    pluginCache: h(".claude", "plugins", "cache"),
+    claudePlugins: h(".claude", "plugins"),
   };
 }
 

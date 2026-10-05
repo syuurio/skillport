@@ -61,7 +61,7 @@ function recheck(paths: Paths, p: Plan, owned: Set<string>): void {
   const problems: string[] = [];
   for (const s of p.skills) {
     const dest = path.join(paths.skillsDir, s.name);
-    if (fs.existsSync(dest) && !owned.has(s.name)) problems.push(`${dest} appeared and is not managed by "${p.set}"`);
+    if (fs.existsSync(dest) && !owned.has(s.name)) problems.push(`${dest} appeared and is not managed by "${p.setId}"`);
     for (const dir of p.links) {
       const at = path.join(dir, s.name);
       if (!isOursOrFree(at, dest)) problems.push(`${at} is not skillport's link`);
@@ -82,8 +82,8 @@ export function apply(
   saveRegistry: (r: Registry) => void,
 ): string {
   if (p.errors.length || p.collisions.length) throw new Error("Refusing to apply a plan with unresolved problems.");
-  const prev = state.sets[p.set]?.skills ?? {};
-  const trash = trashDir(paths, p.set);
+  const prev = state.sets[p.setId]?.skills ?? {};
+  const trash = trashDir(paths, p.setId);
   // Adopting: identical copies scattered in agent folders go to the trash
   // first, so the links can take their place.
   for (const at of p.strays) {
@@ -114,11 +114,11 @@ export function apply(
       updatedAt: s.write || !prev[s.name] ? now : prev[s.name].updatedAt,
     };
   }
-  state.sets[p.set] = { syncedAt: now, skills };
+  state.sets[p.setId] = { syncedAt: now, ...(p.source ? { source: p.source } : {}), skills };
   writeState(paths.stateDir, state);
 
   if (p.captured) {
-    const set = registry.sets[p.set];
+    const set = registry.sets[p.setId];
     if (set.type !== "skills-cli") {
       set.skills = p.captured.skills;
       if (Object.keys(p.captured.rename).length) set.rename = p.captured.rename;

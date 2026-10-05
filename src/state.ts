@@ -16,6 +16,8 @@ export interface InstalledSkill {
 
 export interface SetState {
   syncedAt: string;
+  /** Pinned installer or package it was synced with, e.g. @aiforui/install@0.1.4. */
+  source?: string;
   skills: Record<string, InstalledSkill>;
 }
 

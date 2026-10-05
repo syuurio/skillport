@@ -72,7 +72,7 @@ export function lockedFor(lock: Record<string, LockEntry>, source: string): stri
 }
 
 export interface CliPlan {
-  set: string;
+  setId: string;
   source: string;
   add: string[];
   update: string[];
@@ -120,7 +120,7 @@ export function planCli(input: {
     }
   }
   return {
-    set: setId,
+    setId,
     source: set.source,
     add,
     update: [...installed].filter((n) => wanted.includes(n)),

@@ -35,7 +35,7 @@ function sandbox(set: Partial<ManagedSet> = {}) {
       vendorDir: vendor,
       staging: path.join(paths.stateDir, "staging", "emil"),
       links: paths.links,
-      captured: false,
+      fromInteractiveRun: false,
       today: "2026-10-05",
       ...opts,
     });
@@ -171,7 +171,7 @@ test("interactive capture records the selection and in-installer renames", () =>
   // The installer renamed the folder but left `name:` alone.
   t.skill("anim-prototype", "", "prototype");
   t.skill("animate");
-  const p = t.run({ captured: true });
+  const p = t.run({ fromInteractiveRun: true });
   assert.deepEqual(p.captured?.skills, ["animate", "prototype"]);
   assert.deepEqual(p.captured?.rename.prototype, { to: "anim-prototype", reason: "renamed in installer", at: "2026-10-05" });
   let saved: Registry | undefined;
@@ -338,4 +338,11 @@ test("adopt still refuses a copy whose content differs", () => {
   const p = t.run({ adopt: true });
   assert.match(p.collisions[0].holder, /different content/);
   assert.deepEqual(p.adopted, []);
+});
+
+test("state records the pinned package a set was synced with", () => {
+  const t = sandbox();
+  t.skill("animate");
+  t.commit(t.run());
+  assert.equal(readState(t.paths.stateDir).sets.emil.source, "x@1");
 });

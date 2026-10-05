@@ -105,3 +105,17 @@ test("installers get a minimal environment: no inherited secrets", () => {
   assert.ok(!keys.includes("SOME_API_KEY"));
   assert.ok(keys.includes("PATH") && keys.includes("HOME"));
 });
+
+test("a set needing a token that is missing fails early with the fix, before running anything", () => {
+  const t = sandbox({ secret: "keychain", command: ["node", "-e", "process.exit(9)", "--", "--token={secret}"] });
+  // Use a set id with no Keychain entry.
+  const file = t.paths.registry;
+  const reg = JSON.parse(fs.readFileSync(file, "utf8"));
+  reg.sets["no-such-token-set"] = reg.sets.emil;
+  delete reg.sets.emil;
+  fs.writeFileSync(file, JSON.stringify(reg));
+  const r = t.skl("update", "no-such-token-set", "-y");
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /No Keychain secret for "no-such-token-set"\. Run: skl secret/);
+  assert.doesNotMatch(r.stderr, /exited 9/);
+});

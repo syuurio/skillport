@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { listSkillDirs } from "./acquire.ts";
+import { listSkillDirs, pinnedPackage } from "./acquire.ts";
 import { isOursOrFree } from "./apply.ts";
 import type { ManagedSet, Paths, RenameRule } from "./registry.ts";
 import type { LockEntry, State } from "./state.ts";
@@ -38,7 +38,9 @@ export interface Collision {
 }
 
 export interface Plan {
-  set: string;
+  setId: string;
+  /** Pinned installer or package, recorded in state. */
+  source?: string;
   /** Folders the skills are linked into. */
   links: string[];
   /** Some link is missing, or one of ours sits in a folder no longer chosen. */
@@ -74,7 +76,7 @@ export interface PlanInput {
   /** Folders this set's skills are linked into. */
   links: string[];
   /** The installer ran interactively; read selection and renames from it. */
-  captured: boolean;
+  fromInteractiveRun: boolean;
   /** Take over identical copies already on disk instead of calling them collisions. */
   adopt?: boolean;
   today?: string;
@@ -105,7 +107,7 @@ export function plan(input: PlanInput): Plan {
   // An interactive run is the selection; otherwise the registry is.
   const rename: Record<string, RenameRule> = { ...(set.rename ?? {}) };
   let captured: Plan["captured"];
-  if (input.captured) {
+  if (input.fromInteractiveRun) {
     for (const v of vendor) {
       if (v.folder !== v.original) {
         rename[v.original] = { to: v.folder, reason: "renamed in installer", at: today };
@@ -116,7 +118,7 @@ export function plan(input: PlanInput): Plan {
       rename: Object.fromEntries(Object.entries(rename).filter(([k]) => vendor.some((v) => v.original === k))),
     };
   }
-  const allow = input.captured ? null : set.skills ? new Set(set.skills) : null;
+  const allow = input.fromInteractiveRun ? null : set.skills ? new Set(set.skills) : null;
   const excluded = new Set(set.exclude ?? []);
   const selected = vendor.filter((v) => !excluded.has(v.original) && (!allow || allow.has(v.original)));
   const unselected = vendor
@@ -202,7 +204,8 @@ export function plan(input: PlanInput): Plan {
     });
   });
 
-  return { set: setId, links: input.links, relink, ...adoption, skills, removed, unselected, collisions, warnings, errors, rewrites, keptAsCode, captured };
+  const pin = pinnedPackage(set);
+  return { setId, source: pin ? `${pin.name}@${pin.version}` : undefined, links: input.links, relink, ...adoption, skills, removed, unselected, collisions, warnings, errors, rewrites, keptAsCode, captured };
 }
 
 function findCollisions(

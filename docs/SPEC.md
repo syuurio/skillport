@@ -216,7 +216,7 @@ $ skl capture newvendor
   "version": 1,
   "sets": {
     "aiforui": {
-      "installer": "@aiforui/install@0.1.4",
+      "source": "@aiforui/install@0.1.4",
       "syncedAt": "2026-10-05T08:30:00Z",
       "skills": {
         "emil-color": { "hash": "9f2c…", "updatedAt": "2026-10-05T08:30:00Z" }

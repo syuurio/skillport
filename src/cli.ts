@@ -3,13 +3,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { acquire, latestVersion, pinnedPackage } from "./acquire.ts";
 import { acquireLock, apply, removeManaged } from "./apply.ts";
-import { storeSecret, storeSecretValue } from "./keychain.ts";
+import { hasSecret, storeSecret, storeSecretValue } from "./keychain.ts";
 import { type Kind, diagnose } from "./doctor.ts";
 import { type CliPlan, applyCli, listSource, lockedFor, planCli, upstreamChanges } from "./skillscli.ts";
 import { type Collision, type Plan, plan } from "./plan.ts";
 import { pluginSkillNames } from "./plugins.ts";
 import { askForSet, validateSet } from "./register.ts";
-import { Cancelled, ask, choose, confirm, intro, isInteractive, log, note, outro } from "./prompt.ts";
+import { Cancelled, ask, askSecret, choose, confirm, intro, isInteractive, log, note, outro } from "./prompt.ts";
 import {
   type ManagedSet,
   type Paths,
@@ -199,11 +199,11 @@ function fetchSet(ctx: Ctx, id: string, set: ManagedSet, staging: string, intera
       set: getSet(ctx.registry, id) as ManagedSet,
       state: readState(ctx.paths.stateDir),
       lock: readSkillLock(ctx.paths.skillLock),
-      pluginSkills: pluginSkillNames(path.dirname(ctx.paths.pluginCache)),
+      pluginSkills: pluginSkillNames(ctx.paths.claudePlugins),
       vendorDir,
       staging,
       links: linkDirsFor(ctx.paths, getSet(ctx.registry, id)),
-      captured: interactive,
+      fromInteractiveRun: interactive,
       adopt,
     });
 }
@@ -226,6 +226,11 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
   }
   const refuse = needsYes(flags);
   if (refuse) throw new Error(refuse);
+  if (set.type === "installer" && set.secret === "keychain" && !hasSecret(id)) {
+    if (!isInteractive()) throw new Error(`No Keychain secret for "${id}". Run: skl secret ${id}`);
+    storeSecretValue(id, await askSecret(`Token for "${id}" (stored in Keychain, never in the registry)`));
+    log.success("Token stored in Keychain.");
+  }
   // Collision answers go into a draft and reach the registry file only when
   // the plan is applied, never on --dry-run or a "no".
   const draft: Ctx = { ...ctx, registry: structuredClone(ctx.registry), saveRegistry: () => {} };
@@ -349,7 +354,7 @@ function summarize(items: string[], max = 8): string {
 }
 
 function reportCli(p: CliPlan, unknown: string[]): void {
-  console.log(`\n■ ${p.set}  (npx skills · ${p.source})`);
+  console.log(`\n■ ${p.setId}  (npx skills · ${p.source})`);
   const line = (title: string, items: string[]) => {
     if (items.length) console.log(`  ${title.padEnd(11)}${summarize(items)}`);
   };
@@ -427,14 +432,14 @@ function resolveCmd(ctx: Ctx, rest: string[]): number {
 function printResolveHints(p: Plan): void {
   console.log("  Resolve, then run update again:");
   for (const c of p.collisions) {
-    console.log(`    skl resolve ${p.set} ${c.original} --prefix`);
-    console.log(`    skl resolve ${p.set} ${c.original} --rename <name>`);
-    console.log(`    skl resolve ${p.set} ${c.original} --exclude`);
+    console.log(`    skl resolve ${p.setId} ${c.original} --prefix`);
+    console.log(`    skl resolve ${p.setId} ${c.original} --rename <name>`);
+    console.log(`    skl resolve ${p.setId} ${c.original} --exclude`);
   }
 }
 
 function report(p: Plan): void {
-  console.log(`\n■ ${p.set}`);
+  console.log(`\n■ ${p.setId}`);
   const label = (s: Plan["skills"][number]) => (s.original === s.name ? s.name : `${s.original} → ${s.name}`);
   const by = (u: string) => p.skills.filter((s) => s.upstream === u).map(label);
   const line = (title: string, items: string[]) => {
@@ -525,7 +530,9 @@ function status(ctx: Ctx): number {
     }
     const st = state.sets[id];
     const n = Object.keys(st?.skills ?? {}).length;
-    const when = st ? `${count(n, "skill").padEnd(10)}synced ${st.syncedAt.slice(0, 16).replace("T", " ")}` : "not installed";
+    const when = st
+      ? `${count(n, "skill").padEnd(10)}synced ${st.syncedAt.slice(0, 16).replace("T", " ")}${st.source ? `  ${st.source}` : ""}`
+      : "not installed";
     console.log(`${id.padEnd(15)}${set.type.padEnd(13)}${when}`);
     for (const [name, s] of Object.entries(st?.skills ?? {})) {
       const rule = s.original ? set.rename?.[s.original] : undefined;
@@ -603,7 +610,7 @@ async function remove(ctx: Ctx, id: string | undefined, flags: Flags): Promise<n
   if (refuse) throw new Error(refuse);
   if (!flags.yes && !(await confirm("Continue?"))) return 0;
   if (isManaged(set)) removeManaged(ctx.paths, id!, state);
-  else if (names.length) applyCli(ctx.paths, { set: id!, source: set.source, add: [], update: [], remove: names, unselected: [], collisions: [] }, []);
+  else if (names.length) applyCli(ctx.paths, { setId: id!, source: set.source, add: [], update: [], remove: names, unselected: [], collisions: [] }, []);
   delete ctx.registry.sets[id!];
   ctx.saveRegistry(ctx.registry);
   console.log("Done.");
