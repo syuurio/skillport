@@ -30,6 +30,12 @@ const SECRET_WORDS = new Set([
   "token", "key", "apikey", "secret", "auth", "password", "passwd", "credential", "credentials", "license", "pat",
 ]);
 
+// Words that make a flag about a credential rather than the credential itself:
+// --key-file, --auth-method, --token-url.
+const NOT_THE_SECRET = new Set(["file", "path", "dir", "method", "type", "mode", "url", "host", "server", "endpoint", "name"]);
+// License identifiers are not secrets: --license MIT.
+const SPDX_LIKE = /^(MIT|ISC|Unlicense|0BSD|(Apache|BSD|GPL|LGPL|AGPL|MPL|EPL|CC|BSL)[A-Za-z0-9.+-]*)$/i;
+
 function isSecretFlag(flag: string): boolean {
   if (!/^--?[A-Za-z]/.test(flag) || /^--no-/.test(flag)) return false;
   // Words split on -, _ and camelCase humps: --accessToken -> access, token.
@@ -38,7 +44,7 @@ function isSecretFlag(flag: string): boolean {
     .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
     .toLowerCase()
     .split(/[-_]/)
-    .some((w) => SECRET_WORDS.has(w));
+    .reduce((hit, w, _, words) => hit || (SECRET_WORDS.has(w) && !words.some((x) => NOT_THE_SECRET.has(x))), false);
 }
 // Values that are clearly not a credential: a path or a URL.
 const NOT_A_SECRET = /^(\.{0,2}\/|~\/|https?:\/\/)/;
@@ -56,6 +62,7 @@ export function extractSecret(argv: string[]): { command: string[]; secret?: str
     if (!isSecretFlag(flag)) continue;
     const value = eq > 0 ? command[i].slice(eq + 1) : command[i + 1];
     if (!value || value === "{secret}" || value.startsWith("-") || NOT_A_SECRET.test(value)) continue;
+    if (/license/i.test(flag) && SPDX_LIKE.test(value)) continue;
     if (eq > 0) command[i] = `${flag}={secret}`;
     else command.splice(i, 2, `${flag}={secret}`);
     return { command, secret: value };

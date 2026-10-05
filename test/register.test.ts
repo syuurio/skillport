@@ -122,3 +122,8 @@ test("validateSet refuses every literal token form and a {secret} without secret
   assert.match(bad(["npx", "i", "--token={secret}"]), /"secret" is not "keychain"/);
   assert.equal(bad(["npx", "i", "--token={secret}"], "keychain"), "");
 });
+
+test("round 4: register refuses a second skills-cli set for the same source before saving", () => {
+  const reg = { version: 1 as const, sets: { a: { type: "skills-cli" as const, source: "acme/skills" } } };
+  assert.match(validateSet("b", { type: "skills-cli", source: "https://github.com/acme/skills" }, reg).join(), /already used by set "a"/);
+});

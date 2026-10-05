@@ -103,9 +103,11 @@ test("S2: a skills-cli set never removes what it did not install; one set per so
       lock,
       state: { version: 1, sets: {}, cli: { m: { syncedAt: "", skills: owned } } },
     });
-  // First run: nothing recorded, so grill and mine are someone else's.
+  // First run: nothing recorded, so everything already installed from the
+  // source is someone else's, even tdd, which this set wants.
   assert.deepEqual(plan([]).remove, []);
-  assert.deepEqual(plan([]).others, ["grill", "mine"]);
+  assert.deepEqual(plan([]).update, []);
+  assert.deepEqual(plan([]).others, ["grill", "mine", "tdd"]);
   // The set installed grill before and no longer wants it: that one goes.
   assert.deepEqual(plan(["tdd", "grill"]).remove, ["grill"]);
 

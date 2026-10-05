@@ -100,9 +100,10 @@ export function planCli(input: {
   const unselected = available.filter((n) => !excluded.has(n) && allow && !allow.has(n));
   const installed = new Set(lockedFor(lock, set.source));
   const add = wanted.filter((n) => !installed.has(n));
-  // Installed from this source but neither wanted nor recorded as ours:
-  // another set or you by hand. Never removed or updated.
-  const others = [...installed].filter((n) => !wanted.includes(n) && !owned.has(n));
+  // Installed from this source but not recorded as ours: another set or you
+  // by hand. Never updated, recorded or removed, even when this set wants
+  // the same name; becoming its owner would let a later remove delete it.
+  const others = [...installed].filter((n) => !owned.has(n));
   const collisions: CliPlan["collisions"] = [];
   for (const name of add) {
     // Only names not yet installed from this source reach here, so any
@@ -131,7 +132,7 @@ export function planCli(input: {
     setId,
     source: set.source,
     add,
-    update: [...installed].filter((n) => wanted.includes(n)),
+    update: [...installed].filter((n) => wanted.includes(n) && owned.has(n)),
     remove: [...installed].filter((n) => !wanted.includes(n) && owned.has(n)),
     others,
     unselected,

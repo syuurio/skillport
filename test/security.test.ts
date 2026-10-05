@@ -128,3 +128,23 @@ test("the package root itself may not be a symlink", () => {
   fs.symlinkSync(elsewhere, path.join(dir, "package"));
   assert.throws(() => realFolderPath(dir, "package"), /goes through a symlink \(package\)/);
 });
+
+test("round 4: a skill installed by hand from the same source is never adopted or removed", async () => {
+  const { planCli } = await import("../src/skillscli.ts");
+  const paths = defaultPaths(tmp("own4"));
+  const lock = { mine: { source: "acme/skills", skillPath: "", skillFolderHash: "", updatedAt: "" } };
+  const p = planCli({ paths, setId: "acme", set: { type: "skills-cli", source: "acme/skills" }, available: ["mine", "other"], lock, state: { version: 1, sets: {} } });
+  assert.deepEqual(p.update, []);
+  assert.deepEqual(p.remove, []);
+  assert.deepEqual(p.others, ["mine"]);
+  assert.deepEqual([...p.add, ...p.update], ["other"]); // what would be recorded as owned
+});
+
+test("round 4: credential matching skips file, method and license-id flags", () => {
+  const found = (...argv: string[]) => extractSecret(["npx", "x@1.0.0", ...argv]).secret;
+  assert.equal(found("--key-file", "id.pem"), undefined);
+  assert.equal(found("--auth-method", "oauth"), undefined);
+  assert.equal(found("--license", "MIT"), undefined);
+  assert.equal(found("--license", "ABCD-1234-EFGH"), "ABCD-1234-EFGH");
+  assert.equal(found("--accessToken=abc"), "abc");
+});
