@@ -165,6 +165,10 @@ export function acquireLock(paths: Paths): () => void {
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
     }
+    // The lock folder's identity, taken before its pid is read: a takeover
+    // must move the folder that was judged, not a fresh lock another run
+    // made in the meantime.
+    const seenAt = fs.statSync(dir, { throwIfNoEntry: false })?.mtimeMs;
     let pid = 0;
     try {
       pid = Number(fs.readFileSync(path.join(dir, "pid"), "utf8"));
@@ -172,9 +176,6 @@ export function acquireLock(paths: Paths): () => void {
       // The owner is between mkdir and writing its pid, or just released.
     }
     if (pid && isAlive(pid)) throw new Error(`Another skillport run (pid ${pid}) is in progress.`);
-    // The lock folder's identity when we judged it: a takeover must move this
-    // one, not a fresh lock another run made in the meantime.
-    const seenAt = fs.statSync(dir, { throwIfNoEntry: false })?.mtimeMs;
     if (!pid) {
       // Its owner is between mkdir and writing the pid, or died there. Give a
       // fresh one a moment; an old one is stale.
@@ -200,7 +201,7 @@ export function acquireLock(paths: Paths): () => void {
       // empty lock folder: treat as the stale one
     }
     const movedAt = fs.statSync(aside, { throwIfNoEntry: false })?.mtimeMs;
-    if ((moved && moved !== pid) || (!moved && movedAt !== seenAt)) {
+    if ((moved && moved !== pid) || movedAt !== seenAt) {
       try {
         fs.renameSync(aside, dir);
       } catch {

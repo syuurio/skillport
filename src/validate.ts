@@ -60,18 +60,15 @@ function isSecretFlag(flag: string): boolean {
 const looksLikePath = (v: string) => /^(\.{1,2}\/|~\/|\/[^/\s]+\/)/.test(v);
 const looksLikePlainUrl = (v: string) => /^https?:\/\//.test(v) && !/^https?:\/\/[^/@\s]+:[^/@\s]+@/.test(v);
 
-/**
- * Pull a pasted credential out of a command: `--token=abc` becomes
- * `--token={secret}` and `abc` is returned for Keychain. Handles the
- * `--token abc` form too.
- */
 // Values that are credentials wherever they appear: well-known token
-// prefixes (GitHub, GitLab, npm, Slack, Stripe/OpenAI-style, AWS keys).
-const TOKEN_SHAPE = /(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|npm_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|sk(?:_live|_test)?[-_][A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16})/;
-// user:password@ in a URL.
-const URL_PASSWORD = /^([a-z][a-z0-9+.-]*:\/\/[^/:@\s]+:)([^/@\s]+)(@.*)$/i;
-// An Authorization header value: "Authorization: Bearer <x>" or "Basic <x>".
-const AUTH_HEADER = /^(authorization:\s*(?:bearer|basic|token)\s+)(\S+)$/i;
+// prefixes (GitHub, GitLab, npm, Slack, Anthropic, OpenAI, Stripe, AWS), not
+// preceded by a letter or digit so "risk-assess..." is not "sk-...".
+const TOKEN_SHAPE =
+  /(?<![A-Za-z0-9])(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|npm_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|sk-(?:ant-[a-z0-9]+-|proj-)?[A-Za-z0-9_-]{20,}|sk_(?:live|test)_[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16})/;
+// user:password@ in a URL, anywhere in the word (--registry=https://u:p@h/).
+const URL_PASSWORD = /([a-z][a-z0-9+.-]*:\/\/[^/:@\s]+:)([^/@\s]+)(@)/i;
+// An Authorization header value, anywhere in the word (--header=Authorization: Bearer x).
+const AUTH_HEADER = /(authorization:\s*(?:bearer|basic|token)\s+)(\S+)/i;
 
 /**
  * A credential embedded in one word, wherever it sits: a URL password, an
@@ -81,14 +78,43 @@ const AUTH_HEADER = /^(authorization:\s*(?:bearer|basic|token)\s+)(\S+)$/i;
 function embeddedSecret(word: string): { word: string; secret: string } | null {
   if (word.includes("{secret}")) return null;
   const url = URL_PASSWORD.exec(word);
-  if (url) return { word: `${url[1]}{secret}${url[3]}`, secret: url[2] };
+  if (url) return { word: word.replace(url[0], `${url[1]}{secret}${url[3]}`), secret: url[2] };
   const header = AUTH_HEADER.exec(word);
-  if (header) return { word: `${header[1]}{secret}`, secret: header[2] };
+  if (header) return { word: word.replace(header[0], `${header[1]}{secret}`), secret: header[2] };
   const token = TOKEN_SHAPE.exec(word);
   if (token) return { word: word.replace(token[1], "{secret}"), secret: token[1] };
   return null;
 }
 
+/** Whether a set's words use {secret} (command and unattended). */
+export function usesSecret(set: { command?: unknown; unattended?: unknown }): boolean {
+  return [set.command, set.unattended].some((w) => isWords(w) && w.some((a) => a.includes("{secret}")));
+}
+
+// Leading NAME=value words are the installer's environment, as in a shell.
+const ENV_WORD = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/;
+// Names a prefix may not set: they are skillport's sandbox (HOME, PATH, npm's
+// log and cache settings) or change what code runs (NODE_OPTIONS, DYLD_*).
+const RESERVED_ENV = /^(HOME|PATH|TMPDIR|NODE_OPTIONS|NODE_PATH|LD_.*|DYLD_.*|npm_config_.*|NPM_CONFIG_.*)$/;
+
+/** Split leading NAME=value words off a command. The one rule for both validation and running. */
+export function leadingEnv(words: string[]): { env: [string, string][]; rest: string[] } {
+  const env: [string, string][] = [];
+  let i = 0;
+  for (; i < words.length; i++) {
+    const m = ENV_WORD.exec(words[i]);
+    if (!m) break;
+    env.push([m[1], m[2]]);
+  }
+  return { env, rest: words.slice(i) };
+}
+
+/**
+ * Pull a pasted credential out of a command: `--token=abc` becomes
+ * `--token={secret}` and `abc` is returned for Keychain. Also handles
+ * `--token abc`, a leading GITHUB_TOKEN=abc, and credentials embedded in a
+ * word (URL passwords, Authorization headers, well-known token prefixes).
+ */
 export function extractSecret(argv: string[]): { command: string[]; secret?: string } {
   const command = [...argv];
   for (let i = 0; i < command.length; i++) {
@@ -98,8 +124,8 @@ export function extractSecret(argv: string[]): { command: string[]; secret?: str
       return { command, secret: embedded.secret };
     }
     // An environment assignment in front of the command: GITHUB_TOKEN=ghp_… npx x
-    const env = /^([A-Za-z_][A-Za-z0-9_]*)=(.+)$/.exec(command[i]);
-    if (env && isSecretFlag(`--${env[1]}`) && env[2] !== "{secret}") {
+    const env = i < leadingEnv(command).env.length ? ENV_WORD.exec(command[i]) : null;
+    if (env && env[2] && isSecretFlag(`--${env[1]}`) && env[2] !== "{secret}") {
       command[i] = `${env[1]}={secret}`;
       return { command, secret: env[2] };
     }
@@ -176,6 +202,15 @@ function validateCommon(set: SkillSet, problems: string[]): void {
   }
 }
 
+/** What is wrong with a skills-cli source, if anything. Used by the wizard before it lists the source. */
+export function sourceProblem(source: unknown): string | undefined {
+  if (typeof source !== "string" || !source || /\s/.test(source) || source.startsWith("-")) {
+    return "source must be one word, as passed to npx skills add";
+  }
+  if (embeddedSecret(source)) return "source contains a credential; it would be passed to npx skills and stored in its lock";
+  return undefined;
+}
+
 /** Problems with one entry; empty when it is usable. `linkIds` are the known link targets. */
 export function validateEntry(id: string, set: SkillSet, linkIds: string[]): string[] {
   const problems: string[] = [];
@@ -192,11 +227,14 @@ export function validateEntry(id: string, set: SkillSet, linkIds: string[]): str
       }
       if (set.unattended !== undefined && !isWords(set.unattended)) problems.push("unattended must be a list of words");
       if (set.secret !== undefined && set.secret !== "keychain") problems.push('secret must be "keychain"');
-      if (set.secret === "keychain" && !set.command.some((a) => a.includes("{secret}"))) {
-        problems.push("secret is set but no command word contains {secret}");
+      if (set.secret === "keychain" && !usesSecret(set)) {
+        problems.push("secret is set but no command or unattended word contains {secret}");
       }
-      if (set.command.some((a) => a.includes("{secret}")) && set.secret !== "keychain") {
-        problems.push('command uses {secret} but "secret" is not "keychain"');
+      if (usesSecret(set) && set.secret !== "keychain") {
+        problems.push('{secret} is used but "secret" is not "keychain"');
+      }
+      for (const [name] of leadingEnv(set.command).env) {
+        if (RESERVED_ENV.test(name)) problems.push(`command may not set ${name}: skillport controls it for the sandbox`);
       }
       if (extractSecret(set.command).secret !== undefined) {
         problems.push("command contains a literal token; use {secret} and store it with skl secret");
@@ -215,13 +253,11 @@ export function validateEntry(id: string, set: SkillSet, linkIds: string[]): str
       if (!isPinnedSpec(set.package ?? "")) problems.push("package must be a registry package pinned to a version, e.g. motion-ai@14.1.0");
       if (!isInside(set.path)) problems.push("path must be a folder inside the package (relative, no ..)");
       break;
-    case "skills-cli":
-      if (!set.source || /\s/.test(set.source) || set.source.startsWith("-")) {
-        problems.push("source must be one word, as passed to npx skills add");
-      } else if (embeddedSecret(set.source)) {
-        problems.push("source contains a credential; it would be passed to npx skills and stored in its lock");
-      }
+    case "skills-cli": {
+      const problem = sourceProblem(set.source);
+      if (problem) problems.push(problem);
       break;
+    }
     default:
       problems.push('type must be "installer", "npm" or "skills-cli"');
   }

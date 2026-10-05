@@ -33,7 +33,7 @@ test("validateSet rejects unsafe or ambiguous entries", () => {
   assert.match(bad("..", { type: "skills-cli", source: "a/b" }).join(), /set id/);
   assert.match(bad("taken", { type: "skills-cli", source: "a/b" }).join(), /already exists/);
   assert.match(bad("x", { type: "installer", command: ["npx", "i", "--token=abc123"] }).join(), /literal token/);
-  assert.match(bad("x", { type: "installer", command: ["npx", "i"], secret: "keychain" }).join(), /no command word contains \{secret\}/);
+  assert.match(bad("x", { type: "installer", command: ["npx", "i"], secret: "keychain" }).join(), /no command or unattended word contains \{secret\}/);
   assert.match(bad("x", { type: "npm", package: "motion-ai", path: "skills" }).join(), /pinned/);
   assert.match(bad("x", { type: "npm", package: "a@1", path: "../x" }).join(), /inside the package/);
   assert.match(bad("x", { type: "nope" }).join(), /type must be/);

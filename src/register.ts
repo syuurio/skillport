@@ -7,7 +7,7 @@ import { hasSecret } from "./keychain.ts";
 import { ask, askSecret, choose, chooseMany, confirm, log, spinner } from "./prompt.ts";
 import { DEFAULT_LINKS, LINK_TARGETS, type InstallerSet, type NpmSet, type Paths, type Registry, type SkillSet, type SkillsCliSet } from "./registry.ts";
 import { listSource } from "./skillscli.ts";
-import { extractSecret, isPackageName, isPinnedSpec, setUsingSource, validateEntry } from "./validate.ts";
+import { extractSecret, isPackageName, isPinnedSpec, leadingEnv, setUsingSource, sourceProblem, usesSecret, validateEntry } from "./validate.ts";
 
 // `skl register`: add a set to the registry by answering questions, or from
 // `--json` for scripts and agents. Either way the entry is validated before
@@ -126,7 +126,7 @@ export function suggestUnattendedFlag(helpText: string): string | null {
 
 function readHelp(command: string[]): string {
   return withTempDir("help", (tmp) => {
-    const argv = [...command.filter((a) => !a.includes("{secret}")), "--help"];
+    const argv = [...leadingEnv(command).rest.filter((a) => !a.includes("{secret}")), "--help"];
     const r = spawnSync(argv[0], argv.slice(1), {
       cwd: tmp,
       encoding: "utf8",
@@ -185,7 +185,8 @@ export async function askForSet(id: string, paths: Paths): Promise<WizardResult>
   if (type === "skills-cli") {
     const source = await ask("Source, as you would pass it to npx skills add", {
       placeholder: "mattpocock/skills",
-      validate: (v) => (v && !/\s/.test(v) && !v.startsWith("-") ? undefined : "One word, no spaces."),
+      // Checked before npx skills ever sees it (a credential in it would reach the network).
+      validate: (v) => sourceProblem(v),
     });
     const s = spinner();
     s.start(`Asking npx skills what ${source} offers`);
@@ -223,7 +224,7 @@ export async function askForSet(id: string, paths: Paths): Promise<WizardResult>
   let { command, secret } = extractSecret(splitCommand(pasted));
   if (secret) {
     log.info("Token taken out of the command; it goes to Keychain and the command uses {secret}.");
-  } else if (command.some((a) => a.includes("{secret}"))) {
+  } else if (usesSecret({ command })) {
     if (!hasSecret(id)) secret = await askSecret("Token (stored in Keychain, never in the registry)");
   } else if (hasSecret(id) && (await confirm(`A token for "${id}" is already in Keychain. Use it?`))) {
     const flag = await askTokenFlag();
@@ -242,7 +243,7 @@ export async function askForSet(id: string, paths: Paths): Promise<WizardResult>
 
   // Reading --help runs the vendor's code, so it is opt-in.
   let found: string | null = null;
-  if (await confirm(`Run "${command.filter((a) => !a.includes("{secret}")).join(" ")} --help" in a sandbox to find its "don't ask" flag? This runs the vendor's code.`)) {
+  if (await confirm(`Run "${leadingEnv(command).rest.filter((a) => !a.includes("{secret}")).join(" ")} --help" in a sandbox to find its "don't ask" flag? This runs the vendor's code.`)) {
     const s = spinner();
     s.start("Reading the installer's --help");
     found = suggestUnattendedFlag(readHelp(command));
@@ -264,7 +265,7 @@ export async function askForSet(id: string, paths: Paths): Promise<WizardResult>
     type,
     command,
     ...(unattended !== undefined ? { unattended } : {}),
-    ...(command.some((a) => a.includes("{secret}")) ? { secret: "keychain" as const } : {}),
+    ...(usesSecret({ command, unattended }) ? { secret: "keychain" as const } : {}),
     ...(links ? { links } : {}),
   };
   return { set, secret };

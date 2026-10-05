@@ -230,7 +230,7 @@ registry 每次讀取都完整驗證（不只 wizard 寫入時），有問題就
 }
 ```
 
-`hash` 用 **git tree hash**，和 `npx skills` 的 `skillFolderHash` 同一種演算法（已驗證：本機 16 個 skill 中 13 個與 lock 記錄一致，另 3 個是本機內容已偏離安裝時的版本）。同一種 hash 讓兩種負責者的 skill 能用同一套比對邏輯。
+`hash` 用 **git tree hash**，和 `npx skills` 的 `skillFolderHash` 同一種演算法（已驗證：本機 16 個 skill 中 13 個與 lock 記錄一致，另 3 個是本機內容已偏離安裝時的版本）。同一種 hash 讓 skillport 能用 GitHub 的資料夾 hash 判斷 skills-cli 的上游有沒有變；但 `npx skills` 複製時會丟掉部分檔案、非 GitHub 來源記的是 sha256，所以不能拿它和磁碟比對偏離（§7.8）。
 
 `cli` 記錄每個 skills-cli set 實際擁有的 skill（§5.1）。
 
@@ -328,11 +328,11 @@ skills-cli 有改動的 skill 附上該資料夾在 GitHub 的 commit 歷史連�
 | 缺少的 symlink | 受管 skill 在 `~/.claude/skills` 沒有 link | 補建 |
 | 撞名 | 兩個負責者想要同一個目錄名 | 只報告 |
 | 偏離 | skillport 管理的 skill 和寫入時的 tree hash 不同 | 只報告，並說明下一次更新會怎樣 |
-
-`npx skills` 的 skill 不做偏離檢查：它複製時會丟掉部分檔案（`metadata.json`、`.git` 等），非 GitHub 來源的 `skillFolderHash` 又是 sha256，和磁碟上的 tree hash 永遠對不上，檢查只會誤報（已讀 skills@1.7.0 原始碼確認）。
 | 無主目錄 | `~/.agents/skills` 下有目錄不屬於任何負責者 | 只報告（用 `skl adopt` 或撞名提示裡的「收進來」） |
 | 不合法的名稱 | state 或 lock 裡有 `../x` 這類名稱 | 只報告，且絕不拿來組路徑 |
 | 不再需要的改名規則 | 原名已經沒有別的佔用者（其他 set、`npx skills`、`~/.agents/skills` 的資料夾、不是 skillport 建的 link 都算佔用）；或 vendor 已不再提供原本那個 skill。在 installer 裡自己選的改名是偏好，不算 | 只報告（`status` 也會列出），附上 `skl resolve <set> <skill> --undo` |
+
+`npx skills` 的 skill 不做偏離檢查：它複製時會丟掉部分檔案（`metadata.json`、`.git` 等），非 GitHub 來源的 `skillFolderHash` 又是 sha256，和磁碟上的 tree hash 永遠對不上，檢查只會誤報（已讀 skills@1.7.0 原始碼確認）。
 
 每個修正在執行當下都會再確認一次對象仍是報告時的狀態（例如 link 還是同一條、副本仍相同），不是就跳過。
 
@@ -443,8 +443,8 @@ skills-cli set 不需要 adopt：`npx skills` 自己決定要不要覆蓋，skil
 - `register` 執行 installer 的 `--help` 前會先徵求同意，因為那就是在執行 vendor 的程式碼。
 - 所有 npm/npx 子行程設 `logs-max=0`、`logs-dir` 指向 staging：npm 會把完整 argv（含 `--token=`）寫進 debug log（已驗證並修正）。npm 指令的 cwd 設在 staging，專案層的 `.npmrc` 無法改 registry。
 - npm 的 `path` 與 installer 的 `harvest` 從根目錄一路往下，每一層都必須是真的資料夾：`package/skills -> /某個本機資料夾` 這種 symlink 會被拒絕（已驗證：macOS 的 tar 會保留封包裡的 symlink）。
-- 指令前面的環境變數設定（`GITHUB_TOKEN=ghp_… npx …`）也用同一套字詞規則判斷，是憑證就抽出；執行時這些開頭的 `NAME=值` 會當成 installer 的環境變數（和 shell 一樣），不是指令名稱。
-- 任何字裡嵌著的憑證都會抓：網址裡的 `帳號:密碼@`、`Authorization: Bearer …` 標頭、常見前綴的 token（`ghp_`、`github_pat_`、`glpat-`、`npm_`、`xox?-`、`sk-`/`sk_live_`、`AKIA…`），不論前面有沒有旗標。registry 驗證涵蓋 `command`、`unattended` 與 skills-cli 的 `source`；`unattended` 也能用 `{secret}`。
+- 指令前面的環境變數設定（`GITHUB_TOKEN=ghp_… npx …`）也用同一套字詞規則判斷，是憑證就抽出；執行時這些開頭的 `NAME=值` 會當成 installer 的環境變數（和 shell 一樣），不是指令名稱。 不得設定沙盒控制的變數（`HOME`、`PATH`、`TMPDIR`、`npm_config_*`、`NODE_OPTIONS`、`LD_*`、`DYLD_*`），registry 讀取時與執行時都會擋；`--help` 偵測也會略過這些前綴。
+- 任何字裡嵌著的憑證都會抓：網址裡的 `帳號:密碼@`、`Authorization: Bearer …` 標頭、常見前綴的 token（`ghp_`、`github_pat_`、`glpat-`、`npm_`、`xox?-`、`sk-`/`sk_live_`、`AKIA…`），不論前面有沒有旗標，也不論它在這個字的哪個位置（`--registry=https://u:密碼@…`、`--header=Authorization: Bearer …`）。token 前綴前面不能緊接字母或數字，所以 `risk-assess…` 不會被當成 `sk-…`；涵蓋 `sk-ant-…`、`sk-proj-…` 等真實格式。wizard 在把 skills-cli 來源交給 `npx skills` 之前就先檢查。registry 驗證涵蓋 `command`、`unattended` 與 skills-cli 的 `source`；`unattended` 也能用 `{secret}`。
 - 憑證旗標以「字」比對：旗標名稱拆成字（以 `-`、`_` 與 camelCase 分隔）後，含 token、key、apikey、secret、auth、password、passwd、credential(s)、license、pat 其中之一就算；`--author`、`--keyboard`、`--no-*` 不算；最後一個字是 file、path、dir、method、type、mode、url、host、server、endpoint、name 時不算（`--key-file` 不算，`--host-token` 算）；值是路徑（`./`、`../`、`~/`，或 `/` 開頭且還有下一層的絕對路徑）不算；值是網址不算，除非網址裡有 `帳號:密碼@`；只有名稱恰為 `--license`、值為標準授權代號（MIT、Apache-2.0…）時不算。
 - vendor 內容只接受一般檔案與目錄；symlink、FIFO 等在讀取前就拒絕（symlink 會把本機任意檔案帶進每個 agent 都讀的 skill，FIFO 會讓讀取永久卡住）。名稱在寫入任何檔案前驗證。
 

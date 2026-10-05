@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { readSecret } from "./keychain.ts";
-import { isPackageName, isPinnedSpec } from "./validate.ts";
+import { isPackageName, isPinnedSpec, leadingEnv, usesSecret } from "./validate.ts";
 import type { InstallerSet, ManagedSet, NpmSet } from "./registry.ts";
 
 const INSTALLER_TIMEOUT_MS = 5 * 60 * 1000;
@@ -72,7 +72,7 @@ function runInstaller(
   for (const d of set.stage ?? [".claude"]) {
     fs.mkdirSync(path.join(fakeHome, d), { recursive: true });
   }
-  if (set.secret !== "keychain" && set.command.some((a) => a.includes("{secret}"))) {
+  if (set.secret !== "keychain" && usesSecret(set)) {
     // Running it would pass an empty token; a registry typo, not a choice.
     throw new Error(`"${id}" uses {secret} in its command but has no "secret": "keychain".`);
   }
@@ -88,13 +88,12 @@ function runInstaller(
     ...(opts.interactive ? [] : (set.unattended ?? []).map((a) => a.replaceAll("{secret}", secret))),
   ];
   // Leading NAME=value words are environment for the installer, as a shell
-  // would treat them (GITHUB_TOKEN={secret} npx ...).
-  const extraEnv: Record<string, string> = {};
-  while (words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0])) {
-    const w = words.shift()!;
-    extraEnv[w.slice(0, w.indexOf("="))] = w.slice(w.indexOf("=") + 1);
-  }
-  const argv = words;
+  // would treat them (GITHUB_TOKEN={secret} npx ...). The registry refuses
+  // names the sandbox controls; checked again here in case it was bypassed.
+  const { env, rest: argv } = leadingEnv(words);
+  const extraEnv = Object.fromEntries(env);
+  const reserved = Object.keys(extraEnv).filter((n) => n in sandboxEnv(fakeHome, staging) || /^(npm_config_|NPM_CONFIG_|NODE_OPTIONS$|DYLD_|LD_)/.test(n));
+  if (reserved.length) throw new Error(`"${id}" may not set ${reserved.join(", ")}: skillport controls them for the sandbox.`);
   if (!argv.length) throw new Error(`"${id}" has no command to run.`);
 
   // Installers find agent folders through os.homedir(), which follows $HOME

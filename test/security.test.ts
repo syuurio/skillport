@@ -170,7 +170,7 @@ test("taking the lock clears lock folders set aside by runs that are gone", () =
 test("round 5: env assignments, slash-leading tokens and URLs with credentials are caught", () => {
   assert.deepEqual(extractSecret(["GITHUB_TOKEN=ghp_abc", "npx", "x@1.0.0"]), { command: ["GITHUB_TOKEN={secret}", "npx", "x@1.0.0"], secret: "ghp_abc" });
   assert.equal(extractSecret(["npx", "x@1.0.0", "--token", "/AbC+def=="]).secret, "/AbC+def==");
-  assert.equal(extractSecret(["npx", "x@1.0.0", "--api-key=https://u:sk_live@h"]).secret, "https://u:sk_live@h");
+  assert.equal(extractSecret(["npx", "x@1.0.0", "--api-key=https://u:sk_live@h"]).secret, "sk_live");
   assert.equal(extractSecret(["npx", "x@1.0.0", "--key-path=/etc/ssl/k.pem"]).secret, undefined);
   assert.equal(extractSecret(["npx", "x@1.0.0", "--token-url=https://auth.example.com"]).secret, undefined);
   assert.equal(extractSecret(["npx", "x@1.0.0", "--license", "MIT-0"]).secret, undefined);
@@ -239,4 +239,23 @@ test("round 6: a takeover that would move a fresh pid-less lock puts it back", (
     (fs as { renameSync: typeof fs.renameSync }).renameSync = realRename;
   }
   assert.ok(fs.existsSync(dir));
+});
+
+test("round 7: embedded credentials behind any flag, real token formats, no false sk- match", () => {
+  const ex = (...argv: string[]) => extractSecret(["npx", "x@1.0.0", ...argv]);
+  assert.deepEqual(ex("--registry=https://alice:hunter2@npm.example.com/").command.slice(-1), ["--registry=https://alice:{secret}@npm.example.com/"]);
+  assert.equal(ex("--header=Authorization: Bearer abc").secret, "abc");
+  assert.equal(ex("sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWx").secret, "sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWx");
+  assert.equal(ex("sk-proj-AbCdEfGhIjKlMnOpQrStUvWxYz").secret, "sk-proj-AbCdEfGhIjKlMnOpQrStUvWxYz");
+  assert.equal(ex("@acme/risk-assessmentframework@1.0.0").secret, undefined);
+  assert.deepEqual(validateEntry("x", { type: "skills-cli", source: "acme/risk-assessmentframework" }, []), []);
+});
+
+test("round 7: {secret} in unattended needs secret; env prefixes may not set sandbox variables", () => {
+  const v = (set: unknown) => validateEntry("x", set as never, []).join();
+  assert.match(v({ type: "installer", command: ["npx", "i"], unattended: ["--token={secret}"] }), /"secret" is not "keychain"/);
+  assert.equal(v({ type: "installer", command: ["npx", "i"], unattended: ["--token={secret}"], secret: "keychain" }), "");
+  assert.match(v({ type: "installer", command: ["HOME=/Users/me", "npx", "i"] }), /may not set HOME/);
+  assert.match(v({ type: "installer", command: ["npm_config_logs_max=5", "npx", "i"] }), /may not set npm_config_logs_max/);
+  assert.equal(v({ type: "installer", command: ["GITHUB_TOKEN={secret}", "npx", "i"], secret: "keychain" }), "");
 });
