@@ -81,8 +81,10 @@ function embeddedSecret(word: string): { word: string; secret: string } | null {
   if (url) return { word: word.replace(url[0], `${url[1]}{secret}${url[3]}`), secret: url[2] };
   const header = AUTH_HEADER.exec(word);
   if (header) return { word: word.replace(header[0], `${header[1]}{secret}`), secret: header[2] };
-  const token = TOKEN_SHAPE.exec(word);
-  if (token && !looksLikeName(token[1])) return { word: word.replace(token[1], "{secret}"), secret: token[1] };
+  // Every match, not the first: a name such as sk-design-system earlier in
+  // the word must not hide a key after it.
+  const token = [...word.matchAll(new RegExp(TOKEN_SHAPE, "g"))].find((m) => !looksLikeName(m[1]));
+  if (token) return { word: word.replace(token[1], "{secret}"), secret: token[1] };
   return null;
 }
 

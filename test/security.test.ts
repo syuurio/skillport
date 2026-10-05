@@ -295,3 +295,8 @@ test("round 8b: hyphenated sk- key forms are caught; lower-case names are not", 
   assert.equal(extractSecret(["npx", "-y", "@acme/sk-design-system-installer"]).secret, undefined);
   assert.equal(sourceProblem("acme/sk-design-system-skills-2024"), undefined);
 });
+
+test("round 8c: a name-like sk- match earlier in a word does not hide a key", () => {
+  const k = "sk-proj-AbCd3fGh1jKlMn0pQrStUvWxYz";
+  assert.equal(extractSecret(["npx", "x@1.0.0", `--from=sk-design-system-skills-pack,${k}`]).secret, k);
+});
