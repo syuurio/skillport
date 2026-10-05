@@ -261,6 +261,8 @@ test("round 7: {secret} in unattended needs secret; env prefixes may not set san
 });
 
 test("round 8: sk- inside ordinary names is not a key; reserved env is one list for validation and running", async () => {
+  // All lower case, but random: sk- plus 32 hex.
+  assert.equal(extractSecret(["npx", "x@1.0.0", "sk-3f9a1c0e7b2d4a6f8e1c3b5d7f9a0c2e"]).secret, "sk-3f9a1c0e7b2d4a6f8e1c3b5d7f9a0c2e");
   assert.equal(extractSecret(["npx", "-y", "@acme/sk-design-system-installer"]).secret, undefined);
   assert.equal(sourceProblem("acme/sk-design-system-skills"), undefined);
   assert.equal(extractSecret(["npx", "x@1.0.0", "sk-AbCd3fGh1jKlMn0pQrStUvWx"]).secret, "sk-AbCd3fGh1jKlMn0pQrStUvWx");
@@ -288,6 +290,8 @@ test("round 8b: hyphenated sk- key forms are caught; lower-case names are not", 
   }
   // Upper case without digits is still a key: a false alarm shows up as {secret}, a miss leaks the key.
   assert.equal(extractSecret(["npx", "x@1.0.0", "sk-AbCdEfGhIjKlMnOpQrStUvWx"]).secret, "sk-AbCdEfGhIjKlMnOpQrStUvWx");
+  // All lower case, but random: sk- plus 32 hex.
+  assert.equal(extractSecret(["npx", "x@1.0.0", "sk-3f9a1c0e7b2d4a6f8e1c3b5d7f9a0c2e"]).secret, "sk-3f9a1c0e7b2d4a6f8e1c3b5d7f9a0c2e");
   assert.equal(extractSecret(["npx", "-y", "@acme/sk-design-system-installer"]).secret, undefined);
   assert.equal(sourceProblem("acme/sk-design-system-skills-2024"), undefined);
 });

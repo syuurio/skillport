@@ -89,11 +89,13 @@ function embeddedSecret(word: string): { word: string; secret: string } | null {
 /**
  * sk- keys come in many hyphenated forms (sk-proj-, sk-ant-api03-,
  * sk-svcacct-, sk-None-, ...), so their shape alone cannot tell them from a
- * package or repo name such as sk-design-system-skills. Keys are random
- * base62, so they contain upper case; names are lower case.
+ * package or repo name such as sk-design-system-skills. Names are lower-case
+ * words, with at most a short number such as a year. Keys are random: upper
+ * case, or long runs mixing letters and digits (sk- plus 32 hex, say).
  */
 function looksLikeName(match: string): boolean {
-  return match.startsWith("sk-") && !/[A-Z]/.test(match);
+  if (!match.startsWith("sk-") || /[A-Z]/.test(match)) return false;
+  return match.slice(3).split("-").every((seg) => /^[a-z]{1,15}$/.test(seg) || /^[0-9]{1,4}$/.test(seg));
 }
 
 /** Whether a set's words use {secret} (command and unattended). */
