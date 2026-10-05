@@ -173,6 +173,12 @@ export function applyCliLinks(paths: Paths, changes: { add: string[]; remove: st
   }
 }
 
+/** Remove skills through npx skills (a real delete: callers pass only names a set owns). */
+export function removeCliSkills(paths: Paths, names: string[]): void {
+  const r = run(paths, ["remove", ...names, "-g", "-y"]);
+  if (r.status !== 0) throw new Error(`npx skills remove failed.\n${r.out.slice(-2000)}`);
+}
+
 export function applyCli(paths: Paths, p: CliPlan, links: string[]): void {
   const agents = agentArgs(links, paths.linkTargets["claude-code"]);
   const step = (args: string[]) => {

@@ -5,19 +5,17 @@ import { NeedsInteraction, acquire, latestVersion, pinnedPackage } from "./acqui
 import { acquireLock, apply, removeManaged } from "./apply.ts";
 import { hasSecret, storeSecret, storeSecretValue } from "./keychain.ts";
 import { type Kind, diagnose } from "./doctor.ts";
-import { type CliPlan, applyCli, applyCliLinks, cliLinkChanges, listSource, lockedFor, planCli, upstreamChanges } from "./skillscli.ts";
-import { type Collision, type HolderKind, type Plan, plan } from "./plan.ts";
+import { type CliPlan, applyCli, applyCliLinks, cliLinkChanges, removeCliSkills, listSource, lockedFor, planCli, upstreamChanges } from "./skillscli.ts";
+import { type Plan, plan } from "./plan.ts";
 import { pluginSkillNames } from "./plugins.ts";
 import { askForSet, validateSet } from "./register.ts";
-import { Cancelled, ask, askSecret, choose, confirm, intro, isInteractive, log, note, outro } from "./prompt.ts";
+import { Cancelled, ask, askSecret, confirm, intro, isInteractive, log, note, outro } from "./prompt.ts";
 import {
   type ManagedSet,
-  type Paths,
   type Registry,
   type Resolution,
   type SkillSet,
   type SkillsCliSet,
-  applyResolution,
   defaultPaths,
   getSet,
   isManaged,
@@ -27,6 +25,9 @@ import {
   writeRegistry,
 } from "./registry.ts";
 import { readSkillLock, readState, writeState } from "./state.ts";
+import { resolveCliCollision, resolveInteractively } from "./collide.ts";
+import { type Ctx, type Flags, confirmChange, confirmPlan, draftOf, requireConfirmable, setResolution } from "./context.ts";
+import { count, home, printItems, printResolveHints, report, reportCli, summarize } from "./report.ts";
 import { isValidSkillName, withPrefix } from "./transform.ts";
 import { treeHash } from "./treehash.ts";
 
@@ -46,20 +47,6 @@ const USAGE = `skillport — one place for skills that vendor installers scatter
 
 Flags: --dry-run prints the plan only.  -y skips confirmations.
 Registry: ${defaultPaths().registry}`;
-
-interface Flags {
-  yes: boolean;
-  interactive: boolean;
-  dryRun: boolean;
-  /** Take over identical copies already on disk (skl adopt). */
-  adopt?: boolean;
-}
-
-interface Ctx {
-  paths: Paths;
-  registry: Registry;
-  saveRegistry: (r: Registry) => void;
-}
 
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
@@ -219,26 +206,15 @@ function fetchSet(ctx: Ctx, id: string, set: ManagedSet, staging: string, intera
     });
 }
 
-/**
- * The gate before a change that is not a sync plan (registry edits, removal,
- * doctor fixes): --dry-run stops after the plan, no terminal needs -y, a
- * terminal asks. Returns whether to go ahead.
- */
-async function confirmChange(flags: Flags, question: string, dryRunNote: string): Promise<boolean> {
-  if (flags.dryRun) {
-    console.log(dryRunNote);
-    return false;
-  }
-  const refuse = needsYes(flags);
-  if (refuse) throw new Error(refuse);
-  return flags.yes || (await confirm(question));
+/** Print a "needs you" notice for an installer stuck on a question; false for other errors. */
+function noticeIfNeedsYou(e: unknown, id: string): boolean {
+  if (!(e instanceof NeedsInteraction)) return false;
+  console.log(`\n■ ${id}: ${e.message}`);
+  return true;
 }
 
-/** Without a terminal there is no one to confirm, so -y must say so up front. */
-function needsYes(flags: Flags): string | null {
-  if (flags.yes || flags.dryRun || isInteractive()) return null;
-  return "No terminal to confirm on; pass -y to apply, or --dry-run to only see the plan.";
-}
+/** Update another set non-interactively, for "rename the other side". */
+const updateSet = (ctx: Ctx, id: string) => sync(ctx, id, { yes: false, interactive: false, dryRun: false });
 
 async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
   const entry = getSet(ctx.registry, id);
@@ -250,8 +226,7 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
     console.log(`■ ${id}: only runs interactively; skipped. Run: skl update ${id} -i`);
     return 0;
   }
-  const refuse = needsYes(flags);
-  if (refuse) throw new Error(refuse);
+  requireConfirmable(flags);
   if (set.type === "installer" && set.secret === "keychain" && !hasSecret(id)) {
     if (!isInteractive()) throw new Error(`No Keychain secret for "${id}". Run: skl secret ${id}`);
     storeSecretValue(id, await askSecret(`Token for "${id}" (stored in Keychain, never in the registry)`));
@@ -274,7 +249,7 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
         return 1;
       }
       for (const c of p.collisions) {
-        const outcome = await resolveInteractively(ctx, draft, id, c, { adopt: adopt === true || adopt.includes(c.name), dryRun: flags.dryRun });
+        const outcome = await resolveInteractively(ctx, draft, id, c, { adopt: adopt === true || adopt.includes(c.name), dryRun: flags.dryRun, update: updateSet });
         if (outcome === "adopt" && Array.isArray(adopt)) adopt = [...adopt, c.name];
         else if (outcome === "other" && c.holderId) draft.registry.sets[c.holderId] = structuredClone(ctx.registry.sets[c.holderId]);
         else resolved = true;
@@ -295,11 +270,8 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
     console.log(`  applied.${fs.existsSync(trash) ? ` Previous versions: ${trash}` : ""}`);
     return 0;
   } catch (e) {
-    if (e instanceof NeedsInteraction) {
-      // Not a failure of the set: it needs you. Reported, not counted as an error.
-      console.log(`■ ${id}: ${e.message}`);
-      return 0;
-    }
+    // Not a failure of the set: it needs you. Reported, not counted as an error.
+    if (noticeIfNeedsYou(e, id)) return 0;
     console.error(`✗ ${id}: ${(e as Error).message}`);
     return 1;
   } finally {
@@ -307,25 +279,8 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
   }
 }
 
-/**
- * The step between a plan and changing anything, shared by every set type:
- * nothing to do, a dry run, or a "no" all stop here.
- */
-async function confirmPlan(flags: Flags, work: boolean, resolved: boolean): Promise<boolean> {
-  if (!work) {
-    console.log("  up to date.");
-    return false;
-  }
-  if (flags.dryRun) {
-    console.log(`  dry run: nothing installed${resolved ? ", collision answers not saved" : ""}.`);
-    return false;
-  }
-  return flags.yes || (await confirm("Apply?"));
-}
-
 async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
-  const refuse = needsYes(flags);
-  if (refuse) throw new Error(refuse);
+  requireConfirmable(flags);
   const draft = draftOf(ctx);
   let resolved = false;
   try {
@@ -338,25 +293,9 @@ async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
         return 1;
       }
       for (const c of p.collisions) {
-        log.warn(`Name collision: ${c.name}\nalready held by ${c.holder}\nincoming from "${id}" (npx skills; its names cannot be changed)`);
-        const blocked = otherSideBlocked(ctx, c, flags.dryRun);
-        const action = await choose(`What should happen to ${c.name}?`, [
-          { value: "exclude", label: `Don't install it from "${id}"` },
-          {
-            value: "other",
-            label: c.kind === "set" ? `Rename it in set "${c.holderId}" instead` : "Rename the other one",
-            disabled: blocked,
-          },
-          { value: "abort", label: "Stop" },
-        ]);
-        if (action === "abort") throw new Cancelled();
-        if (action === "other" && c.holderId) {
-          await renameOtherSide(ctx, c.holderId, c.name, id);
-          draft.registry.sets[c.holderId] = structuredClone(ctx.registry.sets[c.holderId]);
-        } else {
-          setResolution(draft, id, c.name, { exclude: true });
-          resolved = true;
-        }
+        const outcome = await resolveCliCollision(ctx, draft, id, c, { dryRun: flags.dryRun, update: updateSet });
+        if (outcome === "other" && c.holderId) draft.registry.sets[c.holderId] = structuredClone(ctx.registry.sets[c.holderId]);
+        else resolved = true;
       }
       p = replan();
     }
@@ -402,123 +341,6 @@ async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
   }
 }
 
-/** A path shown with ~ for your home folder. */
-const home = (p: string) => p.replace(`${process.env.SKILLPORT_HOME ?? process.env.HOME}/`, "~/");
-
-const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
-
-/** One report line: a title and its items, skipped when there are none. */
-function printItems(title: string, items: string[]): void {
-  if (items.length) console.log(`  ${title.padEnd(11)}${summarize(items)}`);
-}
-
-/** A list for one report line; long ones are cut to a few names and a count. */
-function summarize(items: string[], max = 8): string {
-  if (items.length <= max) return items.join(", ");
-  return `${items.slice(0, max).join(", ")} and ${items.length - max} more`;
-}
-
-function reportCli(p: CliPlan, unknown: string[]): void {
-  console.log(`\n■ ${p.setId}  (npx skills · ${p.source})`);
-  printItems("new", p.add);
-  printItems("changed", p.update.filter((n) => !unknown.includes(n)));
-  printItems("can't tell", unknown);
-  printItems("removed", p.remove);
-  printItems("unselected", p.unselected);
-  printItems("left alone", p.others);
-  for (const c of p.collisions) console.log(`  ✗ ${c.name} collides with ${c.holder}`);
-  for (const w of p.warnings) console.log(`  ⚠ ${w}`);
-}
-
-/** Why "rename the other side" is not offered for this collision, if it is not. */
-function otherSideBlocked(ctx: Ctx, c: Pick<Collision, "kind" | "holderId">, dryRun: boolean): string | undefined {
-  const holder = c.kind === "set" && c.holderId ? ctx.registry.sets[c.holderId] : undefined;
-  if (!holder) return "skillport only renames skills it installs";
-  if (!isManaged(holder)) return "that set belongs to npx skills";
-  if (!runsUnattended(holder)) return `set "${c.holderId}" only runs interactively`;
-  if (dryRun) return "not in --dry-run: it updates the other set";
-  return undefined;
-}
-
-/**
- * Free a name by renaming the skillport set that holds it: the rule is saved
- * to the registry right away (you chose it explicitly) and that set is
- * updated first. If you decline its update, the rule stays and the same
- * collision comes back.
- */
-async function renameOtherSide(ctx: Ctx, holderId: string, name: string, forSet: string): Promise<void> {
-  const holder = getSet(ctx.registry, holderId) as ManagedSet;
-  const theirs = readState(ctx.paths.stateDir).sets[holderId]?.skills[name]?.original ?? name;
-  const to = await ask(`New name for ${holderId}'s ${theirs}`, {
-    initial: withPrefix(theirs, holder.prefix ?? holderId),
-    validate: (v) => (!isValidSkillName(v) ? "Use a-z, 0-9 and single hyphens." : v === name ? "That is the colliding name." : undefined),
-  });
-  setResolution(ctx, holderId, theirs, { to, reason: `made room for set "${forSet}"` });
-  log.info(`Saved. Updating set "${holderId}" first so ${name} is free.`);
-  const code = await sync(ctx, holderId, { yes: false, interactive: false, dryRun: false });
-  if (code !== 0) log.warn(`Set "${holderId}" was not updated; ${name} is still taken.`);
-}
-
-/**
- * Ask how to resolve one collision. "prefix", "rename" and "exclude" change
- * this set's rule in the draft. "adopt" takes over an identical unowned
- * folder. "other" renames the holder's skill instead: the rule is saved to
- * the registry and the holder is updated right away, so its name is free.
- */
-async function resolveInteractively(
-  ctx: Ctx,
-  draft: Ctx,
-  id: string,
-  c: Collision,
-  opts: { adopt: boolean; dryRun: boolean },
-): Promise<"draft" | "adopt" | "other"> {
-  const set = getSet(draft.registry, id) as ManagedSet;
-  const prefixed = withPrefix(c.original, set.prefix ?? id);
-  const holder = c.kind === "set" && c.holderId ? ctx.registry.sets[c.holderId] : undefined;
-  const otherBlocked = otherSideBlocked(ctx, c, opts.dryRun);
-  log.warn(`Name collision: ${c.name}\nalready held by ${c.holder}\nincoming from set "${id}"`);
-  const action = await choose(`How should "${id}" install ${c.original}?`, [
-    { value: "prefix", label: "Add a prefix", hint: isValidSkillName(prefixed) ? prefixed : undefined },
-    { value: "rename", label: "Rename it" },
-    ...(c.kind === "unowned" && !opts.adopt
-      ? [{ value: "adopt" as const, label: "Take over the existing folder", hint: "only if it matches this set's copy" }]
-      : []),
-    { value: "exclude", label: "Don't install it" },
-    {
-      value: "other",
-      label: holder ? `Rename it in set "${c.holderId}" instead` : "Rename the other one",
-      disabled: otherBlocked,
-    },
-    { value: "abort", label: "Stop" },
-  ]);
-  if (action === "abort") throw new Cancelled();
-  if (action === "adopt") return "adopt";
-  if (action === "exclude") {
-    setResolution(draft, id, c.original, { exclude: true });
-    return "draft";
-  }
-  const valid = (v: string) =>
-    !isValidSkillName(v) ? "Use a-z, 0-9 and single hyphens." : v === c.name ? "That is the colliding name." : undefined;
-  if (action === "other" && c.holderId) {
-    await renameOtherSide(ctx, c.holderId, c.name, id);
-    return "other";
-  }
-  // The name is editable and validated; one that still collides is caught by
-  // the replan that follows and asked about again.
-  const to = await ask("New name", {
-    initial: action === "prefix" && isValidSkillName(prefixed) ? prefixed : undefined,
-    placeholder: c.original,
-    validate: valid,
-  });
-  setResolution(draft, id, c.original, { to, reason: `collides with ${c.holder}` });
-  return "draft";
-}
-
-function setResolution(ctx: Ctx, id: string, original: string, r: Resolution): void {
-  applyResolution(ctx.registry, id, original, r);
-  ctx.saveRegistry(ctx.registry);
-}
-
 /**
  * `skl resolve`: one registry edit, shown as a before/after plan first like
  * every other change (--dry-run stops there; a terminal confirms; -y without).
@@ -552,62 +374,6 @@ async function resolveCmd(ctx: Ctx, args: string[], rest: string[], flags: Flags
   ctx.saveRegistry(ctx.registry);
   console.log(`Recorded. Run: skl update ${id}`);
   return 0;
-}
-
-/** A copy of the context whose registry edits stay in memory until saved. */
-function draftOf(ctx: Ctx): Ctx {
-  return { ...ctx, registry: structuredClone(ctx.registry), saveRegistry: () => {} };
-}
-
-/**
- * Commands that resolve each collision without a terminal. Only skillport
- * sets can rename their own skill; any set can be the "other side".
- */
-function printResolveHints(
-  paths: Paths,
-  setId: string,
-  renamable: boolean,
-  collisions: { name: string; original?: string; kind: HolderKind; holderId?: string }[],
-): void {
-  console.log("  Resolve, then run update again:");
-  for (const c of collisions) {
-    const name = c.original ?? c.name;
-    if (renamable) {
-      console.log(`    skl resolve ${setId} ${name} --prefix -y`);
-      console.log(`    skl resolve ${setId} ${name} --rename <name> -y`);
-    }
-    console.log(`    skl resolve ${setId} ${name} --exclude -y`);
-    if (c.kind === "set" && c.holderId) {
-      // Rules are keyed by the vendor's name, which differs if that set renamed it already.
-      const theirs = readState(paths.stateDir).sets[c.holderId]?.skills[c.name]?.original ?? c.name;
-      console.log(`    skl resolve ${c.holderId} ${theirs} --rename <name> -y   (then: skl update ${c.holderId})`);
-    }
-  }
-}
-
-function report(p: Plan): void {
-  console.log(`\n■ ${p.setId}`);
-  const label = (s: Plan["skills"][number]) => (s.original === s.name ? s.name : `${s.original} → ${s.name}`);
-  const by = (u: string) => p.skills.filter((s) => s.upstream === u).map(label);
-  printItems("new", by("new"));
-  printItems("changed", by("changed"));
-  printItems("removed", p.removed);
-  printItems("unselected", p.unselected);
-  printItems("adopt", p.adopted);
-  printItems("clean up", p.strays.map((at) => at.replace(`${process.env.HOME}/`, "~/")));
-  const same = by("unchanged").length;
-  if (same) console.log(`  ${"unchanged".padEnd(11)}${count(same, "skill")}`);
-  printItems("edits kept", p.skills.filter((s) => s.localEdits && !s.write).map((s) => s.name));
-  printItems("edits replaced", p.skills.filter((s) => s.localEdits && s.write).map((s) => s.name));
-  for (const { file, change } of p.rewrites) {
-    console.log(`  rewrite    ${file}:${change.line} \`${change.from}\` → \`${change.to}\``);
-  }
-  for (const { file, change } of p.keptAsCode) {
-    console.log(`  kept       ${file}:${change.line} \`${change.from}\` reads as code; review`);
-  }
-  for (const c of p.collisions) console.log(`  ✗ ${c.name} collides with ${c.holder}`);
-  for (const w of p.warnings) console.log(`  ⚠ ${w}`);
-  for (const e of p.errors) console.log(`  ✗ ${e}`);
 }
 
 async function check(ctx: Ctx, ids: string[]): Promise<number> {
@@ -656,10 +422,7 @@ async function check(ctx: Ctx, ids: string[]): Promise<number> {
         dropStaging(staging);
       }
     } catch (e) {
-      if (e instanceof NeedsInteraction) {
-        console.log(`\n■ ${id}: ${e.message}`);
-        continue;
-      }
+      if (noticeIfNeedsYou(e, id)) continue;
       failed++;
       console.error(`✗ ${id}: ${(e as Error).message}`);
     }
@@ -785,9 +548,8 @@ function diff(ctx: Ctx, id: string | undefined, skill: string | undefined): numb
     try {
       found = fetchSet(ctx, id, set, staging, false)().skills.find((x) => x.name === skill || x.original === skill);
     } catch (e) {
-      if (!(e instanceof NeedsInteraction)) throw e;
-      console.log(`■ ${id}: ${e.message}`);
-      return 0;
+      if (noticeIfNeedsYou(e, id)) return 0;
+      throw e;
     }
     const s = found;
     if (!s) throw new Error(`"${skill}" is not in set "${id}".`);
@@ -798,27 +560,28 @@ function diff(ctx: Ctx, id: string | undefined, skill: string | undefined): numb
   }
 }
 
-async function remove(ctx: Ctx, id: string | undefined, flags: Flags): Promise<number> {
-  const set = getSet(ctx.registry, id);
+async function remove(ctx: Ctx, maybeId: string | undefined, flags: Flags): Promise<number> {
+  const set = getSet(ctx.registry, maybeId);
+  const id = maybeId!; // getSet threw if it was missing
   const state = readState(ctx.paths.stateDir);
   // A skills-cli set removes only what it recorded installing; other skills
   // from the same source (yours by hand, or older) are left alone.
-  const recorded = new Set(state.cli?.[id!]?.skills ?? []);
+  const recorded = new Set(state.cli?.[id]?.skills ?? []);
   const names = isManaged(set)
-    ? Object.keys(state.sets[id!]?.skills ?? {})
+    ? Object.keys(state.sets[id]?.skills ?? {})
     : lockedFor(readSkillLock(ctx.paths.skillLock), set.source).filter((n) => recorded.has(n));
   const how = isManaged(set) ? "moved to trash, links removed" : "removed through npx skills";
   console.log(`Remove set "${id}": ${count(names.length, "skill")} ${how}; the set is unregistered.`);
   if (!(await confirmChange(flags, "Continue?", "dry run: nothing removed."))) return 0;
   // Re-read after the prompt so what is removed is what is there now.
-  if (isManaged(set)) removeManaged(ctx.paths, id!, readState(ctx.paths.stateDir));
+  if (isManaged(set)) removeManaged(ctx.paths, id, readState(ctx.paths.stateDir));
   else {
-    if (names.length) applyCli(ctx.paths, { setId: id!, source: set.source, add: [], update: [], remove: names, unselected: [], collisions: [], warnings: [], others: [] }, []);
+    if (names.length) removeCliSkills(ctx.paths, names);
     const after = readState(ctx.paths.stateDir);
-    if (after.cli) delete after.cli[id!];
+    if (after.cli) delete after.cli[id];
     writeState(ctx.paths.stateDir, after);
   }
-  delete ctx.registry.sets[id!];
+  delete ctx.registry.sets[id];
   ctx.saveRegistry(ctx.registry);
   console.log("Done.");
   return 0;
