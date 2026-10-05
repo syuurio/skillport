@@ -7,6 +7,8 @@ export const isInteractive = () => Boolean(process.stdin.isTTY && process.stdout
 
 export async function ask(question: string): Promise<string> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  // readline swallows Ctrl-C by default; exit so staging cleanup runs.
+  rl.on("SIGINT", () => process.exit(130));
   try {
     return (await rl.question(question)).trim();
   } finally {

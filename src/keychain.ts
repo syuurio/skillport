@@ -14,7 +14,7 @@ export function readSecret(source: string): string {
   const secret = r.status === 0 ? r.stdout.trim() : "";
   if (!secret) {
     throw new Error(
-      `No Keychain secret for "${source}" (missing or empty). Run: skillport secret ${source}`,
+      `No Keychain secret for "${source}" (missing or empty). Run: skl secret ${source}`,
     );
   }
   return secret;

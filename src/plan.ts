@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { listSkillDirs } from "./acquire.ts";
+import { isOursOrFree } from "./apply.ts";
 import type { ManagedSet, Paths, RenameRule } from "./registry.ts";
 import type { LockEntry, State } from "./state.ts";
 import {
@@ -74,11 +75,20 @@ export function plan(input: PlanInput): Plan {
   const errors: string[] = [];
   const warnings: string[] = [];
 
-  const vendor = listSkillDirs(vendorDir).map((dir) => {
+  // Vendor content is untrusted. Anything but regular files and folders is
+  // refused before a single byte is read: a symlink could pull any file on
+  // this machine into a skill every agent reads, and a FIFO would block the
+  // read forever.
+  const vendor = listSkillDirs(vendorDir).flatMap((dir) => {
+    const odd = irregularEntries(dir);
+    if (odd.length) {
+      errors.push(`${path.basename(dir)} contains entries skillport does not install (only regular files and folders): ${odd.join(", ")}`);
+      return [];
+    }
     const fm = readFrontmatterName(fs.readFileSync(path.join(dir, "SKILL.md"), "utf8")).name;
-    return { dir, original: fm ?? path.basename(dir), folder: path.basename(dir) };
+    return [{ dir, original: fm ?? path.basename(dir), folder: path.basename(dir) }];
   });
-  if (vendor.length === 0) errors.push(`No skills found in ${vendorDir}.`);
+  if (vendor.length === 0 && errors.length === 0) errors.push(`No skills found in ${vendorDir}.`);
 
   // An interactive run is the selection; otherwise the registry is.
   const rename: Record<string, RenameRule> = { ...(set.rename ?? {}) };
@@ -103,21 +113,12 @@ export function plan(input: PlanInput): Plan {
 
   const nameOf = (original: string) => rename[original]?.to ?? original;
 
-  // Vendor content is untrusted input: a name is a path segment, and a
-  // symlink could pull any file on this machine into a skill every agent
-  // reads. Reject both before anything is written.
+  // A name becomes a path segment; reject it before anything is written.
   const safe = selected.filter((v) => {
     const name = nameOf(v.original);
-    if (!isValidSkillName(name)) {
-      errors.push(`"${name}" is not a valid skill name (a-z, 0-9, single -).`);
-      return false;
-    }
-    const links = symlinksIn(v.dir);
-    if (links.length) {
-      errors.push(`${v.original} contains symlinks, which skillport does not install: ${links.join(", ")}`);
-      return false;
-    }
-    return true;
+    if (isValidSkillName(name)) return true;
+    errors.push(`"${name}" is not a valid skill name (a-z, 0-9, single -).`);
+    return false;
   });
   const renames = new Map(
     safe.filter((v) => nameOf(v.original) !== v.original).map((v) => [v.original, nameOf(v.original)]),
@@ -167,7 +168,11 @@ export function plan(input: PlanInput): Plan {
   });
 
   const keep = new Set(skills.map((s) => s.name));
-  const removed = Object.keys(prev).filter((n) => !keep.has(n));
+  // State is our own file, but its keys become paths too.
+  const removed = Object.keys(prev).filter((n) => !keep.has(n) && isValidSkillName(n));
+  for (const n of Object.keys(prev)) {
+    if (!isValidSkillName(n)) errors.push(`state.json has an invalid skill name "${n}"; fix or remove it by hand.`);
+  }
 
   const collisions = findCollisions(input, skills, prev);
   for (const s of skills) {
@@ -208,24 +213,18 @@ function findCollisions(
       add(`an unmanaged folder ${dest}`);
       continue;
     }
-    for (const linkDir of paths.links) {
-      const link = path.join(linkDir, s.name);
-      const st = fs.lstatSync(link, { throwIfNoEntry: false });
-      if (st && !(st.isSymbolicLink() && path.resolve(linkDir, fs.readlinkSync(link)) === dest)) {
-        add(`${link}, which skillport did not create`);
-        break;
-      }
-    }
+    const foreign = paths.links.map((d) => path.join(d, s.name)).find((at) => !isOursOrFree(at, dest));
+    if (foreign) add(`${foreign}, which skillport did not create`);
   }
   return found;
 }
 
-/** Paths of symlinks inside a skill, the skill folder itself included. */
-function symlinksIn(dir: string): string[] {
-  if (fs.lstatSync(dir).isSymbolicLink()) return ["."];
+/** Entries that are not regular files or folders, the skill folder included. */
+function irregularEntries(dir: string): string[] {
+  if (!fs.lstatSync(dir).isDirectory()) return ["."];
   return fs
     .readdirSync(dir, { withFileTypes: true, recursive: true })
-    .filter((e) => e.isSymbolicLink())
+    .filter((e) => !e.isFile() && !e.isDirectory())
     .map((e) => path.relative(dir, path.join(e.parentPath, e.name)));
 }
 

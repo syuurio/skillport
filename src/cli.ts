@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { acquire, latestVersion, pinnedPackage } from "./acquire.ts";
-import { apply, removeManaged } from "./apply.ts";
+import { acquireLock, apply, removeManaged } from "./apply.ts";
 import { storeSecret } from "./keychain.ts";
 import { type Collision, type Plan, plan } from "./plan.ts";
 import { pluginSkillNames } from "./plugins.ts";
@@ -61,6 +61,7 @@ async function main(argv: string[]): Promise<number> {
     registry: readRegistry(paths.registry),
     saveRegistry: (r) => writeRegistry(paths.registry, r),
   };
+  if (["add", "update", "check", "diff", "remove"].includes(cmd)) cleanups.add(acquireLock(paths));
   switch (cmd) {
     case "status":
       return status(ctx);
@@ -99,11 +100,28 @@ function managed(ctx: Ctx, id: string): ManagedSet | null {
   return null;
 }
 
-/** Fetch a set into staging; `replan` re-reads the registry each time. */
-function fetchSet(ctx: Ctx, id: string, set: ManagedSet, interactive: boolean) {
+// Staging folders hold vendor content and the installer's fake HOME, where an
+// installer may have saved its token. They are removed on every exit path,
+// including errors and Ctrl-C.
+const cleanups = new Set<() => void>();
+process.on("exit", () => cleanups.forEach((f) => f()));
+process.on("SIGINT", () => process.exit(130));
+
+function stagingFor(ctx: Ctx, id: string): string {
   const staging = path.join(ctx.paths.stateDir, "staging", id);
+  const clean = () => fs.rmSync(staging, { recursive: true, force: true });
+  cleanups.add(clean);
+  return staging;
+}
+
+function dropStaging(staging: string): void {
+  fs.rmSync(staging, { recursive: true, force: true });
+}
+
+/** Fetch a set into staging; `replan` reads `ctx.registry` each time. */
+function fetchSet(ctx: Ctx, id: string, set: ManagedSet, staging: string, interactive: boolean) {
   const vendorDir = acquire(id, set, staging, { interactive });
-  const replan = () =>
+  return () =>
     plan({
       paths: ctx.paths,
       setId: id,
@@ -115,7 +133,12 @@ function fetchSet(ctx: Ctx, id: string, set: ManagedSet, interactive: boolean) {
       staging,
       captured: interactive,
     });
-  return { staging, replan };
+}
+
+/** Without a terminal there is no one to confirm, so -y must say so up front. */
+function needsYes(flags: Flags): string | null {
+  if (flags.yes || flags.dryRun || isInteractive()) return null;
+  return "No terminal to confirm on; pass -y to apply, or --dry-run to only see the plan.";
 }
 
 async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
@@ -123,40 +146,48 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
   if (!set) return 0;
   const interactive = flags.interactive && set.type === "installer";
   if (interactive && !isInteractive()) throw new Error("Interactive install needs a terminal; pass -y to install everything.");
-  let staging = "";
+  const refuse = needsYes(flags);
+  if (refuse) throw new Error(refuse);
+  // Collision answers go into a draft and reach the registry file only when
+  // the plan is applied, never on --dry-run or a "no".
+  const draft: Ctx = { ...ctx, registry: structuredClone(ctx.registry), saveRegistry: () => {} };
+  let resolved = false;
+  const staging = stagingFor(ctx, id);
   try {
-    const f = fetchSet(ctx, id, set, interactive);
-    staging = f.staging;
-    let p = f.replan();
+    const replan = fetchSet(draft, id, set, staging, interactive);
+    let p = replan();
     while (p.collisions.length) {
       if (flags.yes || !isInteractive()) {
         report(p);
         printResolveHints(p);
         return 1;
       }
-      for (const c of p.collisions) await resolveInteractively(ctx, id, c);
-      p = f.replan();
+      for (const c of p.collisions) await resolveInteractively(draft, id, c);
+      resolved = true;
+      p = replan();
     }
     report(p);
     if (p.errors.length) return 1;
-    const work = p.skills.some((s) => s.write) || p.removed.length > 0 || p.captured !== undefined;
+    const work = p.skills.some((s) => s.write) || p.removed.length > 0 || p.captured !== undefined || resolved;
     if (!work) {
       console.log("  up to date.");
       return 0;
     }
     if (flags.dryRun) {
-      console.log("  dry run: nothing installed.");
+      console.log(`  dry run: nothing installed${resolved ? ", collision answers not saved" : ""}.`);
       return 0;
     }
-    if (!flags.yes && isInteractive() && !(await confirm("  Apply?"))) return 0;
-    const trash = apply(ctx.paths, p, readState(ctx.paths.stateDir), ctx.registry, ctx.saveRegistry);
+    if (!flags.yes && !(await confirm("  Apply?"))) return 0;
+    const trash = apply(ctx.paths, p, readState(ctx.paths.stateDir), draft.registry, ctx.saveRegistry);
+    if (resolved) ctx.saveRegistry(draft.registry);
+    ctx.registry = draft.registry;
     console.log(`  applied.${fs.existsSync(trash) ? ` Previous versions: ${trash}` : ""}`);
     return 0;
   } catch (e) {
     console.error(`✗ ${id}: ${(e as Error).message}`);
     return 1;
   } finally {
-    if (staging) fs.rmSync(staging, { recursive: true, force: true });
+    dropStaging(staging);
   }
 }
 
@@ -173,13 +204,14 @@ async function resolveInteractively(ctx: Ctx, id: string, c: Collision): Promise
   ]);
   if (action === "abort") throw new Error("Aborted.");
   if (action === "exclude") return setResolution(ctx, id, c.original, { exclude: true });
-  let to = prefixed;
-  if (action === "rename") {
-    for (;;) {
-      to = await ask("  New name: ");
-      if (isValidSkillName(to)) break;
-      console.log("  Use a-z, 0-9 and single hyphens.");
-    }
+  // The suggested name is editable and validated; a name that still collides
+  // is caught by the replan that follows and asked about again.
+  const suggestion = action === "prefix" && isValidSkillName(prefixed) ? prefixed : "";
+  let to = "";
+  for (;;) {
+    to = (await ask(`  Name${suggestion ? ` [${suggestion}]` : ""}: `)) || suggestion;
+    if (isValidSkillName(to) && to !== c.name) break;
+    console.log("  Use a-z, 0-9 and single hyphens, different from the colliding name.");
   }
   setResolution(ctx, id, c.original, { to, reason: `collides with ${c.holder}` });
 }
@@ -254,13 +286,11 @@ async function check(ctx: Ctx, ids: string[]): Promise<number> {
   for (const id of ids.length ? ids : Object.keys(ctx.registry.sets)) {
     const set = managed(ctx, id);
     if (!set) continue;
-    let staging = "";
+    const staging = stagingFor(ctx, id);
     try {
-      const f = fetchSet(ctx, id, set, false);
-      staging = f.staging;
-      report(f.replan());
+      report(fetchSet(ctx, id, set, staging, false)());
       const pin = pinnedPackage(set);
-      const latest = pin && latestVersion(pin.name);
+      const latest = pin && latestVersion(pin.name, staging);
       if (pin && latest && latest !== pin.version) {
         console.log(`  ⬆ ${pin.name}@${latest} is out (pinned ${pin.version}); bump it in the registry to upgrade.`);
       }
@@ -268,7 +298,7 @@ async function check(ctx: Ctx, ids: string[]): Promise<number> {
       failed++;
       console.error(`✗ ${id}: ${(e as Error).message}`);
     } finally {
-      if (staging) fs.rmSync(staging, { recursive: true, force: true });
+      dropStaging(staging);
     }
   }
   return failed ? 1 : 0;
@@ -312,14 +342,14 @@ function diff(ctx: Ctx, id: string | undefined, skill: string | undefined): numb
   if (!id || !skill) throw new Error(USAGE);
   const set = managed(ctx, id);
   if (!set) return 1;
-  const f = fetchSet(ctx, id, set, false);
+  const staging = stagingFor(ctx, id);
   try {
-    const s = f.replan().skills.find((x) => x.name === skill || x.original === skill);
+    const s = fetchSet(ctx, id, set, staging, false)().skills.find((x) => x.name === skill || x.original === skill);
     if (!s) throw new Error(`"${skill}" is not in set "${id}".`);
     spawnSync("diff", ["-ru", path.join(ctx.paths.skillsDir, s.name), s.staged], { stdio: "inherit" });
     return 0;
   } finally {
-    fs.rmSync(f.staging, { recursive: true, force: true });
+    dropStaging(staging);
   }
 }
 
@@ -332,7 +362,13 @@ async function remove(ctx: Ctx, id: string | undefined, flags: Flags): Promise<n
   const state = readState(ctx.paths.stateDir);
   const names = Object.keys(state.sets[id!]?.skills ?? {});
   console.log(`Remove set "${id}": ${names.length} skills go to trash, links are removed, the set is unregistered.`);
-  if (!flags.yes && isInteractive() && !(await confirm("Continue?"))) return 0;
+  if (flags.dryRun) {
+    console.log("dry run: nothing removed.");
+    return 0;
+  }
+  const refuse = needsYes(flags);
+  if (refuse) throw new Error(refuse);
+  if (!flags.yes && !(await confirm("Continue?"))) return 0;
   removeManaged(ctx.paths, id!, state);
   delete ctx.registry.sets[id!];
   ctx.saveRegistry(ctx.registry);

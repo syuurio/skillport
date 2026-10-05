@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -225,8 +226,67 @@ test("skills containing symlinks are refused, so no outside file is copied in", 
   fs.symlinkSync(secret, path.join(t.vendor, "leak", "notes.md"));
   t.skill("animate");
   const p = t.run();
-  assert.match(p.errors.join("\n"), /leak contains symlinks.*notes\.md/);
+  assert.match(p.errors.join("\n"), /leak contains entries skillport does not install.*notes\.md/);
   assert.deepEqual(p.skills.map((s) => s.name), ["animate"]);
   const staged = fs.readdirSync(path.join(t.paths.stateDir, "staging", "emil", "out"));
   assert.deepEqual(staged, ["animate"]);
+});
+
+test("a FIFO in vendor content is refused without being read", () => {
+  const t = sandbox();
+  t.skill("animate");
+  t.skill("blocker");
+  execFileSync("mkfifo", [path.join(t.vendor, "blocker", "notes.md")]);
+  const p = t.run();
+  assert.match(p.errors.join("\n"), /blocker contains entries skillport does not install.*notes\.md/);
+  assert.deepEqual(p.skills.map((s) => s.name), ["animate"]);
+});
+
+test("a symlinked skill folder and a FIFO SKILL.md are refused", () => {
+  const t = sandbox();
+  const elsewhere = path.join(t.home, "elsewhere");
+  fs.mkdirSync(elsewhere);
+  fs.writeFileSync(path.join(elsewhere, "SKILL.md"), "---\nname: elsewhere\n---\n");
+  fs.mkdirSync(t.vendor, { recursive: true });
+  fs.symlinkSync(elsewhere, path.join(t.vendor, "linked"));
+  fs.mkdirSync(path.join(t.vendor, "pipe"));
+  execFileSync("mkfifo", [path.join(t.vendor, "pipe", "SKILL.md")]);
+  const p = t.run();
+  assert.equal(p.skills.length, 0);
+  assert.match(p.errors.join("\n"), /linked contains entries/);
+  assert.match(p.errors.join("\n"), /pipe contains entries.*SKILL\.md/);
+});
+
+test("apply re-checks: a folder or foreign link that appeared after planning stops it untouched", () => {
+  const t = sandbox();
+  t.skill("animate");
+  const p = t.run();
+  fs.mkdirSync(path.join(t.paths.skillsDir, "animate"), { recursive: true });
+  fs.writeFileSync(path.join(t.paths.skillsDir, "animate", "mine.md"), "mine");
+  assert.throws(() => t.commit(p), /changed since the plan was made/);
+  assert.equal(t.read(t.paths.skillsDir, "animate", "mine.md"), "mine");
+  assert.equal(readState(t.paths.stateDir).sets.emil, undefined);
+
+  const t2 = sandbox();
+  t2.skill("animate");
+  const p2 = t2.run();
+  fs.mkdirSync(t2.paths.links[0], { recursive: true });
+  fs.symlinkSync("/somewhere/else", path.join(t2.paths.links[0], "animate"));
+  assert.throws(() => t2.commit(p2), /not skillport's link/);
+  assert.equal(fs.readlinkSync(path.join(t2.paths.links[0], "animate")), "/somewhere/else");
+  assert.ok(!fs.existsSync(path.join(t2.paths.skillsDir, "animate")));
+});
+
+test("invalid state keys are reported and never used as paths", () => {
+  const t = sandbox();
+  t.skill("animate");
+  fs.mkdirSync(t.paths.stateDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(t.paths.stateDir, "state.json"),
+    JSON.stringify({ version: 1, sets: { emil: { syncedAt: "", skills: { "../../x": { hash: "", installed: "", updatedAt: "" } } } } }),
+  );
+  const p = t.run();
+  assert.deepEqual(p.removed, []);
+  assert.match(p.errors.join("\n"), /invalid skill name "\.\.\/\.\.\/x"/);
+  assert.deepEqual(removeManaged(t.paths, "emil", readState(t.paths.stateDir)), []);
 });

@@ -7,6 +7,20 @@ import type { InstallerSet, ManagedSet, NpmSet } from "./registry.ts";
 
 const INSTALLER_TIMEOUT_MS = 5 * 60 * 1000;
 
+/**
+ * Environment for every npm/npx child. npm writes each run's full argv,
+ * including `--token=...`, to a debug log; `logs-max=0` turns that off and
+ * `logs-dir` keeps any log inside staging, which is deleted after the run.
+ * The package cache stays shared so npx does not re-download every time.
+ */
+export function npmEnv(staging: string): Record<string, string> {
+  return {
+    npm_config_cache: path.join(os.homedir(), ".npm"),
+    npm_config_logs_dir: path.join(staging, "npm-logs"),
+    npm_config_logs_max: "0",
+  };
+}
+
 export interface AcquireOptions {
   /** Hand the real terminal to the installer so you answer its questions. */
   interactive: boolean;
@@ -49,11 +63,10 @@ function runInstaller(
 
   // Installers find agent folders through os.homedir(), which follows $HOME
   // on POSIX. cwd is inside the sandbox too, so a "project" install is caught.
-  // npm's cache stays at the real home so npx does not re-download each run.
   const r = spawnSync(argv[0], argv.slice(1), {
     cwd: fakeHome,
     encoding: "utf8",
-    env: { ...process.env, HOME: fakeHome, npm_config_cache: path.join(os.homedir(), ".npm") },
+    env: { ...process.env, HOME: fakeHome, ...npmEnv(staging) },
     // Unattended runs get no stdin: a prompt reads EOF and exits instead of
     // waiting forever.
     stdio: opts.interactive ? "inherit" : ["ignore", "pipe", "pipe"],
@@ -75,8 +88,12 @@ function runInstaller(
 }
 
 function extractNpm(set: NpmSet, staging: string): string {
+  // cwd inside staging so a project .npmrc in wherever `skl` was started
+  // cannot redirect the registry.
   const pack = spawnSync("npm", ["pack", set.package, "--silent", "--pack-destination", staging], {
+    cwd: staging,
     encoding: "utf8",
+    env: { ...process.env, ...npmEnv(staging) },
   });
   if (pack.status !== 0) throw new Error(`npm pack ${set.package} failed.\n${pack.stderr}`);
   const tgz = path.join(staging, pack.stdout.trim().split("\n").at(-1)!);
@@ -101,7 +118,11 @@ export function pinnedPackage(set: ManagedSet): { name: string; version: string 
   return m ? { name: m[1], version: m[2] } : null;
 }
 
-export function latestVersion(name: string): string | null {
-  const r = spawnSync("npm", ["view", name, "version"], { encoding: "utf8" });
+export function latestVersion(name: string, staging: string): string | null {
+  const r = spawnSync("npm", ["view", name, "version"], {
+    cwd: staging,
+    encoding: "utf8",
+    env: { ...process.env, ...npmEnv(staging) },
+  });
   return r.status === 0 ? r.stdout.trim() : null;
 }

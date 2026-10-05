@@ -3,6 +3,7 @@ import path from "node:path";
 import type { Plan } from "./plan.ts";
 import type { Paths, Registry } from "./registry.ts";
 import { type State, writeState } from "./state.ts";
+import { isValidSkillName } from "./transform.ts";
 
 // Moving things into place. Every replaced or removed folder goes to the
 // trash, never `rm`, so any apply can be undone by hand.
@@ -18,14 +19,20 @@ function moveToTrash(trash: string, from: string): void {
   fs.renameSync(from, path.join(trash, path.basename(from)));
 }
 
+/** Whether `at` is missing, or is a symlink to `target`. Anything else is someone else's. */
+export function isOursOrFree(at: string, target: string): boolean {
+  const st = fs.lstatSync(at, { throwIfNoEntry: false });
+  if (!st) return true;
+  return st.isSymbolicLink() && path.resolve(path.dirname(at), fs.readlinkSync(at)) === target;
+}
+
 export function link(paths: Paths, name: string): void {
   const target = path.join(paths.skillsDir, name);
   for (const dir of paths.links) {
     const at = path.join(dir, name);
+    if (!isOursOrFree(at, target)) throw new Error(`${at} exists and is not skillport's link; refusing to replace it.`);
     fs.mkdirSync(dir, { recursive: true });
-    const st = fs.lstatSync(at, { throwIfNoEntry: false });
-    if (st?.isSymbolicLink()) fs.unlinkSync(at);
-    else if (st) throw new Error(`${at} exists and is not a symlink; refusing to replace it.`);
+    if (fs.lstatSync(at, { throwIfNoEntry: false })) continue;
     fs.symlinkSync(target, at);
   }
 }
@@ -35,9 +42,27 @@ export function unlink(paths: Paths, name: string): void {
   const target = path.join(paths.skillsDir, name);
   for (const dir of paths.links) {
     const at = path.join(dir, name);
-    const st = fs.lstatSync(at, { throwIfNoEntry: false });
-    if (st?.isSymbolicLink() && path.resolve(dir, fs.readlinkSync(at)) === target) fs.unlinkSync(at);
+    if (fs.lstatSync(at, { throwIfNoEntry: false }) && isOursOrFree(at, target)) fs.unlinkSync(at);
   }
+}
+
+/**
+ * The plan was made before a confirmation prompt that may have sat for a
+ * while. Re-check every destination and link before the first move, so a
+ * folder or link that appeared meanwhile stops the run instead of being
+ * trashed or unlinked, and nothing is left half-applied.
+ */
+function recheck(paths: Paths, p: Plan, owned: Set<string>): void {
+  const problems: string[] = [];
+  for (const s of p.skills) {
+    const dest = path.join(paths.skillsDir, s.name);
+    if (fs.existsSync(dest) && !owned.has(s.name)) problems.push(`${dest} appeared and is not managed by "${p.set}"`);
+    for (const dir of paths.links) {
+      const at = path.join(dir, s.name);
+      if (!isOursOrFree(at, dest)) problems.push(`${at} is not skillport's link`);
+    }
+  }
+  if (problems.length) throw new Error(`Something changed since the plan was made:\n  ${problems.join("\n  ")}`);
 }
 
 /**
@@ -52,6 +77,8 @@ export function apply(
   saveRegistry: (r: Registry) => void,
 ): string {
   if (p.errors.length || p.collisions.length) throw new Error("Refusing to apply a plan with unresolved problems.");
+  const prev = state.sets[p.set]?.skills ?? {};
+  recheck(paths, p, new Set(Object.keys(prev)));
   const trash = trashDir(paths, p.set);
   fs.mkdirSync(paths.skillsDir, { recursive: true });
 
@@ -60,7 +87,6 @@ export function apply(
     unlink(paths, name);
   }
   const now = new Date().toISOString();
-  const prev = state.sets[p.set]?.skills ?? {};
   const skills: State["sets"][string]["skills"] = {};
   for (const s of p.skills) {
     const dest = path.join(paths.skillsDir, s.name);
@@ -93,7 +119,7 @@ export function apply(
 
 /** Remove every skill a managed set installed. */
 export function removeManaged(paths: Paths, setId: string, state: State): string[] {
-  const names = Object.keys(state.sets[setId]?.skills ?? {});
+  const names = Object.keys(state.sets[setId]?.skills ?? {}).filter(isValidSkillName);
   const trash = trashDir(paths, `removed-${setId}`);
   for (const name of names) {
     moveToTrash(trash, path.join(paths.skillsDir, name));
@@ -102,4 +128,33 @@ export function removeManaged(paths: Paths, setId: string, state: State): string
   delete state.sets[setId];
   writeState(paths.stateDir, state);
   return names;
+}
+
+/**
+ * One skillport run at a time: two runs share staging and state. The lock
+ * file holds the pid; a lock whose process is gone is taken over.
+ */
+export function acquireLock(paths: Paths): () => void {
+  fs.mkdirSync(paths.stateDir, { recursive: true });
+  const file = path.join(paths.stateDir, "lock");
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      fs.writeFileSync(file, String(process.pid), { flag: "wx" });
+      return () => fs.rmSync(file, { force: true });
+    } catch {
+      const pid = Number(fs.readFileSync(file, "utf8"));
+      if (pid && isAlive(pid)) throw new Error(`Another skillport run (pid ${pid}) is in progress.`);
+      fs.rmSync(file, { force: true });
+    }
+  }
+  throw new Error(`Could not take ${file}.`);
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
