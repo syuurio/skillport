@@ -23,8 +23,8 @@ export function readSecret(source: string): string {
 /**
  * Store a source's secret. On a terminal, `security` prompts for it (`-w` as
  * the last argument), so it never lands in shell history. Without a terminal
- * (pipes, `pbpaste |`, agent shells) the secret is read from stdin instead;
- * it is then briefly visible in `security`'s argv.
+ * (pipes, `pbpaste |`, agent shells) the secret is read from stdin and
+ * passed on through stdin as well.
  */
 export function storeSecret(source: string): void {
   const base = ["add-generic-password", "-U", "-s", SERVICE, "-a", source];
@@ -38,15 +38,27 @@ export function storeSecret(source: string): void {
   readSecret(source);
 }
 
-/** Store a secret you already have (e.g. pasted into the register wizard). */
+// Token-like characters only: the value is written inside double quotes to
+// `security -i`, so quotes, backslashes and whitespace are refused rather
+// than escaped by guesswork.
+const SAFE_SECRET = /^[A-Za-z0-9._~+/=:-]+$/;
+
+/**
+ * Store a secret you already have (pasted into the register wizard, or piped
+ * in). It goes to `security -i` on stdin, never on a command line, so other
+ * processes cannot read it from `ps`.
+ */
 export function storeSecretValue(source: string, raw: string): void {
   const value = raw.trim();
   if (!value) throw new Error("Empty secret; nothing stored.");
-  const r = spawnSync(
-    "security",
-    ["add-generic-password", "-U", "-s", SERVICE, "-a", source, "-w", value],
-    { stdio: "ignore" },
-  );
+  if (!SAFE_SECRET.test(value)) {
+    throw new Error(`The token has characters skillport will not pass along; store it with: skl secret ${source}`);
+  }
+  if (!/^[a-z0-9-]+$/.test(source)) throw new Error(`Invalid set id "${source}".`);
+  const r = spawnSync("security", ["-i"], {
+    input: `add-generic-password -U -s ${SERVICE} -a ${source} -w "${value}"\n`,
+    stdio: ["pipe", "ignore", "ignore"],
+  });
   if (r.status !== 0) throw new Error("Keychain write failed.");
   readSecret(source);
 }

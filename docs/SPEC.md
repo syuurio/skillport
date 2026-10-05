@@ -400,6 +400,7 @@ matt           有改動 tdd, code-review · 上游新增 implement-spec, pr（�
 
 - Token 存在 macOS Keychain，不寫進 registry、state 或 log。錯誤訊息裡出現的 token 一律遮蔽。
 - 已知限制：vendor installer 只接受命令列參數傳入 token，執行期間同使用者的其他行程可用 `ps` 看到。
+- 寫入 Keychain 時，token 一律經由 stdin 交給 `security -i`，不放在命令列；只接受 token 常見字元（`A-Za-z0-9._~+/=:-`），其他字元要改用 `skl secret` 的終端機提示輸入。
 - `@animationsdev/install@0.2.3` 預設 API 是 `http://animations.dev`，token 會先以明文送出再被 308 轉到 HTTPS。registry 範例固定加上 `--api=https://animations.dev`。
 - `npm` 類型不執行套件程式碼，只解開檔案。
 - 所有 npm/npx 子行程設 `logs-max=0`、`logs-dir` 指向 staging：npm 會把完整 argv（含 `--token=`）寫進 debug log（已驗證並修正）。npm 指令的 cwd 設在 staging，專案層的 `.npmrc` 無法改 registry。
