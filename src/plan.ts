@@ -7,6 +7,7 @@ import type { LockEntry, State } from "./state.ts";
 import {
   type Change,
   isValidSkillName,
+  localDate,
   readFrontmatterName,
   rewriteReferences,
   setFrontmatterName,
@@ -85,7 +86,7 @@ export interface PlanInput {
 export function plan(input: PlanInput): Plan {
   const { paths, setId, set, state, lock, vendorDir, staging } = input;
   const prev = state.sets[setId]?.skills ?? {};
-  const today = input.today ?? new Date().toISOString().slice(0, 10);
+  const today = input.today ?? localDate();
   const errors: string[] = [];
   const warnings: string[] = [];
 

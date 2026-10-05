@@ -25,7 +25,7 @@ import {
   writeRegistry,
 } from "./registry.ts";
 import { readSkillLock, readState } from "./state.ts";
-import { isValidSkillName, withPrefix } from "./transform.ts";
+import { isValidSkillName, localDate, withPrefix } from "./transform.ts";
 import { treeHash } from "./treehash.ts";
 
 const USAGE = `skillport — one place for skills that vendor installers scatter
@@ -177,6 +177,9 @@ function versionHint(set: ManagedSet, staging: string): string | null {
 const cleanups = new Set<() => void>();
 process.on("exit", () => cleanups.forEach((f) => f()));
 process.on("SIGINT", () => process.exit(130));
+// A closed terminal or a kill should clean up too.
+process.on("SIGHUP", () => process.exit(129));
+process.on("SIGTERM", () => process.exit(143));
 
 function stagingFor(ctx: Ctx, id: string): string {
   const staging = path.join(ctx.paths.stateDir, "staging", id);
@@ -403,7 +406,7 @@ function setResolution(ctx: Ctx, id: string, original: string, r: Resolution): v
     ctx.saveRegistry(ctx.registry);
     return;
   }
-  const at = new Date().toISOString().slice(0, 10);
+  const at = localDate();
   set.exclude = (set.exclude ?? []).filter((n) => n !== original);
   if (set.rename) delete set.rename[original];
   if ("exclude" in r) set.exclude.push(original);

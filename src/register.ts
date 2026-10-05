@@ -131,7 +131,7 @@ function latest(name: string): string | null {
 }
 
 /** Folders inside an npm package that hold skill folders, most skills first. */
-function skillRootsIn(spec: string): string[] {
+export function skillRootsIn(spec: string): string[] {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "skillport-pack-"));
   try {
     const env = { ...process.env, ...npmEnv(tmp) };

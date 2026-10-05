@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import type { Registry, SkillSet } from "../src/registry.ts";
-import { extractSecret, isPinned, packageIndex, splitCommand, suggestUnattendedFlag, validateSet } from "../src/register.ts";
+import { extractSecret, isPinned, packageIndex, skillRootsIn, splitCommand, suggestUnattendedFlag, validateSet } from "../src/register.ts";
+import { localDate } from "../src/transform.ts";
 
 const empty: Registry = { version: 1, sets: {} };
 
@@ -90,4 +91,21 @@ test("validateSet checks link targets", () => {
   assert.deepEqual(validateSet("a", { type: "npm", package: "x@1", path: "s", links: ["claude-code"] }, empty), []);
   assert.deepEqual(validateSet("a", { type: "npm", package: "x@1", path: "s", links: [] }, empty), []);
   assert.match(validateSet("a", { type: "npm", package: "x@1", path: "s", links: ["grok"] }, empty).join(), /links must be/);
+});
+
+test("skillRootsIn lists every folder in a package that holds skills, most first", () => {
+  const pkg = fs.mkdtempSync(path.join(os.tmpdir(), "skillport-pkg-"));
+  fs.writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ name: "fixture-skills", version: "1.0.0" }));
+  const skill = (dir: string) => {
+    fs.mkdirSync(path.join(pkg, dir), { recursive: true });
+    fs.writeFileSync(path.join(pkg, dir, "SKILL.md"), "---\nname: x\n---\n");
+  };
+  skill("skills/a");
+  skill("skills/b");
+  skill("extras/c");
+  assert.deepEqual(skillRootsIn(pkg), ["skills|2", "extras|1"]);
+});
+
+test("localDate uses the local calendar day", () => {
+  assert.equal(localDate(new Date(2026, 9, 6, 0, 30)), "2026-10-06");
 });
