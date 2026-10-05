@@ -1,36 +1,64 @@
-import readline from "node:readline/promises";
+import * as p from "@clack/prompts";
 
-// Minimal terminal prompts. No dependency: the only interaction skillport
-// owns is collision resolution and plan confirmation.
+// Terminal prompts, built on @clack/prompts (arrow keys, inline validation).
+// Every prompt treats Ctrl-C / Esc as "stop now": it exits with 130 so the
+// staging cleanup registered in cli.ts runs.
 
 export const isInteractive = () => Boolean(process.stdin.isTTY && process.stdout.isTTY);
 
-export async function ask(question: string): Promise<string> {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  // readline swallows Ctrl-C by default; exit so staging cleanup runs.
-  rl.on("SIGINT", () => process.exit(130));
-  try {
-    return (await rl.question(question)).trim();
-  } finally {
-    rl.close();
+export class Cancelled extends Error {
+  constructor() {
+    super("Cancelled.");
   }
 }
 
-export async function confirm(question: string): Promise<boolean> {
-  return /^(y|yes|)$/i.test(await ask(`${question} [Y/n] `));
+function settle<T>(value: T): Exclude<T, symbol> {
+  if (p.isCancel(value)) {
+    p.cancel("Cancelled.");
+    throw new Cancelled();
+  }
+  return value as Exclude<T, symbol>;
+}
+
+export async function ask(
+  message: string,
+  opts: { placeholder?: string; initial?: string; validate?: (v: string) => string | undefined } = {},
+): Promise<string> {
+  const value = await p.text({
+    message,
+    placeholder: opts.placeholder,
+    initialValue: opts.initial,
+    validate: opts.validate ? (v) => opts.validate!((v ?? "").trim()) : undefined,
+  });
+  return settle(value).trim();
+}
+
+export async function askSecret(message: string): Promise<string> {
+  const value = await p.password({
+    message,
+    validate: (v) => ((v ?? "").trim() ? undefined : "Required."),
+  });
+  return settle(value).trim();
+}
+
+export async function confirm(message: string, initial = true): Promise<boolean> {
+  return settle(await p.confirm({ message, initialValue: initial }));
 }
 
 export async function choose<T extends string>(
-  question: string,
-  options: { value: T; label: string; disabled?: string }[],
+  message: string,
+  options: { value: T; label: string; hint?: string; disabled?: string }[],
 ): Promise<T> {
-  console.log(question);
-  options.forEach((o, i) =>
-    console.log(o.disabled ? `     ${o.label}  (${o.disabled})` : `  ${i + 1}) ${o.label}`),
-  );
-  for (;;) {
-    const n = Number(await ask("> "));
-    const o = options[n - 1];
-    if (o && !o.disabled) return o.value;
-  }
+  const value = await p.select<T>({
+    message,
+    options: options.map((o) => ({
+      value: o.value,
+      label: o.label,
+      hint: o.disabled ?? o.hint,
+      disabled: Boolean(o.disabled),
+    })) as Parameters<typeof p.select<T>>[0]["options"],
+  });
+  return settle(value);
 }
+
+export const { intro, outro, note, log, spinner } = p;

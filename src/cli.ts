@@ -3,11 +3,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { acquire, latestVersion, pinnedPackage } from "./acquire.ts";
 import { acquireLock, apply, removeManaged } from "./apply.ts";
-import { storeSecret } from "./keychain.ts";
+import { storeSecret, storeSecretValue } from "./keychain.ts";
 import { type Collision, type Plan, plan } from "./plan.ts";
 import { pluginSkillNames } from "./plugins.ts";
 import { askForSet, validateSet } from "./register.ts";
-import { ask, choose, confirm, isInteractive } from "./prompt.ts";
+import { Cancelled, ask, choose, confirm, intro, isInteractive, log, note, outro } from "./prompt.ts";
 import {
   type ManagedSet,
   type Paths,
@@ -26,7 +26,7 @@ import { treeHash } from "./treehash.ts";
 
 const USAGE = `skillport — one place for skills that vendor installers scatter
 
-  skl register <set> [--json '<entry>']   Add a set to the registry (asks, or takes JSON)
+  skl register [set] [--json '<entry>']   Add a source (wizard, or JSON for scripts)
   skl status                       What is installed, from where (offline)
   skl check [set...]               Is anything new upstream? Changes nothing
   skl add <set> [-y]               First install; installers run interactively unless -y
@@ -100,27 +100,48 @@ async function main(argv: string[]): Promise<number> {
 }
 
 async function register(ctx: Ctx, id: string | undefined, rest: string[]): Promise<number> {
-  if (!id) throw new Error(USAGE);
   const jsonAt = rest.indexOf("--json");
-  let set: SkillSet;
   if (jsonAt >= 0) {
-    set = JSON.parse(rest[jsonAt + 1] ?? "") as SkillSet;
-  } else {
-    if (!isInteractive()) throw new Error("register asks questions; without a terminal pass --json '<entry>'.");
-    set = await askForSet(id);
+    if (!id) throw new Error(USAGE);
+    const set = JSON.parse(rest[jsonAt + 1] ?? "") as SkillSet;
+    return saveSet(ctx, id, set);
   }
+  if (!isInteractive()) throw new Error("register asks questions; without a terminal pass: skl register <set> --json '<entry>'");
+  intro("skillport · register a skill source");
+  if (!id) {
+    id = await ask("Name for this source", {
+      placeholder: "newvendor",
+      validate: (v) => (validateSet(v, { type: "skills-cli", source: "a/b" }, ctx.registry)[0] ?? undefined),
+    });
+  } else if (ctx.registry.sets[id]) {
+    throw new Error(`Set "${id}" already exists in ${ctx.paths.registry}.`);
+  }
+  const { set, secret } = await askForSet(id);
   const problems = validateSet(id, set, ctx.registry);
   if (problems.length) throw new Error(`Not registered:\n  ${problems.join("\n  ")}`);
-  console.log(JSON.stringify({ [id]: set }, null, 2));
-  if (jsonAt < 0 && !(await confirm("Add it?"))) return 0;
+  note(JSON.stringify({ [id]: set }, null, 2), "Registry entry");
+  if (!(await confirm("Save it?"))) {
+    outro("Nothing saved.");
+    return 0;
+  }
+  saveSet(ctx, id, set);
+  if (secret) {
+    storeSecretValue(id, secret);
+    log.success(`Token stored in Keychain (service skillport, account ${id}).`);
+  } else if (set.type === "installer" && set.secret === "keychain") {
+    log.warn(`Store its token with: skl secret ${id}`);
+  }
+  const unattended = set.type !== "installer" || set.unattended !== undefined;
+  outro(`Next: skl add ${id} -y --dry-run   then   skl add ${id}${unattended ? "" : " -i"}`);
+  return 0;
+}
+
+function saveSet(ctx: Ctx, id: string, set: SkillSet): number {
+  const problems = validateSet(id, set, ctx.registry);
+  if (problems.length) throw new Error(`Not registered:\n  ${problems.join("\n  ")}`);
   ctx.registry.sets[id] = set;
   ctx.saveRegistry(ctx.registry);
-  console.log(`Registered "${id}" in ${ctx.paths.registry}.`);
-  if (set.type === "installer" && set.secret === "keychain") {
-    if (isInteractive() && (await confirm(`Store the token for "${id}" in Keychain now?`))) storeSecret(id);
-    else console.log(`Store its token with: skl secret ${id}`);
-  }
-  console.log(`Install with: skl add ${id}${set.type === "installer" && set.unattended === undefined ? "  (interactive only)" : ""}`);
+  if (!isInteractive()) console.log(`Registered "${id}" in ${ctx.paths.registry}.${set.type === "installer" && set.secret ? ` Store its token with: skl secret ${id}` : ""}`);
   return 0;
 }
 
@@ -212,7 +233,7 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
       console.log(`  dry run: nothing installed${resolved ? ", collision answers not saved" : ""}.`);
       return 0;
     }
-    if (!flags.yes && !(await confirm("  Apply?"))) return 0;
+    if (!flags.yes && !(await confirm("Apply?"))) return 0;
     const trash = apply(ctx.paths, p, readState(ctx.paths.stateDir), draft.registry, ctx.saveRegistry);
     if (resolved) ctx.saveRegistry(draft.registry);
     ctx.registry = draft.registry;
@@ -229,25 +250,24 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
 async function resolveInteractively(ctx: Ctx, id: string, c: Collision): Promise<void> {
   const set = getSet(ctx.registry, id) as ManagedSet;
   const prefixed = withPrefix(c.original, set.prefix ?? id);
-  console.log(`\n⚠ Name collision: ${c.name}\n  already held by ${c.holder}\n  incoming from set "${id}"`);
-  const action = await choose(`  How should "${id}" install ${c.original}?`, [
-    { value: "prefix", label: `Add prefix   → ${prefixed}` },
-    { value: "rename", label: "Rename       → choose a name" },
-    { value: "exclude", label: "Exclude      → do not install it" },
-    { value: "abort", label: "Abort" },
-    { value: "other", label: "Rename the other side", disabled: "skillport only renames skills it installs" },
+  log.warn(`Name collision: ${c.name}\nalready held by ${c.holder}\nincoming from set "${id}"`);
+  const action = await choose(`How should "${id}" install ${c.original}?`, [
+    { value: "prefix", label: "Add a prefix", hint: isValidSkillName(prefixed) ? prefixed : undefined },
+    { value: "rename", label: "Rename it" },
+    { value: "exclude", label: "Don't install it" },
+    { value: "abort", label: "Stop" },
+    { value: "other", label: "Rename the other one", disabled: "skillport only renames skills it installs" },
   ]);
-  if (action === "abort") throw new Error("Aborted.");
+  if (action === "abort") throw new Cancelled();
   if (action === "exclude") return setResolution(ctx, id, c.original, { exclude: true });
-  // The suggested name is editable and validated; a name that still collides
-  // is caught by the replan that follows and asked about again.
-  const suggestion = action === "prefix" && isValidSkillName(prefixed) ? prefixed : "";
-  let to = "";
-  for (;;) {
-    to = (await ask(`  Name${suggestion ? ` [${suggestion}]` : ""}: `)) || suggestion;
-    if (isValidSkillName(to) && to !== c.name) break;
-    console.log("  Use a-z, 0-9 and single hyphens, different from the colliding name.");
-  }
+  // The name is editable and validated; one that still collides is caught by
+  // the replan that follows and asked about again.
+  const to = await ask("New name", {
+    initial: action === "prefix" && isValidSkillName(prefixed) ? prefixed : undefined,
+    placeholder: c.original,
+    validate: (v) =>
+      !isValidSkillName(v) ? "Use a-z, 0-9 and single hyphens." : v === c.name ? "That is the colliding name." : undefined,
+  });
   setResolution(ctx, id, c.original, { to, reason: `collides with ${c.holder}` });
 }
 
@@ -418,6 +438,6 @@ async function remove(ctx: Ctx, id: string | undefined, flags: Flags): Promise<n
 try {
   process.exitCode = await main(process.argv.slice(2));
 } catch (e) {
-  console.error((e as Error).message);
-  process.exitCode = 1;
+  if (!(e instanceof Cancelled)) console.error((e as Error).message);
+  process.exitCode = e instanceof Cancelled ? 130 : 1;
 }

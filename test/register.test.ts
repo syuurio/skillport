@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import type { Registry, SkillSet } from "../src/registry.ts";
-import { splitCommand, validateSet } from "../src/register.ts";
+import { extractSecret, isPinned, packageIndex, splitCommand, validateSet } from "../src/register.ts";
 
 const empty: Registry = { version: 1, sets: {} };
 
@@ -45,7 +45,7 @@ test("register --json writes a validated entry; without a terminal it needs --js
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
-  assert.match(run("register", "newvendor").stderr, /pass --json/);
+  assert.match(run("register", "newvendor").stderr, /without a terminal.*--json/);
   const entry = { type: "installer", command: ["npx", "@nv/install@1.0.0", "--token={secret}"], unattended: ["--yes"], secret: "keychain" };
   const r = run("register", "newvendor", "--json", JSON.stringify(entry));
   assert.equal(r.status, 0, r.stderr);
@@ -53,4 +53,27 @@ test("register --json writes a validated entry; without a terminal it needs --js
   const reg = JSON.parse(fs.readFileSync(path.join(home, ".config", "skillport", "registry.json"), "utf8"));
   assert.deepEqual(reg.sets.newvendor, entry);
   assert.match(run("register", "newvendor", "--json", JSON.stringify(entry)).stderr, /already exists/);
+});
+
+test("extractSecret moves a pasted token out of the command", () => {
+  assert.deepEqual(extractSecret(["npx", "@v/i", "--token=abc123", "--global"]), {
+    command: ["npx", "@v/i", "--token={secret}", "--global"],
+    secret: "abc123",
+  });
+  assert.deepEqual(extractSecret(["npx", "@v/i", "--api-key", "abc", "-y"]), {
+    command: ["npx", "@v/i", "--api-key={secret}", "-y"],
+    secret: "abc",
+  });
+  assert.deepEqual(extractSecret(["npx", "@v/i", "--token={secret}"]), { command: ["npx", "@v/i", "--token={secret}"] });
+  assert.deepEqual(extractSecret(["npx", "@v/i", "--global"]), { command: ["npx", "@v/i", "--global"] });
+});
+
+test("packageIndex and isPinned find and judge the package an npx command runs", () => {
+  assert.equal(packageIndex(["npx", "-y", "@aiforui/install", "--token={secret}"]), 2);
+  assert.equal(packageIndex(["pnpm", "dlx", "foo@1.0.0"]), 2);
+  assert.equal(packageIndex(["./install.sh"]), -1);
+  assert.ok(isPinned("@aiforui/install@0.1.4"));
+  assert.ok(isPinned("foo@1.0.0"));
+  assert.ok(!isPinned("@aiforui/install"));
+  assert.ok(!isPinned("foo@latest"));
 });

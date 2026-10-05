@@ -32,11 +32,21 @@ export function storeSecret(source: string): void {
     const r = spawnSync("security", [...base, "-w"], { stdio: "inherit" });
     if (r.status !== 0) throw new Error("Keychain write failed.");
   } else {
-    const value = fs.readFileSync(0, "utf8").trim();
-    if (!value) throw new Error("Empty secret on stdin; nothing stored.");
-    const r = spawnSync("security", [...base, "-w", value], { stdio: "ignore" });
-    if (r.status !== 0) throw new Error("Keychain write failed.");
+    storeSecretValue(source, fs.readFileSync(0, "utf8"));
   }
   // Fails loudly if the prompt received nothing.
+  readSecret(source);
+}
+
+/** Store a secret you already have (e.g. pasted into the register wizard). */
+export function storeSecretValue(source: string, raw: string): void {
+  const value = raw.trim();
+  if (!value) throw new Error("Empty secret; nothing stored.");
+  const r = spawnSync(
+    "security",
+    ["add-generic-password", "-U", "-s", SERVICE, "-a", source, "-w", value],
+    { stdio: "ignore" },
+  );
+  if (r.status !== 0) throw new Error("Keychain write failed.");
   readSecret(source);
 }
