@@ -90,3 +90,18 @@ test("the installer gets exactly command + unattended, nothing added", () => {
   assert.equal(t.skl("update", "emil", "-y").status, 0);
   assert.deepEqual(JSON.parse(fs.readFileSync(argsFile, "utf8")), ["--scope", "user", "--non-interactive"]);
 });
+
+test("installers get a minimal environment: no inherited secrets", () => {
+  const envFile = path.join(os.tmpdir(), `skillport-env-${process.pid}`);
+  const script = `require("fs").writeFileSync(${JSON.stringify(envFile)},JSON.stringify(Object.keys(process.env)));const fs=require("fs"),p=require("os").homedir()+"/.claude/skills/animate";fs.mkdirSync(p,{recursive:true});fs.writeFileSync(p+"/SKILL.md","---\\nname: animate\\n---\\n")`;
+  const t = sandbox({ command: ["node", "-e", script, "--"] });
+  const r = spawnSync(BIN, ["update", "emil", "-y"], {
+    env: { ...process.env, SKILLPORT_HOME: t.home, SOME_API_KEY: "leak-me" },
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  assert.equal(r.status, 0, r.stderr);
+  const keys: string[] = JSON.parse(fs.readFileSync(envFile, "utf8"));
+  assert.ok(!keys.includes("SOME_API_KEY"));
+  assert.ok(keys.includes("PATH") && keys.includes("HOME"));
+});

@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { npmEnv } from "./acquire.ts";
+import { npmEnv, sandboxEnv } from "./acquire.ts";
 import { hasSecret } from "./keychain.ts";
 import { ask, askSecret, choose, chooseMany, confirm, log, spinner } from "./prompt.ts";
 import { DEFAULT_LINKS, LINK_TARGETS, type InstallerSet, type NpmSet, type Registry, type SkillSet, type SkillsCliSet } from "./registry.ts";
@@ -190,7 +190,7 @@ function readHelp(command: string[]): string {
     const r = spawnSync(argv[0], argv.slice(1), {
       cwd: tmp,
       encoding: "utf8",
-      env: { ...process.env, HOME: tmp, ...npmEnv(tmp) },
+      env: sandboxEnv(tmp, tmp),
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 60_000,
     });
@@ -285,10 +285,14 @@ export async function askForSet(id: string): Promise<WizardResult> {
     command = [...command, ...splitCommand(await ask("Scope flag", { initial: "--global" }))];
   }
 
-  const s = spinner();
-  s.start("Reading the installer's --help");
-  const found = suggestUnattendedFlag(readHelp(command));
-  s.stop(found ? `It documents ${found}` : "No \"don't ask\" flag found in --help");
+  // Reading --help runs the vendor's code, so it is opt-in.
+  let found: string | null = null;
+  if (await confirm(`Run "${command.filter((a) => !a.includes("{secret}")).join(" ")} --help" in a sandbox to find its "don't ask" flag? This runs the vendor's code.`)) {
+    const s = spinner();
+    s.start("Reading the installer's --help");
+    found = suggestUnattendedFlag(readHelp(command));
+    s.stop(found ? `It documents ${found}` : "No \"don't ask\" flag found in --help");
+  }
   const runs = await choose("For automatic updates: how does it skip its questions?", [
     ...(found ? [{ value: "found", label: `With ${found}`, hint: "found in --help" }] : []),
     { value: "other", label: "With another flag…" },

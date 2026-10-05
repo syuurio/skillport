@@ -13,6 +13,24 @@ const INSTALLER_TIMEOUT_MS = 5 * 60 * 1000;
  * `logs-dir` keeps any log inside staging, which is deleted after the run.
  * The package cache stays shared so npx does not re-download every time.
  */
+/**
+ * The only variables a vendor process gets. Your shell environment often holds
+ * API keys and tokens; an installer needs none of them, only a PATH to find
+ * node/npx, locale and terminal settings, and proxy or CA settings to reach
+ * its download server.
+ */
+const PASS_THROUGH = [
+  "PATH", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "COLORTERM", "NO_COLOR", "FORCE_COLOR",
+  "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
+  "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE",
+];
+
+export function sandboxEnv(home: string, staging: string): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const k of PASS_THROUGH) if (process.env[k] !== undefined) env[k] = process.env[k]!;
+  return { ...env, HOME: home, ...npmEnv(staging) };
+}
+
 export function npmEnv(staging: string): Record<string, string> {
   return {
     npm_config_cache: path.join(os.homedir(), ".npm"),
@@ -70,7 +88,7 @@ function runInstaller(
   const r = spawnSync(argv[0], argv.slice(1), {
     cwd: fakeHome,
     encoding: "utf8",
-    env: { ...process.env, HOME: fakeHome, ...npmEnv(staging) },
+    env: sandboxEnv(fakeHome, staging),
     // Unattended runs get no stdin: a prompt reads EOF and exits instead of
     // waiting forever.
     stdio: opts.interactive ? "inherit" : ["ignore", "pipe", "pipe"],

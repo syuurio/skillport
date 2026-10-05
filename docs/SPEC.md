@@ -412,6 +412,8 @@ matt           有改動 tdd, code-review · 上游新增 implement-spec, pr（�
 - 寫入 Keychain 時，token 一律經由 stdin 交給 `security -i`，不放在命令列；只接受 token 常見字元（`A-Za-z0-9._~+/=:-`），其他字元要改用 `skl secret` 的終端機提示輸入。
 - `@animationsdev/install@0.2.3` 預設 API 是 `http://animations.dev`，token 會先以明文送出再被 308 轉到 HTTPS。registry 範例固定加上 `--api=https://animations.dev`。
 - `npm` 類型不執行套件程式碼，只解開檔案。
+- vendor 行程（installer、`--help` 偵測）只拿到最小環境變數：`PATH`、`TMPDIR`、語系與終端機設定、proxy 與 CA 設定，加上假 `HOME` 與 npm 設定。shell 裡的 API key、token、`SSH_AUTH_SOCK` 都不會傳過去。
+- `register` 執行 installer 的 `--help` 前會先徵求同意，因為那就是在執行 vendor 的程式碼。
 - 所有 npm/npx 子行程設 `logs-max=0`、`logs-dir` 指向 staging：npm 會把完整 argv（含 `--token=`）寫進 debug log（已驗證並修正）。npm 指令的 cwd 設在 staging，專案層的 `.npmrc` 無法改 registry。
 - vendor 內容只接受一般檔案與目錄；symlink、FIFO 等在讀取前就拒絕（symlink 會把本機任意檔案帶進每個 agent 都讀的 skill，FIFO 會讓讀取永久卡住）。名稱在寫入任何檔案前驗證。
 
