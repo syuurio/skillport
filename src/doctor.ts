@@ -3,6 +3,7 @@ import path from "node:path";
 import { isOursOrFree, trashDir } from "./apply.ts";
 import { type Paths, type Registry, isManaged, linkDirsFor } from "./registry.ts";
 import type { LockEntry, State } from "./state.ts";
+import { isValidSkillName } from "./transform.ts";
 import { treeHash, treeHashWithout } from "./treehash.ts";
 
 // `skl doctor`: find what drifted from the registry, state and lock, and fix
@@ -29,16 +30,34 @@ interface Owned {
   owner: string;
 }
 
-function ownedSkills(paths: Paths, reg: Registry, state: State, lock: Record<string, LockEntry>): Owned[] {
+/**
+ * Every skill some owner claims. Names come from state.json and npx skills'
+ * lock, and become path segments below; ones that are not valid skill names
+ * are left out here and reported, never joined into a path.
+ */
+function ownedSkills(
+  paths: Paths,
+  reg: Registry,
+  state: State,
+  lock: Record<string, LockEntry>,
+  bad: Finding[],
+): Owned[] {
   const out: Owned[] = [];
+  const valid = (name: string, where: string) => {
+    if (isValidSkillName(name)) return true;
+    bad.push({ kind: "collision", message: `${where} lists an invalid skill name ${JSON.stringify(name)}; it is ignored. Fix that file by hand.` });
+    return false;
+  };
   for (const [id, st] of Object.entries(state.sets)) {
     const set = reg.sets[id];
     const links = set ? linkDirsFor(paths, set) : [];
     for (const [name, s] of Object.entries(st.skills)) {
+      if (!valid(name, `state.json (set "${id}")`)) continue;
       out.push({ name, dest: path.join(paths.skillsDir, name), installed: s.installed, links, owner: `set "${id}"` });
     }
   }
   for (const name of Object.keys(lock)) {
+    if (!valid(name, "~/.agents/.skill-lock.json")) continue;
     out.push({ name, dest: path.join(paths.skillsDir, name), links: [], owner: `npx skills (${lock[name].source})` });
   }
   return out;
@@ -46,7 +65,7 @@ function ownedSkills(paths: Paths, reg: Registry, state: State, lock: Record<str
 
 export function diagnose(paths: Paths, reg: Registry, state: State, lock: Record<string, LockEntry>): Finding[] {
   const findings: Finding[] = [];
-  const owned = ownedSkills(paths, reg, state, lock);
+  const owned = ownedSkills(paths, reg, state, lock, findings);
   const trash = trashDir(paths, "doctor");
   const toTrash = (from: string) => () => {
     const rel = path.relative(paths.home, from);

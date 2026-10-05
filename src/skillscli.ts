@@ -5,6 +5,7 @@ import path from "node:path";
 import { sandboxEnv } from "./acquire.ts";
 import type { Paths, SkillsCliSet } from "./registry.ts";
 import type { LockEntry, State } from "./state.ts";
+import { isValidSkillName } from "./transform.ts";
 
 // skills-cli sets are delegated to `npx skills`, which owns their folders,
 // links and lock entries. skillport decides what to ask it for, checks
@@ -66,7 +67,7 @@ export function agentArgs(links: string[], claudeDir: string): string[] {
 export function lockedFor(lock: Record<string, LockEntry>, source: string): string[] {
   const want = normalizeSource(source);
   return Object.entries(lock)
-    .filter(([, e]) => normalizeSource(e.source) === want)
+    .filter(([name, e]) => isValidSkillName(name) && normalizeSource(e.source) === want)
     .map(([name]) => name)
     .sort();
 }

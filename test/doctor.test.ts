@@ -90,3 +90,16 @@ test("a copy that only adds per-agent files counts as identical; your own symlin
   assert.ok(f.find((x) => x.kind === "stray-copy" && x.message.includes(".codex"))?.fix);
   assert.ok(!f.some((x) => x.kind === "unowned"));
 });
+
+test("names from state or the lock that are not skill names never become paths", () => {
+  const w = world();
+  // A folder outside ~/.agents/skills that a crafted name would reach.
+  const victim = path.join(w.home, "victim");
+  w.skill(w.home, "victim");
+  w.state.sets.emil.skills["../../victim"] = { hash: "", installed: treeHash(victim), updatedAt: "" };
+  const lock = { "../../../victim": { source: "a/b", skillPath: "", skillFolderHash: "", updatedAt: "" } };
+  const f = diagnose(w.paths, w.registry, w.state, lock);
+  for (const x of f) x.fix?.();
+  assert.ok(fs.existsSync(path.join(victim, "SKILL.md")));
+  assert.equal(f.filter((x) => /invalid skill name/.test(x.message)).length, 2);
+});
