@@ -16,7 +16,7 @@ function sandbox(set: Partial<ManagedSet> = {}) {
   const vendor = path.join(home, "vendor");
   const registry: Registry = {
     version: 1,
-    sets: { emil: { type: "npm", package: "x@1", path: "skills", ...set } as ManagedSet },
+    sets: { emil: { type: "npm", package: "x@1.0.0", path: "skills", ...set } as ManagedSet },
   };
   const lock: Record<string, LockEntry> = {};
   const pluginSkills = new Map<string, string>();
@@ -344,5 +344,16 @@ test("state records the pinned package a set was synced with", () => {
   const t = sandbox();
   t.skill("animate");
   t.commit(t.run());
-  assert.equal(readState(t.paths.stateDir).sets.emil.source, "x@1");
+  assert.equal(readState(t.paths.stateDir).sets.emil.source, "x@1.0.0");
+});
+
+test("N3: a dangling symlink of yours in ~/.agents/skills is a collision, not free space", () => {
+  const t = sandbox();
+  t.skill("animate");
+  fs.mkdirSync(t.paths.skillsDir, { recursive: true });
+  fs.symlinkSync(path.join(t.home, "dev", "moved-away"), path.join(t.paths.skillsDir, "animate"));
+  const p = t.run();
+  assert.equal(p.collisions[0]?.kind, "unowned");
+  assert.throws(() => t.commit(p));
+  assert.ok(fs.lstatSync(path.join(t.paths.skillsDir, "animate")).isSymbolicLink());
 });

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { validateEntry } from "./validate.ts";
 
 // The registry is what you want; it is hand-editable and the only file worth
 // keeping under version control. See docs/SPEC.md §6.1.
@@ -120,10 +121,12 @@ export function readRegistry(file: string): Registry {
   if (!fs.existsSync(file)) return { version: 1, sets: {} };
   const reg = JSON.parse(fs.readFileSync(file, "utf8")) as Registry;
   if (reg.version !== 1) throw new Error(`${file}: unsupported registry version ${reg.version}`);
-  // Set ids become folder names under staging and trash.
-  for (const id of Object.keys(reg.sets)) {
-    if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(id)) throw new Error(`${file}: set id "${id}" must use a-z, 0-9 and single hyphens.`);
-  }
+  // Every entry, hand-edited or not: ids become folder names, packages reach
+  // npm pack, paths are joined under the sandbox.
+  const problems = Object.entries(reg.sets).flatMap(([id, set]) =>
+    validateEntry(id, set, Object.keys(LINK_TARGETS)).map((p) => `${id}: ${p}`),
+  );
+  if (problems.length) throw new Error(`${file} has problems:\n  ${problems.join("\n  ")}`);
   return reg;
 }
 

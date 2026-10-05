@@ -66,7 +66,7 @@ function recheck(paths: Paths, p: Plan, owned: Set<string>): void {
   const problems: string[] = [];
   for (const s of p.skills) {
     const dest = path.join(paths.skillsDir, s.name);
-    if (fs.existsSync(dest) && !owned.has(s.name)) problems.push(`${dest} appeared and is not managed by "${p.setId}"`);
+    if (fs.lstatSync(dest, { throwIfNoEntry: false }) && !owned.has(s.name)) problems.push(`${dest} appeared and is not managed by "${p.setId}"`);
     for (const dir of p.links) {
       const at = path.join(dir, s.name);
       if (!p.strays.includes(at) && !isOursOrFree(at, dest)) problems.push(`${at} is not skillport's link`);
@@ -175,10 +175,27 @@ export function acquireLock(paths: Paths): () => void {
     const aside = `${dir}.stale-${process.pid}-${attempt}`;
     try {
       fs.renameSync(dir, aside);
-      fs.rmSync(aside, { recursive: true, force: true });
     } catch {
-      // Someone else took it over first; try again.
+      continue; // someone else moved it first
     }
+    // Between reading the dead pid and the rename, another run may have
+    // taken the lock over and written its own pid. Then what we moved is a
+    // live lock: put it back and let that run keep it.
+    let moved = 0;
+    try {
+      moved = Number(fs.readFileSync(path.join(aside, "pid"), "utf8"));
+    } catch {
+      // empty lock folder: treat as the stale one
+    }
+    if (moved && moved !== pid) {
+      try {
+        fs.renameSync(aside, dir);
+      } catch {
+        fs.rmSync(aside, { recursive: true, force: true });
+      }
+      throw new Error(`Another skillport run (pid ${moved}) is in progress.`);
+    }
+    fs.rmSync(aside, { recursive: true, force: true });
   }
   throw new Error(`Could not take the lock in ${paths.stateDir}.`);
 }

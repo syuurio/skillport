@@ -3,16 +3,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { readSecret } from "./keychain.ts";
+import { isPackageName, isPinnedSpec } from "./validate.ts";
 import type { InstallerSet, ManagedSet, NpmSet } from "./registry.ts";
 
 const INSTALLER_TIMEOUT_MS = 5 * 60 * 1000;
 
-/**
- * Environment for every npm/npx child. npm writes each run's full argv,
- * including `--token=...`, to a debug log; `logs-max=0` turns that off and
- * `logs-dir` keeps any log inside staging, which is deleted after the run.
- * The package cache stays shared so npx does not re-download every time.
- */
 /**
  * The only variables a vendor process gets. Your shell environment often holds
  * API keys and tokens; an installer needs none of them, only a PATH to find
@@ -31,6 +26,12 @@ export function sandboxEnv(home: string, staging: string): Record<string, string
   return { ...env, HOME: home, ...npmEnv(staging) };
 }
 
+/**
+ * Environment for every npm/npx child. npm writes each run's full argv,
+ * including `--token=...`, to a debug log; `logs-max=0` turns that off and
+ * `logs-dir` keeps any log inside staging, which is deleted after the run.
+ * The package cache stays shared so npx does not re-download every time.
+ */
 export function npmEnv(staging: string): Record<string, string> {
   return {
     npm_config_cache: path.join(os.homedir(), ".npm"),
@@ -104,9 +105,11 @@ function runInstaller(
     throw new Error(`Installer for "${id}" exited ${r.status ?? r.signal}.\n${output}`);
   }
   const out = path.join(fakeHome, set.harvest ?? ".claude/skills");
+  // A prompt that read EOF often exits 0 after printing "cancelled",
+  // leaving nothing (or an empty folder) behind.
+  const empty = !fs.existsSync(out) || fs.readdirSync(out).length === 0;
+  if (empty && !opts.interactive && (looksLikeAPrompt(output) || /cancel/i.test(output))) throw new NeedsInteraction(id, output);
   if (!fs.existsSync(out)) {
-    // A prompt that read EOF often exits 0 after printing "cancelled".
-    if (!opts.interactive && (looksLikeAPrompt(output) || /cancel/i.test(output))) throw new NeedsInteraction(id, output);
     throw new Error(`Installer for "${id}" wrote nothing to ${set.harvest ?? ".claude/skills"}.\n${output}`);
   }
   return out;
@@ -134,10 +137,14 @@ export function looksLikeAPrompt(output: string): boolean {
  * wherever `skl` was started cannot redirect the registry.
  */
 export function npmPack(spec: string, dir: string): string {
-  const pack = spawnSync("npm", ["pack", spec, "--silent", "--pack-destination", dir], {
+  // Only `name@1.2.3`: npm would also take git URLs and `owner/repo`, and for
+  // git sources it runs the repo's prepare script. --ignore-scripts and the
+  // minimal environment are the second line.
+  if (!isPinnedSpec(spec)) throw new Error(`"${spec}" is not a registry package pinned to a version.`);
+  const pack = spawnSync("npm", ["pack", spec, "--silent", "--ignore-scripts", "--pack-destination", dir], {
     cwd: dir,
     encoding: "utf8",
-    env: { ...process.env, ...npmEnv(dir) },
+    env: sandboxEnv(os.homedir(), dir),
   });
   if (pack.status !== 0) throw new Error(`npm pack ${spec} failed.\n${pack.stderr}`);
   const tgz = path.join(dir, pack.stdout.trim().split("\n").at(-1)!);
@@ -161,17 +168,18 @@ export function listSkillDirs(root: string): string[] {
 
 /** Package spec pinned in a set, e.g. `@aiforui/install@0.1.4`. */
 export function pinnedPackage(set: ManagedSet): { name: string; version: string } | null {
-  const spec = set.type === "npm" ? set.package : set.command.find((a) => /^@?[^-][^@]*@\d/.test(a));
-  const m = spec ? /^(@?[^@]+)@(.+)$/.exec(spec) : null;
+  const spec = set.type === "npm" ? set.package : set.command.find(isPinnedSpec);
+  const m = spec && isPinnedSpec(spec) ? /^(@?[^@]+)@(.+)$/.exec(spec) : null;
   return m ? { name: m[1], version: m[2] } : null;
 }
 
 export function latestVersion(name: string, staging: string): string | null {
+  if (!isPackageName(name)) return null;
   fs.mkdirSync(staging, { recursive: true, mode: 0o700 });
   const r = spawnSync("npm", ["view", name, "version"], {
     cwd: staging,
     encoding: "utf8",
-    env: { ...process.env, ...npmEnv(staging) },
+    env: sandboxEnv(os.homedir(), staging),
   });
   return r.status === 0 ? r.stdout.trim() : null;
 }

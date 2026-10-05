@@ -255,7 +255,8 @@ function findCollisions(
       const st = fs.lstatSync(at, { throwIfNoEntry: false });
       return Boolean(st?.isDirectory()) && [s.installed, s.hash].includes(treeHash(at));
     };
-    if (fs.existsSync(dest) && !(s.name in prev)) {
+    // lstat: a dangling symlink (your own skill, moved for now) is occupied.
+    if (fs.lstatSync(dest, { throwIfNoEntry: false }) && !(s.name in prev)) {
       if (identical(dest)) adoption.adopted.push(s.name);
       else {
         add("unowned", `an unmanaged folder ${dest}${input.adopt ? " with different content" : ""}`);

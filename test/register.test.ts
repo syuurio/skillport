@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import type { Registry, SkillSet } from "../src/registry.ts";
-import { extractSecret, isPinned, packageIndex, skillRootsIn, splitCommand, suggestUnattendedFlag, validateSet } from "../src/register.ts";
+import { countSkillRoots, isPinned, packageIndex, splitCommand, suggestUnattendedFlag, validateSet } from "../src/register.ts";
+import { extractSecret } from "../src/validate.ts";
 import { localDate } from "../src/transform.ts";
 
 const empty: Registry = { version: 1, sets: {} };
@@ -88,12 +89,12 @@ test("suggestUnattendedFlag finds the documented don't-ask flag", () => {
 });
 
 test("validateSet checks link targets", () => {
-  assert.deepEqual(validateSet("a", { type: "npm", package: "x@1", path: "s", links: ["claude-code"] }, empty), []);
-  assert.deepEqual(validateSet("a", { type: "npm", package: "x@1", path: "s", links: [] }, empty), []);
-  assert.match(validateSet("a", { type: "npm", package: "x@1", path: "s", links: ["grok"] }, empty).join(), /links must be/);
+  assert.deepEqual(validateSet("a", { type: "npm", package: "x@1.0.0", path: "s", links: ["claude-code"] }, empty), []);
+  assert.deepEqual(validateSet("a", { type: "npm", package: "x@1.0.0", path: "s", links: [] }, empty), []);
+  assert.match(validateSet("a", { type: "npm", package: "x@1.0.0", path: "s", links: ["grok"] }, empty).join(), /links must be/);
 });
 
-test("skillRootsIn lists every folder in a package that holds skills, most first", () => {
+test("countSkillRoots lists every folder in a package that holds skills, most first", () => {
   const pkg = fs.mkdtempSync(path.join(os.tmpdir(), "skillport-pkg-"));
   fs.writeFileSync(path.join(pkg, "package.json"), JSON.stringify({ name: "fixture-skills", version: "1.0.0" }));
   const skill = (dir: string) => {
@@ -103,7 +104,7 @@ test("skillRootsIn lists every folder in a package that holds skills, most first
   skill("skills/a");
   skill("skills/b");
   skill("extras/c");
-  assert.deepEqual(skillRootsIn(pkg), [{ root: "skills", count: 2 }, { root: "extras", count: 1 }]);
+  assert.deepEqual(countSkillRoots(pkg), [{ root: "skills", count: 2 }, { root: "extras", count: 1 }]);
 });
 
 test("localDate uses the local calendar day", () => {

@@ -23,7 +23,7 @@ function world() {
     sets: {
       emil: {
         type: "npm",
-        package: "x@1",
+        package: "x@1.0.0",
         path: "s",
         rename: { prototype: { to: "anim-prototype", reason: "collides with set \"matt\"", at: "2026-10-05" } },
       },
@@ -118,7 +118,7 @@ test("stale rules: a hand-made rename with no collision left, and a rule for a s
   const w = world();
   w.registry.sets.emil = {
     type: "npm",
-    package: "x@1",
+    package: "x@1.0.0",
     path: "s",
     rename: {
       animate: { to: "emil-animate", reason: "resolved by hand", at: "2026-10-06" },

@@ -7,12 +7,12 @@ import { hasSecret } from "./keychain.ts";
 import { ask, askSecret, choose, chooseMany, confirm, log, spinner } from "./prompt.ts";
 import { DEFAULT_LINKS, LINK_TARGETS, type InstallerSet, type NpmSet, type Paths, type Registry, type SkillSet, type SkillsCliSet } from "./registry.ts";
 import { listSource } from "./skillscli.ts";
+import { extractSecret, isPackageName, isPinnedSpec, validateEntry } from "./validate.ts";
 
 // `skl register`: add a set to the registry by answering questions, or from
 // `--json` for scripts and agents. Either way the entry is validated before
 // it is written.
 
-const ID_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 /** Split a command line the way a shell would for plain words and quotes. */
 export function splitCommand(line: string): string[] {
@@ -43,66 +43,9 @@ export function splitCommand(line: string): string[] {
 
 const list = (line: string) => line.split(",").map((s) => s.trim()).filter(Boolean);
 
-/** Problems with an entry; empty when it can be written. */
+/** Problems with an entry about to be added; empty when it can be written. */
 export function validateSet(id: string, set: SkillSet, reg: Registry): string[] {
-  const problems: string[] = [];
-  if (!ID_RE.test(id)) problems.push(`set id "${id}" must use a-z, 0-9 and single hyphens`);
-  if (reg.sets[id]) problems.push(`set "${id}" already exists`);
-  const isWords = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === "string");
-  if (set.links !== undefined && !(isWords(set.links) && set.links.every((l) => l in LINK_TARGETS))) {
-    problems.push(`links must be a list of: ${Object.keys(LINK_TARGETS).join(", ")}`);
-  }
-  switch (set.type) {
-    case "installer":
-      if (!isWords(set.command) || set.command.length === 0) problems.push("command must be a non-empty list of words");
-      if (set.unattended !== undefined && !isWords(set.unattended)) problems.push("unattended must be a list of words");
-      if (set.secret !== undefined && set.secret !== "keychain") problems.push('secret must be "keychain"');
-      if (set.secret === "keychain" && !set.command?.some((a) => a.includes("{secret}"))) {
-        problems.push("secret is set but no command word contains {secret}");
-      }
-      if (isWords(set.command) && extractSecret(set.command).secret !== undefined) {
-        problems.push("command contains a literal token; use {secret} and store it with skl secret");
-      }
-      if (set.command?.some((a) => a.includes("{secret}")) && set.secret !== "keychain") {
-        problems.push('command uses {secret} but "secret" is not "keychain"');
-      }
-      break;
-    case "npm":
-      if (!/^(@[^/@]+\/)?[^/@]+@\d[^@]*$/.test(set.package ?? "")) problems.push("package must be pinned, e.g. motion-ai@14.1.0");
-      if (!set.path || set.path.includes("..")) problems.push("path must be a folder inside the package");
-      break;
-    case "skills-cli":
-      if (!set.source || /\s/.test(set.source) || set.source.startsWith("-")) problems.push("source must be one word, as passed to npx skills add");
-      break;
-    default:
-      problems.push('type must be "installer", "npm" or "skills-cli"');
-  }
-  return problems;
-}
-
-const SECRET_FLAG = /^(--?(?:token|api-key|apikey|key|secret|auth))(=)(.+)$/i;
-
-/**
- * Pull a pasted token out of a command: `--token=abc` becomes
- * `--token={secret}` and `abc` is returned for Keychain. Handles the
- * `--token abc` form too.
- */
-export function extractSecret(argv: string[]): { command: string[]; secret?: string } {
-  const command = [...argv];
-  for (let i = 0; i < command.length; i++) {
-    const m = SECRET_FLAG.exec(command[i]);
-    if (m && m[3] !== "{secret}") {
-      command[i] = `${m[1]}={secret}`;
-      return { command, secret: m[3] };
-    }
-    const bare = /^--?(?:token|api-key|apikey|key|secret|auth)$/i.test(command[i]);
-    if (bare && command[i + 1] && !command[i + 1].startsWith("-") && command[i + 1] !== "{secret}") {
-      const secret = command[i + 1];
-      command.splice(i, 2, `${command[i]}={secret}`);
-      return { command, secret };
-    }
-  }
-  return { command };
+  return [...(reg.sets[id] ? [`set "${id}" already exists`] : []), ...validateEntry(id, set, Object.keys(LINK_TARGETS))];
 }
 
 /** Index of the package an `npx`/`pnpm dlx`/`bunx` command runs, or -1. */
@@ -113,30 +56,32 @@ export function packageIndex(argv: string[]): number {
   return argv.findIndex((a, i) => i > at && !a.startsWith("-"));
 }
 
-export function isPinned(spec: string): boolean {
-  return /^(@[^/@]+\/)?[^/@]+@\d/.test(spec);
-}
+export const isPinned = isPinnedSpec;
 
 const bareName = (spec: string) => spec.replace(/^(@?[^@]+)@.*$/, "$1");
 
-const latest = (name: string) => withTempDir("view", (dir) => latestVersion(name, dir));
+const latest = (name: string) => (isPackageName(name) ? withTempDir("view", (dir) => latestVersion(name, dir)) : null);
 
-/** Folders inside an npm package that hold skill folders, most skills first. */
+/** Folders under `pkg` that hold skill folders, most skills first. */
+export function countSkillRoots(pkg: string): { root: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const e of fs.readdirSync(pkg, { withFileTypes: true, recursive: true })) {
+    if (!e.isFile() || e.name !== "SKILL.md") continue;
+    const root = path.relative(pkg, path.dirname(e.parentPath)) || ".";
+    counts.set(root, (counts.get(root) ?? 0) + 1);
+  }
+  return [...counts].sort((a, b) => b[1] - a[1]).map(([root, count]) => ({ root, count }));
+}
+
+/** Skill folders in a pinned registry package; empty for anything else. */
 export function skillRootsIn(spec: string): { root: string; count: number }[] {
+  if (!isPinnedSpec(spec)) return [];
   return withTempDir("pack", (dir) => {
-    let pkg: string;
     try {
-      pkg = npmPack(spec, dir);
+      return countSkillRoots(npmPack(spec, dir));
     } catch {
       return [];
     }
-    const counts = new Map<string, number>();
-    for (const e of fs.readdirSync(pkg, { withFileTypes: true, recursive: true })) {
-      if (!e.isFile() || e.name !== "SKILL.md") continue;
-      const root = path.relative(pkg, path.dirname(e.parentPath)) || ".";
-      counts.set(root, (counts.get(root) ?? 0) + 1);
-    }
-    return [...counts].sort((a, b) => b[1] - a[1]).map(([root, count]) => ({ root, count }));
   });
 }
 

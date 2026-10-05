@@ -77,6 +77,14 @@ function knownAgentExtras(copy: string, ours: string): string[] {
   return inside.length === 1 && inside[0] === "openai.yaml" ? ["agents"] : [];
 }
 
+/** A copy matches ours exactly, or once known per-agent extras are left out. */
+function sameAsOurs(copy: string, ours: string): boolean {
+  if (!fs.existsSync(ours)) return false;
+  const disk = treeHash(ours);
+  const extras = knownAgentExtras(copy, ours);
+  return treeHash(copy) === disk || (extras.length > 0 && treeHashWithout(copy, extras) === disk);
+}
+
 export function diagnose(paths: Paths, reg: Registry, state: State, lock: Record<string, LockEntry>): Finding[] {
   const findings: Finding[] = [];
   const owned = ownedSkills(paths, reg, state, lock, findings);
@@ -103,6 +111,7 @@ export function diagnose(paths: Paths, reg: Registry, state: State, lock: Record
           kind: "missing-link",
           message: `${at} is missing`,
           fix: () => {
+            if (fs.lstatSync(at, { throwIfNoEntry: false })) return;
             fs.mkdirSync(dir, { recursive: true });
             fs.symlinkSync(o.dest, at);
           },
@@ -119,12 +128,14 @@ export function diagnose(paths: Paths, reg: Registry, state: State, lock: Record
       // Same skill if it matches exactly, or once the per-agent files an
       // installer is known to add are left out. Anything else you added makes
       // it a different copy, which --fix never touches.
-      const extras = knownAgentExtras(at, o.dest);
-      const same = disk !== null && (treeHash(at) === disk || (extras.length > 0 && treeHashWithout(at, extras) === disk));
+      const same = disk !== null && sameAsOurs(at, o.dest);
+      // Fixes run after a confirmation prompt: each one checks again that
+      // the thing it acts on is still what was reported.
+      const stillSame = () => fs.lstatSync(at, { throwIfNoEntry: false })?.isDirectory() === true && sameAsOurs(at, o.dest);
       findings.push({
         kind: "stray-copy",
         message: `${at} is a separate copy of ${o.name} (${o.owner})${same ? ", identical" : ", different content: keep or delete by hand"}`,
-        fix: same ? toTrash(at) : undefined,
+        fix: same ? () => (stillSame() ? toTrash(at)() : undefined) : undefined,
       });
     }
   }
@@ -136,8 +147,20 @@ export function diagnose(paths: Paths, reg: Registry, state: State, lock: Record
       if (!e.isSymbolicLink()) continue;
       const at = path.join(dir, e.name);
       const target = path.resolve(dir, fs.readlinkSync(at));
-      if (target.startsWith(paths.skillsDir + path.sep) && !fs.existsSync(target)) {
-        findings.push({ kind: "broken-link", message: `${at} points to missing ${target}`, fix: () => fs.unlinkSync(at) });
+      if (fs.existsSync(target)) continue;
+      if (target.startsWith(paths.skillsDir + path.sep)) {
+        const stillBroken = () => {
+          const st = fs.lstatSync(at, { throwIfNoEntry: false });
+          return Boolean(st?.isSymbolicLink()) && path.resolve(dir, fs.readlinkSync(at)) === target && !fs.existsSync(target);
+        };
+        findings.push({
+          kind: "broken-link",
+          message: `${at} points to missing ${target}`,
+          fix: () => (stillBroken() ? toTrash(at)() : undefined),
+        });
+      } else {
+        // Not ours to judge: report, never touch.
+        findings.push({ kind: "broken-link", message: `${at} points to missing ${target} (not a skillport link; check by hand)` });
       }
     }
   }
