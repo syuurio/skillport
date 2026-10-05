@@ -102,8 +102,25 @@ export function plan(input: PlanInput): Plan {
     .map((v) => v.original);
 
   const nameOf = (original: string) => rename[original]?.to ?? original;
+
+  // Vendor content is untrusted input: a name is a path segment, and a
+  // symlink could pull any file on this machine into a skill every agent
+  // reads. Reject both before anything is written.
+  const safe = selected.filter((v) => {
+    const name = nameOf(v.original);
+    if (!isValidSkillName(name)) {
+      errors.push(`"${name}" is not a valid skill name (a-z, 0-9, single -).`);
+      return false;
+    }
+    const links = symlinksIn(v.dir);
+    if (links.length) {
+      errors.push(`${v.original} contains symlinks, which skillport does not install: ${links.join(", ")}`);
+      return false;
+    }
+    return true;
+  });
   const renames = new Map(
-    selected.filter((v) => nameOf(v.original) !== v.original).map((v) => [v.original, nameOf(v.original)]),
+    safe.filter((v) => nameOf(v.original) !== v.original).map((v) => [v.original, nameOf(v.original)]),
   );
 
   // Stage every selected skill fully transformed; whether it is swapped in is
@@ -113,11 +130,11 @@ export function plan(input: PlanInput): Plan {
   fs.rmSync(out, { recursive: true, force: true });
   const rewrites: Plan["rewrites"] = [];
   const keptAsCode: Plan["keptAsCode"] = [];
-  const skills: SkillPlan[] = selected.map((v) => {
+  const skills: SkillPlan[] = safe.map((v) => {
     const name = nameOf(v.original);
     const hash = treeHash(v.dir);
     const dest = path.join(out, name);
-    fs.cpSync(v.dir, dest, { recursive: true, dereference: true });
+    fs.cpSync(v.dir, dest, { recursive: true });
     if (name !== v.original || v.folder !== v.original) {
       const skillMd = path.join(dest, "SKILL.md");
       fs.writeFileSync(skillMd, setFrontmatterName(fs.readFileSync(skillMd, "utf8"), name));
@@ -152,9 +169,6 @@ export function plan(input: PlanInput): Plan {
   const keep = new Set(skills.map((s) => s.name));
   const removed = Object.keys(prev).filter((n) => !keep.has(n));
 
-  for (const s of skills) {
-    if (!isValidSkillName(s.name)) errors.push(`"${s.name}" is not a valid skill name (a-z, 0-9, single -).`);
-  }
   const collisions = findCollisions(input, skills, prev);
   for (const s of skills) {
     const plugin = input.pluginSkills.get(s.name);
@@ -204,6 +218,15 @@ function findCollisions(
     }
   }
   return found;
+}
+
+/** Paths of symlinks inside a skill, the skill folder itself included. */
+function symlinksIn(dir: string): string[] {
+  if (fs.lstatSync(dir).isSymbolicLink()) return ["."];
+  return fs
+    .readdirSync(dir, { withFileTypes: true, recursive: true })
+    .filter((e) => e.isSymbolicLink())
+    .map((e) => path.relative(dir, path.join(e.parentPath, e.name)));
 }
 
 function markdownFiles(dir: string): string[] {

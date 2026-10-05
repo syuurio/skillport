@@ -200,3 +200,33 @@ test("removeManaged trashes the set and removes only its own links", () => {
   assert.ok(!fs.lstatSync(path.join(t.paths.links[0], "animate"), { throwIfNoEntry: false }));
   assert.equal(readState(t.paths.stateDir).sets.emil, undefined);
 });
+
+test("a name that is not a single safe segment is rejected before anything is written", () => {
+  const t = sandbox();
+  t.skill("evil", "", "../../../pwned");
+  const p = t.run();
+  assert.match(p.errors.join("\n"), /"\.\.\/\.\.\/\.\.\/pwned" is not a valid skill name/);
+  assert.deepEqual(p.skills, []);
+  assert.ok(!fs.existsSync(path.join(t.paths.stateDir, "pwned")));
+  assert.ok(!fs.existsSync(path.join(t.home, ".agents", "pwned")));
+});
+
+test("a rename rule cannot point outside skillsDir either", () => {
+  const t = sandbox({ rename: { animate: { to: "../x", reason: "hand-edited", at: "" } } });
+  t.skill("animate");
+  assert.match(t.run().errors.join("\n"), /"\.\.\/x" is not a valid skill name/);
+});
+
+test("skills containing symlinks are refused, so no outside file is copied in", () => {
+  const t = sandbox();
+  const secret = path.join(t.home, "secret");
+  fs.writeFileSync(secret, "TOP-SECRET");
+  t.skill("leak");
+  fs.symlinkSync(secret, path.join(t.vendor, "leak", "notes.md"));
+  t.skill("animate");
+  const p = t.run();
+  assert.match(p.errors.join("\n"), /leak contains symlinks.*notes\.md/);
+  assert.deepEqual(p.skills.map((s) => s.name), ["animate"]);
+  const staged = fs.readdirSync(path.join(t.paths.stateDir, "staging", "emil", "out"));
+  assert.deepEqual(staged, ["animate"]);
+});
