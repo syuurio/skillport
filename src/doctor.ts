@@ -26,6 +26,8 @@ interface Owned {
   dest: string;
   /** Hash of what should be on disk, when skillport wrote it. */
   installed?: string;
+  /** Hash of the vendor's original, before any rename (skillport sets). */
+  vendor?: string;
   /** Folders that should hold our link to it. */
   links: string[];
   owner: string;
@@ -56,7 +58,7 @@ function ownedSkills(
     const links = set ? linkDirsFor(paths, set) : [];
     for (const [name, s] of Object.entries(st.skills)) {
       if (!valid(name, `state.json (set "${id}")`)) continue;
-      out.push({ name, dest: path.join(paths.skillsDir, name), installed: s.installed, links, owner: `set "${id}"`, setId: id });
+      out.push({ name, dest: path.join(paths.skillsDir, name), installed: s.installed, vendor: s.hash, links, owner: `set "${id}"`, setId: id });
     }
   }
   // npx skills' skills: the skills-cli set that recorded one decides its links.
@@ -70,6 +72,8 @@ function ownedSkills(
       name,
       dest: path.join(paths.skillsDir, name),
       links: set ? linkDirsFor(paths, set) : [],
+      // npx skills records the folder's git tree hash: same algorithm.
+      installed: lock[name].skillFolderHash || undefined,
       owner: `npx skills (${lock[name].source})`,
     });
   }
@@ -92,7 +96,10 @@ export function diagnose(paths: Paths, reg: Registry, state: State, lock: Record
   for (const o of owned) {
     const disk = fs.existsSync(o.dest) ? treeHash(o.dest) : null;
     if (o.installed && disk && disk !== o.installed) {
-      findings.push({ kind: "edited", message: `${o.name} (${o.owner}) was edited on disk since install; skl update replaces it, keeping the edit in trash` });
+      const next = o.setId
+        ? "skl update keeps it until there is something new to write, then replaces it and keeps the edit in trash"
+        : "npx skills update would overwrite it";
+      findings.push({ kind: "edited", message: `${o.name} (${o.owner}) differs from what was installed; ${next}` });
     }
     // Links skillport owns: missing ones can be recreated.
     for (const dir of o.links) {
@@ -119,13 +126,22 @@ export function diagnose(paths: Paths, reg: Registry, state: State, lock: Record
       // Same skill if it matches exactly, or once the per-agent files an
       // installer is known to add are left out. Anything else you added makes
       // it a different copy, which --fix never touches.
-      const same = disk !== null && sameSkill(at, o.dest);
+      // A copy in a link folder this skill is not linked into (a hand
+      // install with --copy, say) may be the only one that agent reads:
+      // report it, never move it.
+      const onlyCopyThere = paths.links.includes(dir) && !o.links.includes(dir);
+      const same = disk !== null && !onlyCopyThere && sameSkill(at, o.dest, [disk, ...(o.vendor ? [o.vendor] : [])]);
       // Fixes run after a confirmation prompt: each one checks again that
       // the thing it acts on is still what was reported.
-      const stillSame = () => fs.lstatSync(at, { throwIfNoEntry: false })?.isDirectory() === true && fs.existsSync(o.dest) && sameSkill(at, o.dest);
+      const stillSame = () =>
+        fs.lstatSync(at, { throwIfNoEntry: false })?.isDirectory() === true &&
+        fs.existsSync(o.dest) &&
+        sameSkill(at, o.dest, [treeHash(o.dest), ...(o.vendor ? [o.vendor] : [])]);
       findings.push({
         kind: "stray-copy",
-        message: `${at} is a separate copy of ${o.name} (${o.owner})${same ? ", identical" : ", different content: keep or delete by hand"}`,
+        message: `${at} is a separate copy of ${o.name} (${o.owner})${
+          same ? ", identical" : onlyCopyThere ? ", and the only copy that agent reads here: keep it, or link it by hand" : ", different content: keep or delete by hand"
+        }`,
         // In a folder that should hold our link (~/.claude/skills), the link
         // replaces the copy in the same step, so the agent never loses it.
         fix: same

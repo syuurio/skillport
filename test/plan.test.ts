@@ -396,3 +396,12 @@ test("kept local edits are reported, not hidden behind up to date", () => {
   const s = t.run().skills[0];
   assert.equal(s.localEdits && !s.write, true);
 });
+
+test("round 5: an edited folder moved away by a new rename is reported as edits replaced", () => {
+  const t = sandbox();
+  t.skill("prototype");
+  t.commit(t.run());
+  fs.appendFileSync(path.join(t.paths.skillsDir, "prototype", "SKILL.md"), "mine\n");
+  (t.registry.sets.emil as ManagedSet).rename = { prototype: { to: "anim-prototype", reason: "x", at: "" } };
+  assert.deepEqual(t.run().removedEdits, ["prototype"]);
+});

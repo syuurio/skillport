@@ -153,3 +153,15 @@ test("fixing a stray copy in ~/.claude/skills puts our link in its place", () =>
   f?.fix?.();
   assert.equal(fs.readlinkSync(path.join(claude, "animate")), w.animate);
 });
+
+test("round 5: npx skills drift is reported, and a copy in a link folder the skill does not use is never moved", () => {
+  const w = world();
+  const lockDir = w.skill(w.paths.skillsDir, "tdd");
+  const lock = { tdd: { source: "a/b", skillPath: "", skillFolderHash: "0".repeat(40), updatedAt: "" } };
+  assert.ok(diagnose(w.paths, w.registry, w.state, lock).some((x) => x.kind === "edited" && x.message.includes("tdd")));
+  // A hand install with --copy: a real folder in ~/.claude/skills, no set records it.
+  fs.cpSync(lockDir, path.join(w.paths.links[0], "tdd"), { recursive: true });
+  const stray = diagnose(w.paths, w.registry, w.state, lock).find((x) => x.kind === "stray-copy" && x.message.includes(".claude"));
+  assert.ok(stray && !stray.fix);
+  assert.match(stray.message, /only copy that agent reads/);
+});

@@ -37,7 +37,8 @@ const NOT_THE_SECRET = new Set(["file", "path", "dir", "method", "type", "mode",
 // Exact license identifiers, for a flag named exactly --license: --license MIT.
 const SPDX_IDS = new Set([
   "mit", "isc", "unlicense", "0bsd", "apache-2.0", "bsd-2-clause", "bsd-3-clause", "mpl-2.0", "epl-2.0", "bsl-1.0", "cc0-1.0",
-  "gpl-2.0", "gpl-3.0", "lgpl-2.1", "lgpl-3.0", "agpl-3.0",
+  "gpl-2.0", "gpl-3.0", "lgpl-2.1", "lgpl-3.0", "agpl-3.0", "mit-0", "bsd-1-clause", "cc-by-4.0", "cc-by-sa-4.0",
+  "zlib", "artistic-2.0", "upl-1.0", "wtfpl", "unlicensed",
 ]);
 const isSpdx = (v: string) => SPDX_IDS.has(v.toLowerCase().replace(/-(only|or-later)$/, ""));
 
@@ -53,7 +54,11 @@ function isSecretFlag(flag: string): boolean {
   return words.some((w) => SECRET_WORDS.has(w));
 }
 // Values that are clearly not a credential: a path or a URL.
-const NOT_A_SECRET = /^(\.{0,2}\/|~\/|https?:\/\/)/;
+// A path has at least one folder separator after its start (/etc/x, ./k.pem,
+// ~/.ssh/id); a lone "/AbC+def==" is a base64 token. A URL is not a secret
+// unless it carries user:password@.
+const looksLikePath = (v: string) => /^(\.{1,2}\/|~\/|\/[^/\s]+\/)/.test(v);
+const looksLikePlainUrl = (v: string) => /^https?:\/\//.test(v) && !/^https?:\/\/[^/@\s]+:[^/@\s]+@/.test(v);
 
 /**
  * Pull a pasted credential out of a command: `--token=abc` becomes
@@ -63,11 +68,17 @@ const NOT_A_SECRET = /^(\.{0,2}\/|~\/|https?:\/\/)/;
 export function extractSecret(argv: string[]): { command: string[]; secret?: string } {
   const command = [...argv];
   for (let i = 0; i < command.length; i++) {
+    // An environment assignment in front of the command: GITHUB_TOKEN=ghp_… npx x
+    const env = /^([A-Za-z_][A-Za-z0-9_]*)=(.+)$/.exec(command[i]);
+    if (env && isSecretFlag(`--${env[1]}`) && env[2] !== "{secret}") {
+      command[i] = `${env[1]}={secret}`;
+      return { command, secret: env[2] };
+    }
     const eq = command[i].indexOf("=");
     const flag = eq > 0 ? command[i].slice(0, eq) : command[i];
     if (!isSecretFlag(flag)) continue;
     const value = eq > 0 ? command[i].slice(eq + 1) : command[i + 1];
-    if (!value || value === "{secret}" || value.startsWith("-") || NOT_A_SECRET.test(value)) continue;
+    if (!value || value === "{secret}" || value.startsWith("-") || looksLikePath(value) || looksLikePlainUrl(value)) continue;
     if (/^--?license$/i.test(flag) && isSpdx(value)) continue;
     if (eq > 0) command[i] = `${flag}={secret}`;
     else command.splice(i, 2, `${flag}={secret}`);
@@ -79,7 +90,8 @@ export function extractSecret(argv: string[]): { command: string[]; secret?: str
 /** `owner/repo` for GitHub sources in any spelling; other sources as given. */
 export function normalizeSource(source: string): string {
   const m = /^(?:https?:\/\/github\.com\/|git@github\.com:)?([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/.exec(source.trim());
-  return m ? m[1] : source.trim();
+  // GitHub owner/repo are case-insensitive.
+  return m ? m[1].toLowerCase() : source.trim();
 }
 
 /** A path inside a folder: relative, no `..` segments. */

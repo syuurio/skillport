@@ -65,12 +65,13 @@ export async function chooseMany<T extends string>(
   message: string,
   options: { value: T; label: string; hint?: string }[],
   initial: T[],
+  required = false,
 ): Promise<T[]> {
   const value = await p.multiselect<T>({
     message,
     options: options as Parameters<typeof p.multiselect<T>>[0]["options"],
     initialValues: initial,
-    required: false,
+    required,
   });
   return settle(value);
 }

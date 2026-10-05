@@ -407,7 +407,8 @@ async function check(ctx: Ctx, ids: string[]): Promise<number> {
           const pin = pinnedPackage(set);
           const latest = pin && latestVersion(pin.name, staging);
           if (!pin || !latest) {
-            console.log(`\n■ ${id}\n  could not look up the latest version of ${set.package}.`);
+            report(fetchSet(ctx, id, set, staging, false)());
+            console.log(`  could not look up the latest version of ${set.package}.`);
             continue;
           }
           if (latest === pin.version) {

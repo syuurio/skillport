@@ -67,6 +67,8 @@ export interface Plan {
   skills: SkillPlan[];
   /** Installed by this set before, gone or deselected now. */
   removed: string[];
+  /** Of those, the ones you had edited (the edits go to trash with them). */
+  removedEdits: string[];
   /** Shipped by the vendor but not in the set's `skills` list. */
   unselected: string[];
   collisions: Collision[];
@@ -205,6 +207,12 @@ export function plan(input: PlanInput): Plan {
   const keep = new Set(skills.map((s) => s.name));
   // State is our own file, but its keys become paths too.
   const removed = Object.keys(prev).filter((n) => !keep.has(n) && isValidSkillName(n));
+  // A removed folder (dropped upstream, or moved by a new rename) that you
+  // had edited: its edits go to trash with it, so say so.
+  const removedEdits = removed.filter((n) => {
+    const at = path.join(paths.skillsDir, n);
+    return fs.existsSync(at) && treeHash(at) !== prev[n].installed;
+  });
   for (const n of Object.keys(prev)) {
     if (!isValidSkillName(n)) errors.push(`state.json has an invalid skill name "${n}"; fix or remove it by hand.`);
   }
@@ -226,7 +234,7 @@ export function plan(input: PlanInput): Plan {
   });
 
   const pin = pinnedPackage(set);
-  return { setId, source: pin ? `${pin.name}@${pin.version}` : undefined, links: input.links, relink, ...adoption, skills, removed, unselected, collisions, warnings, errors, rewrites, keptAsCode, captured };
+  return { setId, removedEdits, source: pin ? `${pin.name}@${pin.version}` : undefined, links: input.links, relink, ...adoption, skills, removed, unselected, collisions, warnings, errors, rewrites, keptAsCode, captured };
 }
 
 /**

@@ -172,7 +172,15 @@ export function acquireLock(paths: Paths): () => void {
       // The owner is between mkdir and writing its pid, or just released.
     }
     if (pid && isAlive(pid)) throw new Error(`Another skillport run (pid ${pid}) is in progress.`);
-    if (!pid) continue;
+    if (!pid) {
+      // Its owner is between mkdir and writing the pid, or died there. Give a
+      // fresh one a moment; an old one is stale.
+      const age = Date.now() - (fs.statSync(dir, { throwIfNoEntry: false })?.mtimeMs ?? Date.now());
+      if (age < 10_000) {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
+        continue;
+      }
+    }
     const aside = `${dir}.stale-${process.pid}-${attempt}`;
     try {
       fs.renameSync(dir, aside);

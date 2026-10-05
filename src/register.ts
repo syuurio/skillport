@@ -197,11 +197,12 @@ export async function askForSet(id: string, paths: Paths): Promise<WizardResult>
     }
     const skills = available.length
       ? await chooseMany(
-          "Which skills? (space to toggle, enter to confirm)",
+          "Which skills? (space to toggle, enter to confirm; pick at least one)",
           available.map((n) => ({ value: n, label: n })),
           [],
+          true,
         )
-      : list(await ask("Skills to install (comma-separated)", { placeholder: "tdd, code-review" }));
+      : list(await ask("Skills to install (comma-separated)", { placeholder: "tdd, code-review", validate: (v) => (v ? undefined : "Name at least one.") }));
     const links = await askLinks();
     return { set: { type, source, ...(skills.length ? { skills } : {}), ...(links ? { links } : {}) } satisfies SkillsCliSet };
   }

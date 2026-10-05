@@ -8,7 +8,7 @@ import { npmPack, realFolderPath } from "../src/acquire.ts";
 import { acquireLock } from "../src/apply.ts";
 import { diagnose } from "../src/doctor.ts";
 import { defaultPaths, readRegistry } from "../src/registry.ts";
-import { extractSecret, isPinnedSpec, validateEntry } from "../src/validate.ts";
+import { extractSecret, isPinnedSpec, normalizeSource, validateEntry } from "../src/validate.ts";
 
 const tmp = (label: string) => fs.mkdtempSync(path.join(os.tmpdir(), `skillport-sec-${label}-`));
 
@@ -165,4 +165,27 @@ test("taking the lock clears lock folders set aside by runs that are gone", () =
   fs.writeFileSync(path.join(paths.stateDir, "lock.d.stale-1-0", "pid"), "999999");
   acquireLock(paths)();
   assert.ok(!fs.existsSync(path.join(paths.stateDir, "lock.d.stale-1-0")));
+});
+
+test("round 5: env assignments, slash-leading tokens and URLs with credentials are caught", () => {
+  assert.deepEqual(extractSecret(["GITHUB_TOKEN=ghp_abc", "npx", "x@1.0.0"]), { command: ["GITHUB_TOKEN={secret}", "npx", "x@1.0.0"], secret: "ghp_abc" });
+  assert.equal(extractSecret(["npx", "x@1.0.0", "--token", "/AbC+def=="]).secret, "/AbC+def==");
+  assert.equal(extractSecret(["npx", "x@1.0.0", "--api-key=https://u:sk_live@h"]).secret, "https://u:sk_live@h");
+  assert.equal(extractSecret(["npx", "x@1.0.0", "--key-path=/etc/ssl/k.pem"]).secret, undefined);
+  assert.equal(extractSecret(["npx", "x@1.0.0", "--token-url=https://auth.example.com"]).secret, undefined);
+  assert.equal(extractSecret(["npx", "x@1.0.0", "--license", "MIT-0"]).secret, undefined);
+  assert.equal(extractSecret(["NODE_ENV=production", "npx", "x@1.0.0"]).secret, undefined);
+});
+
+test("round 5: GitHub sources match regardless of case", () => {
+  assert.equal(normalizeSource("https://github.com/Owner/Repo"), normalizeSource("owner/repo"));
+});
+
+test("round 5: a lock folder without a pid that is not fresh is taken over", () => {
+  const paths = defaultPaths(tmp("nopid"));
+  const dir = path.join(paths.stateDir, "lock.d");
+  fs.mkdirSync(dir, { recursive: true });
+  const old = new Date(Date.now() - 60_000);
+  fs.utimesSync(dir, old, old);
+  acquireLock(paths)();
 });

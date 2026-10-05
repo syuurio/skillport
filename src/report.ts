@@ -72,7 +72,7 @@ export function report(p: Plan): void {
   const same = by("unchanged").length;
   if (same) console.log(`  ${"unchanged".padEnd(11)}${count(same, "skill")}`);
   printItems("edits kept", p.skills.filter((s) => s.localEdits && !s.write).map((s) => s.name));
-  printItems("edits replaced", p.skills.filter((s) => s.localEdits && s.write).map((s) => s.name));
+  printItems("edits replaced", [...p.skills.filter((s) => s.localEdits && s.write).map((s) => s.name), ...p.removedEdits]);
   for (const { file, change } of p.rewrites) {
     console.log(`  rewrite    ${file}:${change.line} \`${change.from}\` → \`${change.to}\``);
   }

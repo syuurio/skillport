@@ -86,6 +86,9 @@
 - **每個 set 只動自己裝的 skill**：lock 只記「從哪個來源來」，不記「是哪個 set 要的」，所以 skillport 在 state 的 `cli` 欄位記下每個 skills-cli set 叫 `npx skills` 裝過哪些 skill。`update` 與 `remove` 只會移除記錄裡、而且這個 set 不再要的 skill；同一來源中不在記錄裡的 skill（你手動裝的、別處裝的）列為「left alone」，不更新、不記錄、不移除，**即使這個 set 也想要同名的 skill**（`npx skills remove` 是真的刪除，不進 trash；收為己有會讓之後的 remove 刪掉它）。要讓 set 接手一個手動裝的 skill：先 `npx skills remove <name> -g`，再 `skl update <set>`。同一個來源只能有一個 skills-cli set（registry 讀取時檢查）。
 - skills-cli 的名稱屬於 `npx skills`，skillport 不改名；撞名時只能在這一邊 `exclude`，或去改另一邊（skillport 管理的 set）的名稱。
 - 執行時用真實 `HOME`（它要寫進 `~/.agents`），但環境變數一樣是最小集合（§9）。
+- skills-cli set 的擁有記錄在 `npx skills` 每一步（remove、add、update）成功後就寫入，所以後面的步驟失敗時，已經加上的 skill 仍算這個 set 的。
+- GitHub 來源比對時不分大小寫（`Owner/Repo` 與 `owner/repo` 是同一個來源）。
+- wizard 選 skills-cli 時至少要勾一個 skill；registry 省略 `skills` 才是「全部」。
 - `links` 對 skills-cli set 也成立：npx skills 只在 add 時建 link，所以 skillport 每次 update 會替已安裝的 skill 補上或移除 Claude Code 的 link，讓它符合設定；不是 skillport 或 npx skills 建的東西不動。`status` 只算這個 set 記錄擁有的 skill，並列出同一來源中「留著不動」的。
 
 ### 5.2 `installer`
@@ -243,7 +246,7 @@ registry 每次讀取都完整驗證（不只 wizard 寫入時），有問題就
   .skill-lock.json         npx skills 的 lock（只讀）
   .skillport/              0700：staging 裡有 installer 的假 HOME，可能留下 token
     state.json
-    lock.d/pid             同一時間只跑一個 skillport；pid 已不存在的 lock 會被接手
+    lock.d/pid             同一時間只跑一個 skillport；pid 已不存在的 lock 會被接手；沒有 pid 檔且超過 10 秒的 lock（擁有者在寫 pid 前就結束）也算過期
     staging/<set>/         比對用，每次結束（含錯誤、Ctrl-C、SIGHUP、SIGTERM）都清空
     trash/<時間>-<set>/    被取代、移除的舊版本
 ```
@@ -276,7 +279,7 @@ matt           skills-cli   4 skills   10/05 更新
 | 類型 | 做法 | 成本 |
 |---|---|---|
 | installer | 執行到暫存區，逐一比對 tree hash | 每個 set 一次完整下載 |
-| npm | `npm view` 比對版本。有新版：下載新版，照「把版本號改成新版」規劃一次，列出會變的 skill 與撞名。已是最新：仍下載目前版本並規劃一次，回報撞名與手動修改（套件內容固定，但其他 set 與資料夾可能變了） | 一次 registry 查詢加一次下載 |
+| npm | `npm view` 比對版本（查不到時照樣規劃目前版本並說明）。有新版：下載新版，照「把版本號改成新版」規劃一次，列出會變的 skill 與撞名。已是最新：仍下載目前版本並規劃一次，回報撞名與手動修改（套件內容固定，但其他 set 與資料夾可能變了） | 一次 registry 查詢加一次下載 |
 | skills-cli | 上游該 skill 目錄的 tree hash（GitHub `git/trees/HEAD:<dir>`）對 `skillFolderHash`；先用 `gh`，沒有登入時改用公開 API（curl，每小時 60 次） | 每個已安裝 skill 一次 API 查詢 |
 
 ```
@@ -294,7 +297,7 @@ skills-cli 有改動的 skill 附上該資料夾在 GitHub 的 commit 歷史連�
 執行 check，列出計畫，確認後套用：
 
 - installer / npm：有改動的 skill 整個目錄替換（舊目錄移到 trash，新目錄 rename 進來），不做逐檔覆寫，所以 vendor 刪掉的檔案不會殘留。
-- 你手動改過的 skill：只要 skillport 要寫的內容沒變（上游沒改、改名規則沒變），就保留你的修改，回報「edits kept」；有新內容要寫時才替換並回報「edits replaced」，你的版本留在 trash。
+- 你手動改過的 skill：只要 skillport 要寫的內容沒變（上游沒改、改名規則沒變），就保留你的修改，回報「edits kept」；有新內容要寫時才替換並回報「edits replaced」，你的版本留在 trash。被新的改名規則搬走、或上游已不再提供而移除的資料夾，若有你的修改，同樣列在「edits replaced」。
 - skills-cli：呼叫 `npx skills update`。
 - installer 的新版本只提示，不自動升級；要升級就改 registry 裡的版本號。
 
@@ -324,7 +327,7 @@ skills-cli 有改動的 skill 附上該資料夾在 GitHub 的 commit 歷史連�
 | 斷掉的 symlink | `~/.claude/skills/x` 指向不存在的目錄 | 指向 `~/.agents/skills` 的：移到 trash；指向別處的：只報告（不是 skillport 的） |
 | 缺少的 symlink | 受管 skill 在 `~/.claude/skills` 沒有 link | 補建 |
 | 撞名 | 兩個負責者想要同一個目錄名 | 只報告 |
-| 偏離 | 受管 skill 的 tree hash 和記錄不同（有人手動改過） | 只報告 |
+| 偏離 | skillport 管理的 skill 和寫入時的 tree hash 不同；`npx skills` 的 skill 和它 lock 裡的 `skillFolderHash` 不同 | 只報告，並說明下一次更新會怎樣 |
 | 無主目錄 | `~/.agents/skills` 下有目錄不屬於任何負責者 | 只報告（用 `skl adopt` 或撞名提示裡的「收進來」） |
 | 不合法的名稱 | state 或 lock 裡有 `../x` 這類名稱 | 只報告，且絕不拿來組路徑 |
 | 不再需要的改名規則 | 原名已經沒有別的佔用者（其他 set、`npx skills`、`~/.agents/skills` 的資料夾、不是 skillport 建的 link 都算佔用）；或 vendor 已不再提供原本那個 skill。在 installer 裡自己選的改名是偏好，不算 | 只報告（`status` 也會列出），附上 `skl resolve <set> <skill> --undo` |
@@ -333,6 +336,8 @@ skills-cli 有改動的 skill 附上該資料夾在 GitHub 的 commit 歷史連�
 
 「散落副本」的判定：目錄名稱等於某個受管 skill（skillport 或 `npx skills` 管理），且位於已知 agent 目錄（`~/.claude/skills`、`~/.codex/skills`、`~/.cursor/skills`、`~/.config/opencode/skills`、`~/.gemini/skills`），且不是指向 `~/.agents/skills` 的 symlink。內容和受管版本相同，或只多了 installer 為 Codex 加的 `agents/openai.yaml`（`agents/` 裡只有這一個檔案，且受管版本沒有 `agents/`）時，算「相同」；你自己加的任何檔案都讓它算「不同」，`--fix` 會移到 trash；內容不同只報告。
 
+link 資料夾（`~/.claude/skills`）裡的副本，如果它所屬的 skill 沒有連結到那裡（例如你用 `npx skills --copy` 手動裝的），可能是該 agent 唯一讀得到的那份：只報告，`--fix` 不動。
+
 「無主目錄」只算 `~/.agents/skills` 下的真實資料夾；symlink 是你刻意連進來的（例如 `~/dev` 下自己寫的 skill），不報告。`status` 會顯示 doctor 找到的問題數。
 
 ### 7.9 `skl adopt <set> [-y] [--dry-run]`
@@ -340,7 +345,7 @@ skills-cli 有改動的 skill 附上該資料夾在 GitHub 的 commit 歷史連�
 把 vendor 已經裝好的副本收進一個 installer 或 npm set：
 
 1. 照常把 set 取到暫存區並規劃。
-2. `~/.agents/skills` 下的無主資料夾，內容和要安裝的版本相同 → 直接收為受管，不搬動；不同 → 仍是撞名，照 §8 處理。
+2. `~/.agents/skills` 下的無主資料夾，內容和要安裝的版本完全相同 → 直接收為受管，不搬動；只多了 installer 為 Codex 加的 `agents/openai.yaml` → 收為受管，但換成 skillport 的副本（原本那份進 trash）；其他不同 → 仍是撞名，照 §8 處理。
 3. agent 目錄（含 `~/.claude/skills` 的真實資料夾）裡相同的副本 → 套用時移到 trash，讓 symlink 取代。
 4. 確認後套用，寫入 state。
 
@@ -436,7 +441,8 @@ skills-cli set 不需要 adopt：`npx skills` 自己決定要不要覆蓋，skil
 - `register` 執行 installer 的 `--help` 前會先徵求同意，因為那就是在執行 vendor 的程式碼。
 - 所有 npm/npx 子行程設 `logs-max=0`、`logs-dir` 指向 staging：npm 會把完整 argv（含 `--token=`）寫進 debug log（已驗證並修正）。npm 指令的 cwd 設在 staging，專案層的 `.npmrc` 無法改 registry。
 - npm 的 `path` 與 installer 的 `harvest` 從根目錄一路往下，每一層都必須是真的資料夾：`package/skills -> /某個本機資料夾` 這種 symlink 會被拒絕（已驗證：macOS 的 tar 會保留封包裡的 symlink）。
-- 憑證旗標以「字」比對：旗標名稱拆成字（以 `-`、`_` 與 camelCase 分隔）後，含 token、key、apikey、secret、auth、password、passwd、credential(s)、license、pat 其中之一就算；`--author`、`--keyboard`、`--no-*` 不算；最後一個字是 file、path、dir、method、type、mode、url、host、server、endpoint、name 時不算（`--key-file` 不算，`--host-token` 算）；值是路徑或網址不算；只有名稱恰為 `--license`、值為標準授權代號（MIT、Apache-2.0…）時不算。
+- 指令前面的環境變數設定（`GITHUB_TOKEN=ghp_… npx …`）也用同一套字詞規則判斷，是憑證就抽出。
+- 憑證旗標以「字」比對：旗標名稱拆成字（以 `-`、`_` 與 camelCase 分隔）後，含 token、key、apikey、secret、auth、password、passwd、credential(s)、license、pat 其中之一就算；`--author`、`--keyboard`、`--no-*` 不算；最後一個字是 file、path、dir、method、type、mode、url、host、server、endpoint、name 時不算（`--key-file` 不算，`--host-token` 算）；值是路徑（`./`、`../`、`~/`，或 `/` 開頭且還有下一層的絕對路徑）不算；值是網址不算，除非網址裡有 `帳號:密碼@`；只有名稱恰為 `--license`、值為標準授權代號（MIT、Apache-2.0…）時不算。
 - vendor 內容只接受一般檔案與目錄；symlink、FIFO 等在讀取前就拒絕（symlink 會把本機任意檔案帶進每個 agent 都讀的 skill，FIFO 會讓讀取永久卡住）。名稱在寫入任何檔案前驗證。
 
 ## 10. 可還原性
