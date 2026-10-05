@@ -83,8 +83,15 @@ export function apply(
 ): string {
   if (p.errors.length || p.collisions.length) throw new Error("Refusing to apply a plan with unresolved problems.");
   const prev = state.sets[p.set]?.skills ?? {};
-  recheck(paths, p, new Set(Object.keys(prev)));
   const trash = trashDir(paths, p.set);
+  // Adopting: identical copies scattered in agent folders go to the trash
+  // first, so the links can take their place.
+  for (const at of p.strays) {
+    const to = path.join(trash, "strays", path.relative(paths.home, at));
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    fs.renameSync(at, to);
+  }
+  recheck(paths, p, new Set([...Object.keys(prev), ...p.adopted]));
   fs.mkdirSync(paths.skillsDir, { recursive: true });
 
   for (const name of p.removed) {

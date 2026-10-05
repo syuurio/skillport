@@ -306,3 +306,36 @@ test("links follow the set: none means no symlink, and dropping a target removes
   assert.equal(t.run({ links: [] }).relink, false);
   assert.ok(fs.existsSync(path.join(t.paths.skillsDir, "animate", "SKILL.md")));
 });
+
+test("adopt takes over identical copies and cleans up the scattered ones", () => {
+  const t = sandbox();
+  t.skill("animate", "same body");
+  // What a vendor installer left behind: one copy in ~/.agents/skills, one in
+  // ~/.codex/skills, a real folder (not a link) in ~/.claude/skills.
+  const copy = (dir: string) => fs.cpSync(path.join(t.vendor, "animate"), path.join(dir, "animate"), { recursive: true });
+  const codex = path.join(t.home, ".codex", "skills");
+  copy(t.paths.skillsDir);
+  copy(codex);
+  copy(t.paths.links[0]);
+
+  const plain = t.run();
+  assert.equal(plain.collisions.length, 1);
+  const p = t.run({ adopt: true });
+  assert.deepEqual(p.collisions, []);
+  assert.deepEqual(p.adopted, ["animate"]);
+  assert.deepEqual(p.strays.sort(), [path.join(t.paths.links[0], "animate"), path.join(codex, "animate")].sort());
+  t.commit(p);
+  assert.ok(fs.lstatSync(path.join(t.paths.links[0], "animate")).isSymbolicLink());
+  assert.ok(!fs.existsSync(path.join(codex, "animate")));
+  assert.ok(readState(t.paths.stateDir).sets.emil.skills.animate);
+});
+
+test("adopt still refuses a copy whose content differs", () => {
+  const t = sandbox();
+  t.skill("animate");
+  fs.mkdirSync(path.join(t.paths.skillsDir, "animate"), { recursive: true });
+  fs.writeFileSync(path.join(t.paths.skillsDir, "animate", "SKILL.md"), "someone else's");
+  const p = t.run({ adopt: true });
+  assert.match(p.collisions[0].holder, /different content/);
+  assert.deepEqual(p.adopted, []);
+});

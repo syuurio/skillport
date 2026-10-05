@@ -321,16 +321,20 @@ matt           有改動 tdd, code-review · 上游新增 implement-spec, pr（�
 | 偏離 | 受管 skill 的 tree hash 和記錄不同（有人手動改過） | 只報告 |
 | 無主目錄 | `~/.agents/skills` 下有目錄不屬於任何負責者 | 只報告 |
 
-「散落副本」的判定：目錄名稱等於某個受管 skill，且位於已知 agent 目錄（`~/.claude/skills`、`~/.codex/skills`、`~/.cursor/skills`、`~/.config/opencode/skills`、`~/.gemini/skills`），且不是指向 `~/.agents/skills` 的 symlink。
+「散落副本」的判定：目錄名稱等於某個受管 skill（skillport 或 `npx skills` 管理），且位於已知 agent 目錄（`~/.claude/skills`、`~/.codex/skills`、`~/.cursor/skills`、`~/.config/opencode/skills`、`~/.gemini/skills`），且不是指向 `~/.agents/skills` 的 symlink。內容和受管版本相同，或只多了 installer 為該 agent 加的檔案（例如 Codex 的 `agents/openai.yaml`）時，算「相同」，`--fix` 會移到 trash；內容不同只報告。
 
-### 7.9 `skl adopt`
+「無主目錄」只算 `~/.agents/skills` 下的真實資料夾；symlink 是你刻意連進來的（例如 `~/dev` 下自己寫的 skill），不報告。`status` 會顯示 doctor 找到的問題數。
 
-第一次使用時，把現有散落的安裝收進來：
+### 7.9 `skl adopt <set> [-y] [--dry-run]`
 
-1. 掃描 §7.8 列出的 agent 目錄，依 registry 的 set 比對名稱。
-2. 對每個 set 執行一次安裝到暫存區，用 tree hash 判斷現有副本是不是同一份內容。
-3. 列出計畫：保留哪份、哪些移到 trash、哪些內容不同需要你決定。
+把 vendor 已經裝好的副本收進一個 installer 或 npm set：
+
+1. 照常把 set 取到暫存區並規劃。
+2. `~/.agents/skills` 下的無主資料夾，內容和要安裝的版本相同 → 直接收為受管，不搬動；不同 → 仍是撞名，照 §8 處理。
+3. agent 目錄（含 `~/.claude/skills` 的真實資料夾）裡相同的副本 → 套用時移到 trash，讓 symlink 取代。
 4. 確認後套用，寫入 state。
+
+skills-cli set 不需要 adopt：`npx skills` 自己決定要不要覆蓋，skillport 在委派前已經做撞名檢查（§5.1）。
 
 ### 7.11 `skl register [set] [--json '<entry>']`
 
@@ -474,7 +478,7 @@ matt           有改動 tdd, code-review · 上游新增 implement-spec, pr（�
 | M0 | 驗證 §12 待驗證項目 | 1 小時 · **完成**（Grok 待 CLI 升級；Cursor/OpenCode 待實際安裝後檢查） |
 | M1 | registry / state、installer 與 npm 類型、`status`、`check`、`update`、`diff`、`secret`、`remove`、撞名處理與 `resolve` | 半天多 · **完成**（互動模式需真實終端機，尚未實測） |
 | M2 | skills-cli 類型（委派 + GitHub hash 檢查） | 2–3 小時 · **完成** |
-| M3 | `doctor`、`adopt`，完成 §11 遷移 | 2–3 小時 |
+| M3 | `doctor`、`adopt`，完成 §11 遷移 | 2–3 小時 · **完成**（實際 `--fix` 由你執行） |
 
 每個階段結束都附測試，且先在 scratchpad 的假目錄跑過才碰真實的 `~/.agents`。
 

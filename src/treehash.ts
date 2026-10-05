@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 // Git tree hash of a directory, computed in-process. It is the same value
@@ -44,4 +45,22 @@ function treeOf(dir: string): Buffer {
 
 export function treeHash(dir: string): string {
   return treeOf(dir).toString("hex");
+}
+
+/**
+ * Tree hash with some top-level entries left out. For telling whether a copy
+ * a vendor left in an agent folder is the same skill: installers add per-agent
+ * files (Emil's add `agents/openai.yaml` for Codex) that skillport's copy does
+ * not have.
+ */
+export function treeHashWithout(dir: string, skip: string[]): string {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "skillport-th-"));
+  try {
+    for (const e of fs.readdirSync(dir)) {
+      if (!skip.includes(e)) fs.cpSync(path.join(dir, e), path.join(tmp, e), { recursive: true, verbatimSymlinks: true });
+    }
+    return treeHash(tmp);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 }

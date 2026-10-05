@@ -43,6 +43,10 @@ export interface Plan {
   links: string[];
   /** Some link is missing, or one of ours sits in a folder no longer chosen. */
   relink: boolean;
+  /** Adopt: unmanaged folders in skillsDir that match and become ours as they are. */
+  adopted: string[];
+  /** Adopt: identical copies in agent folders, moved to trash on apply. */
+  strays: string[];
   skills: SkillPlan[];
   /** Installed by this set before, gone or deselected now. */
   removed: string[];
@@ -71,6 +75,8 @@ export interface PlanInput {
   links: string[];
   /** The installer ran interactively; read selection and renames from it. */
   captured: boolean;
+  /** Take over identical copies already on disk instead of calling them collisions. */
+  adopt?: boolean;
   today?: string;
 }
 
@@ -180,7 +186,8 @@ export function plan(input: PlanInput): Plan {
     if (!isValidSkillName(n)) errors.push(`state.json has an invalid skill name "${n}"; fix or remove it by hand.`);
   }
 
-  const collisions = findCollisions(input, skills, prev);
+  const adoption = { adopted: [] as string[], strays: [] as string[] };
+  const collisions = findCollisions(input, skills, prev, adoption);
   for (const s of skills) {
     const plugin = input.pluginSkills.get(s.name);
     if (plugin) warnings.push(`"${s.name}" also exists as plugin skill ${plugin}:${s.name} (namespaced, no conflict).`);
@@ -195,13 +202,14 @@ export function plan(input: PlanInput): Plan {
     });
   });
 
-  return { set: setId, links: input.links, relink, skills, removed, unselected, collisions, warnings, errors, rewrites, keptAsCode, captured };
+  return { set: setId, links: input.links, relink, ...adoption, skills, removed, unselected, collisions, warnings, errors, rewrites, keptAsCode, captured };
 }
 
 function findCollisions(
   input: PlanInput,
   skills: SkillPlan[],
   prev: Record<string, unknown>,
+  adoption: { adopted: string[]; strays: string[] },
 ): Collision[] {
   const { paths, setId, state, lock } = input;
   const found: Collision[] = [];
@@ -224,12 +232,29 @@ function findCollisions(
       continue;
     }
     const dest = path.join(paths.skillsDir, s.name);
+    // Adopting: a copy identical to what skillport would install is the same
+    // skill a vendor already put there, not a conflict.
+    const identical = (at: string) => {
+      if (!input.adopt) return false;
+      const st = fs.lstatSync(at, { throwIfNoEntry: false });
+      return Boolean(st?.isDirectory()) && [s.installed, s.hash].includes(treeHash(at));
+    };
     if (fs.existsSync(dest) && !(s.name in prev)) {
-      add(`an unmanaged folder ${dest}`);
-      continue;
+      if (identical(dest)) adoption.adopted.push(s.name);
+      else {
+        add(`an unmanaged folder ${dest}${input.adopt ? " with different content" : ""}`);
+        continue;
+      }
     }
-    const foreign = input.links.map((d) => path.join(d, s.name)).find((at) => !isOursOrFree(at, dest));
-    if (foreign) add(`${foreign}, which skillport did not create`);
+    for (const dir of new Set([...input.links, ...(input.adopt ? paths.agentDirs : [])])) {
+      const at = path.join(dir, s.name);
+      if (isOursOrFree(at, dest)) continue;
+      if (identical(at)) adoption.strays.push(at);
+      else if (input.links.includes(dir)) {
+        add(`${at}, which skillport did not create`);
+        break;
+      }
+    }
   }
   return found;
 }

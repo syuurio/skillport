@@ -4,6 +4,7 @@ import path from "node:path";
 import { acquire, latestVersion, pinnedPackage } from "./acquire.ts";
 import { acquireLock, apply, removeManaged } from "./apply.ts";
 import { storeSecret, storeSecretValue } from "./keychain.ts";
+import { type Kind, diagnose } from "./doctor.ts";
 import { type CliPlan, applyCli, listSource, lockedFor, planCli, upstreamChanges } from "./skillscli.ts";
 import { type Collision, type Plan, plan } from "./plan.ts";
 import { pluginSkillNames } from "./plugins.ts";
@@ -31,6 +32,8 @@ const USAGE = `skillport — one place for skills that vendor installers scatter
 
   skl register [set] [--json '<entry>']   Add a source (wizard, or JSON for scripts)
   skl status                       What is installed, from where (offline)
+  skl doctor [--fix]               Find stray copies, broken or missing links, drift; fix the safe ones
+  skl adopt <set> [-y]             Take over copies a vendor already installed, when they match
   skl check [set...]               Is anything new upstream? Changes nothing
   skl add <set> [-y]               First install; installers run interactively unless -y
   skl update [set...] [-i] [-y]    Apply upstream changes; -i re-runs the installer interactively
@@ -46,6 +49,8 @@ interface Flags {
   yes: boolean;
   interactive: boolean;
   dryRun: boolean;
+  /** Take over identical copies already on disk (skl adopt). */
+  adopt?: boolean;
 }
 
 interface Ctx {
@@ -68,12 +73,14 @@ async function main(argv: string[]): Promise<number> {
     registry: readRegistry(paths.registry),
     saveRegistry: (r) => writeRegistry(paths.registry, r),
   };
-  if (["add", "update", "check", "diff", "remove"].includes(cmd)) cleanups.add(acquireLock(paths));
+  if (["add", "update", "check", "diff", "remove", "adopt"].includes(cmd) || (cmd === "doctor" && rest.includes("--fix"))) cleanups.add(acquireLock(paths));
   switch (cmd) {
     case "register":
       return register(ctx, args[0], rest);
     case "status":
       return status(ctx);
+    case "doctor":
+      return doctor(ctx, rest.includes("--fix"));
     case "check":
       return check(ctx, args);
     case "add":
@@ -84,6 +91,11 @@ async function main(argv: string[]): Promise<number> {
       let failed = 0;
       for (const id of ids) failed += await sync(ctx, id, flags);
       return failed ? 1 : 0;
+    }
+    case "adopt": {
+      const set = getSet(ctx.registry, args[0]);
+      if (!isManaged(set)) throw new Error(`"${args[0]}" is installed by npx skills, which already took over what it found; nothing to adopt.`);
+      return sync(ctx, args[0], { ...flags, adopt: true });
     }
     case "diff":
       return diff(ctx, args[0], args[1]);
@@ -178,7 +190,7 @@ function dropStaging(staging: string): void {
 }
 
 /** Fetch a set into staging; `replan` reads `ctx.registry` each time. */
-function fetchSet(ctx: Ctx, id: string, set: ManagedSet, staging: string, interactive: boolean) {
+function fetchSet(ctx: Ctx, id: string, set: ManagedSet, staging: string, interactive: boolean, adopt = false) {
   const vendorDir = acquire(id, set, staging, { interactive });
   return () =>
     plan({
@@ -192,6 +204,7 @@ function fetchSet(ctx: Ctx, id: string, set: ManagedSet, staging: string, intera
       staging,
       links: linkDirsFor(ctx.paths, getSet(ctx.registry, id)),
       captured: interactive,
+      adopt,
     });
 }
 
@@ -219,7 +232,7 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
   let resolved = false;
   const staging = stagingFor(ctx, id);
   try {
-    const replan = fetchSet(draft, id, set, staging, interactive);
+    const replan = fetchSet(draft, id, set, staging, interactive, flags.adopt);
     let p = replan();
     while (p.collisions.length) {
       if (flags.yes || !isInteractive()) {
@@ -235,7 +248,9 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
     const hint = versionHint(set, staging);
     if (hint) console.log(`  ${hint}`);
     if (p.errors.length) return 1;
-    const work = p.skills.some((s) => s.write) || p.removed.length > 0 || p.relink || p.captured !== undefined || resolved;
+    const work =
+      p.skills.some((s) => s.write) || p.removed.length > 0 || p.relink || p.adopted.length > 0 || p.strays.length > 0 ||
+      p.captured !== undefined || resolved;
     if (!work) {
       console.log("  up to date.");
       return 0;
@@ -429,6 +444,8 @@ function report(p: Plan): void {
   line("changed", by("changed"));
   line("removed", p.removed);
   line("unselected", p.unselected);
+  line("adopt", p.adopted);
+  line("clean up", p.strays.map((at) => at.replace(`${process.env.HOME}/`, "~/")));
   const same = by("unchanged").length;
   if (same) console.log(`  ${"unchanged".padEnd(11)}${count(same, "skill")}`);
   line("local edits", p.skills.filter((s) => s.localEdits && s.write).map((s) => s.name));
@@ -524,9 +541,35 @@ function status(ctx: Ctx): number {
     }
     if (set.exclude?.length) console.log(`${pad}  excluded: ${set.exclude.join(", ")}`);
   }
-  if (!Object.keys(ctx.registry.sets).length) console.log(`No sets registered. Edit ${ctx.paths.registry}.`);
-  if (problems) console.log(`\n${count(problems, "problem")} found.`);
+  if (!Object.keys(ctx.registry.sets).length) console.log(`No sets registered. Run: skl register`);
+  const more = diagnose(ctx.paths, ctx.registry, state, lock).filter((f) => f.kind !== "edited").length;
+  if (problems || more) console.log(`\n${count(problems + more, "problem")} found. Details: skl doctor`);
   return 0;
+}
+
+function doctor(ctx: Ctx, fix: boolean): number {
+  const findings = diagnose(ctx.paths, ctx.registry, readState(ctx.paths.stateDir), readSkillLock(ctx.paths.skillLock));
+  if (!findings.length) {
+    console.log("No problems found.");
+    return 0;
+  }
+  const order: Kind[] = ["collision", "stray-copy", "broken-link", "missing-link", "edited", "unowned", "stale-rule"];
+  for (const kind of order) {
+    const of = findings.filter((f) => f.kind === kind);
+    if (!of.length) continue;
+    console.log(`\n${kind}`);
+    for (const f of of) {
+      if (fix && f.fix) {
+        f.fix();
+        console.log(`  ✓ fixed: ${f.message}`);
+      } else {
+        console.log(`  ${f.fix ? "•" : "!"} ${f.message}`);
+      }
+    }
+  }
+  const fixable = findings.filter((f) => f.fix).length;
+  if (!fix && fixable) console.log(`\n${count(fixable, "problem")} can be fixed safely: skl doctor --fix (removed copies go to trash)`);
+  return findings.some((f) => !f.fix) ? 1 : 0;
 }
 
 function diff(ctx: Ctx, id: string | undefined, skill: string | undefined): number {
