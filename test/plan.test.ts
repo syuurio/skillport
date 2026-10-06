@@ -106,12 +106,12 @@ test("skills dropped upstream are trashed and unlinked", () => {
   assert.ok(!fs.lstatSync(path.join(t.paths.links[0], "gesture-ui"), { throwIfNoEntry: false }));
 });
 
-test("skills allowlist and exclude filter; unselected ones are reported", () => {
-  const t = sandbox({ skills: ["animate", "gesture-ui"], exclude: ["gesture-ui"] });
+test("the selection and exclude filter; unselected ones are reported", () => {
+  const t = sandbox({ exclude: ["gesture-ui"] });
   t.skill("animate");
   t.skill("gesture-ui");
   t.skill("css-animations");
-  const p = t.run();
+  const p = t.run({ want: ["animate", "gesture-ui"] });
   assert.deepEqual(p.skills.map((s) => s.name), ["animate"]);
   assert.deepEqual(p.unselected, ["css-animations"]);
 });
@@ -166,19 +166,18 @@ test("rename: folder, frontmatter and references move; upstream stays unchanged"
   assert.equal(t.run().skills.filter((s) => s.write).length, 0);
 });
 
-test("interactive capture records the selection and in-installer renames", () => {
+test("interactive capture records in-installer renames; the registry gets no skills list", () => {
   const t = sandbox();
   // The installer renamed the folder but left `name:` alone.
   t.skill("anim-prototype", "", "prototype");
   t.skill("animate");
   const p = t.run({ fromInteractiveRun: true });
-  assert.deepEqual(p.captured?.skills, ["animate", "prototype"]);
   assert.deepEqual(p.captured?.rename.prototype, { to: "anim-prototype", reason: "renamed in installer", at: "2026-10-05" });
   let saved: Registry | undefined;
   apply(t.paths, p, readState(t.paths.stateDir), t.registry, (r) => (saved = r));
   assert.match(t.read(t.paths.skillsDir, "anim-prototype", "SKILL.md"), /^---\nname: anim-prototype\n/);
   const set = saved!.sets.emil as ManagedSet;
-  assert.deepEqual(set.skills, ["animate", "prototype"]);
+  assert.equal((set as { skills?: unknown }).skills, undefined);
   assert.equal(set.rename?.prototype.to, "anim-prototype");
 });
 

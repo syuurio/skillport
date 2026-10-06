@@ -9,7 +9,7 @@ import { type CliPlan, applyCli, applyCliLinks, cliLinkChanges, removeCliSkills,
 import { type Plan, plan } from "./plan.ts";
 import { pluginSkillNames } from "./plugins.ts";
 import { askForSet, validateSet } from "./register.ts";
-import { Cancelled, ask, askSecret, chooseMany, confirm, intro, isInteractive, log, note, outro } from "./prompt.ts";
+import { Cancelled, ask, askSecret, confirm, intro, isInteractive, log, note, outro } from "./prompt.ts";
 import {
   type ManagedSet,
   type Registry,
@@ -32,6 +32,7 @@ import { type Ctx, type Flags, confirmChange, confirmPlan, draftOf, requireConfi
 import { count, home, printItems, printResolveHints, report, reportCli, summarize } from "./report.ts";
 import { isValidSkillName, withPrefix } from "./transform.ts";
 import { treeHash } from "./treehash.ts";
+import { select } from "./select.ts";
 
 const USAGE = `skillport — one place for skills that vendor installers scatter
 
@@ -41,7 +42,8 @@ const USAGE = `skillport — one place for skills that vendor installers scatter
   skl adopt <set> [-y]             Take over copies a vendor already installed, when they match
   skl check [set...]               Is anything new upstream? Changes nothing
   skl add <set> [-y]               First install; asks which skills (or runs the installer) unless -y
-  skl update [set...] [-i] [-y]    Apply upstream changes; -i re-runs the installer (or the skill pick) interactively
+  skl update [set...] [-i] [--pick] [-y]   Apply upstream changes; new skills are offered, never auto-installed
+                                   -i re-runs the installer interactively; --pick chooses skills again
   skl diff <set> <skill>           What changed in one skill
   skl remove <set>                 Move a set's skills to trash and unregister it
   skl resolve <set> <skill> (--prefix [p] | --rename <name> | --exclude | --undo)
@@ -56,6 +58,7 @@ async function main(argv: string[]): Promise<number> {
   const flags: Flags = {
     yes: rest.includes("-y") || rest.includes("--yes"),
     interactive: rest.includes("-i"),
+    pick: rest.includes("--pick"),
     dryRun: rest.includes("--dry-run"),
   };
   const args = rest.filter((a) => !a.startsWith("-"));
@@ -198,7 +201,15 @@ function dropStaging(staging: string): void {
 }
 
 /** Fetch a set into staging; `replan` reads `ctx.registry` each time. */
-function fetchSet(ctx: Ctx, id: string, set: ManagedSet, staging: string, interactive: boolean, adopt: boolean | string[] = false) {
+function fetchSet(
+  ctx: Ctx,
+  id: string,
+  set: ManagedSet,
+  staging: string,
+  interactive: boolean,
+  adopt: boolean | string[] = false,
+  sel: { want?: string[]; declined?: string[] } = {},
+) {
   const vendorDir = acquire(id, set, staging, { interactive });
   return (adoptNow = adopt) =>
     plan({
@@ -213,6 +224,8 @@ function fetchSet(ctx: Ctx, id: string, set: ManagedSet, staging: string, intera
       links: linkDirsFor(ctx.paths, getSet(ctx.registry, id)),
       fromInteractiveRun: interactive,
       adopt: adoptNow,
+      want: sel.want,
+      declined: sel.declined,
     });
 }
 
@@ -250,7 +263,27 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
   try {
     // `skl adopt` takes over everything; "take over" in the prompt, one name.
     let adopt: boolean | string[] = flags.adopt ? true : [];
-    const replan = fetchSet(draft, id, set, staging, interactive, adopt);
+    const sel: { want?: string[]; declined?: string[] } = {};
+    const replan = fetchSet(draft, id, set, staging, interactive, adopt, sel);
+    const prev = readState(ctx.paths.stateDir).sets[id];
+    let pending: string[] = [];
+    // After an interactive installer run, its output is the selection.
+    if (!interactive) {
+      const installed = Object.entries(prev?.skills ?? {}).map(([n, s]) => s.original ?? n);
+      const choice = await select({
+        setId: id,
+        available: replan(adopt).skills.map((s) => s.original),
+        exclude: [],
+        installed: installed.length ? installed : null,
+        declined: prev?.declined ?? [],
+        flags,
+        pick: Boolean(flags.pick),
+      });
+      sel.want = choice.want;
+      sel.declined = choice.declined;
+      pending = choice.pending;
+    }
+    const declinedChanged = sel.declined !== undefined && [...sel.declined].sort().join() !== [...(prev?.declined ?? [])].sort().join();
     let p = replan(adopt);
     while (p.collisions.length) {
       if (flags.yes || !isInteractive()) {
@@ -266,13 +299,16 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
       }
       p = replan(adopt);
     }
+    // New ones are listed once, as new; the rest you declined earlier.
+    p.unselected = p.unselected.filter((n) => !pending.includes(n));
     report(p);
+    printPending(id, pending);
     const hint = versionHint(set, staging);
     if (hint) console.log(`  ${hint}`);
     if (p.errors.length) return 1;
     const work =
       p.skills.some((s) => s.write) || p.removed.length > 0 || p.relink || p.adopted.length > 0 || p.strays.length > 0 ||
-      p.captured !== undefined || resolved;
+      p.captured !== undefined || resolved || declinedChanged;
     if (!(await confirmPlan(flags, work, resolved))) return 0;
     const trash = apply(ctx.paths, p, readState(ctx.paths.stateDir), draft.registry, ctx.saveRegistry);
     if (resolved) ctx.saveRegistry(draft.registry);
@@ -296,27 +332,22 @@ async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
   const draft = draftOf(ctx);
   let resolved = false;
   try {
-    let available: string[] | undefined;
-    if (flags.interactive && isInteractive()) {
-      // npx skills itself asks which skills to install; it runs with -y here,
-      // so the same question is asked first and saved as the set's selection.
-      const set = getSet(draft.registry, id) as SkillsCliSet;
-      available = listSource(ctx.paths, set.source);
-      const offered = available.filter((n) => !(set.exclude ?? []).includes(n));
-      const owned = readState(ctx.paths.stateDir).cli?.[id]?.skills ?? [];
-      const current = set.skills ?? (owned.length ? owned : []);
-      const picked = await chooseMany(
-        `Which skills from ${set.source}? (space to toggle, a for all)`,
-        offered.map((n) => ({ value: n, label: n })),
-        offered.filter((n) => current.includes(n)),
-        true,
-      );
-      if (picked.join() !== (set.skills ?? []).join()) {
-        set.skills = picked;
-        resolved = true;
-      }
-    }
-    const replan = cliPlanner(draft, id, available);
+    const set = getSet(draft.registry, id) as SkillsCliSet;
+    const available = listSource(ctx.paths, set.source);
+    const prevRecord = readState(ctx.paths.stateDir).cli?.[id];
+    // npx skills runs with -y, so its own skill picker never shows; this is
+    // that question, asked by skillport. -i means the same as --pick here.
+    const choice = await select({
+      setId: id,
+      available,
+      exclude: set.exclude ?? [],
+      installed: prevRecord?.skills.length ? prevRecord.skills : null,
+      declined: prevRecord?.declined ?? [],
+      flags,
+      pick: Boolean(flags.pick || flags.interactive),
+    });
+    const declinedChanged = [...choice.declined].sort().join() !== [...(prevRecord?.declined ?? [])].sort().join();
+    const replan = cliPlanner(draft, id, available, choice.want);
     let p = replan();
     while (p.collisions.length) {
       if (flags.yes || !isInteractive()) {
@@ -337,7 +368,9 @@ async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
     const ownedAfter = [...p.add, ...p.update].sort();
     const upstream = upstreamChanges(lock, p.update);
     p.update = [...upstream.changed, ...upstream.unknown];
+    p.unselected = p.unselected.filter((n) => !choice.pending.includes(n));
     reportCli(p, upstream.unknown);
+    printPending(id, choice.pending);
     const links = linkDirsFor(ctx.paths, getSet(draft.registry, id));
     const before = readState(ctx.paths.stateDir).cli?.[id]?.skills ?? [];
     const recordChanged = ownedAfter.join() !== [...before].sort().join();
@@ -347,7 +380,7 @@ async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
     printItems("link", linkChanges.add.map(home));
     printItems("unlink", linkChanges.remove.map(home));
     const work =
-      p.add.length > 0 || p.update.length > 0 || p.remove.length > 0 || resolved || recordChanged ||
+      p.add.length > 0 || p.update.length > 0 || p.remove.length > 0 || resolved || recordChanged || declinedChanged ||
       linkChanges.add.length > 0 || linkChanges.remove.length > 0;
     if (!(await confirmPlan(flags, work, resolved))) return 0;
     // The prompt may have sat for a while: check again right before npx
@@ -360,7 +393,12 @@ async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
     // Ownership is written after every npx skills step that succeeds.
     const record = (skills: string[]) => {
       const state = readState(ctx.paths.stateDir);
-      state.cli = { ...(state.cli ?? {}), [id]: { syncedAt: new Date().toISOString(), skills: [...new Set(skills)].sort() } };
+      state.cli = { ...(state.cli ?? {}), [id]: {
+          syncedAt: new Date().toISOString(),
+          skills: [...new Set(skills)].sort(),
+          ...(choice.declined.length ? { declined: [...choice.declined].sort() } : {}),
+        },
+      };
       writeState(ctx.paths.stateDir, state);
     };
     let owned = [...before];
@@ -463,26 +501,26 @@ async function check(ctx: Ctx, ids: string[]): Promise<number> {
           const v = versions(set, staging);
           const latest = v?.latest;
           if (!v || !latest) {
-            report(fetchSet(ctx, id, set, staging, false)());
+            reportChosen(fetchSet(ctx, id, set, staging, false, false, chosen(ctx, id))(), id, chosen(ctx, id));
             console.log(`  could not look up the latest version of ${set.package}.`);
             continue;
           }
           if (latest === v.pinned) {
             // Same version, but other sets or folders may have changed since:
             // plan it to report collisions and edits.
-            report(fetchSet(ctx, id, set, staging, false)());
+            reportChosen(fetchSet(ctx, id, set, staging, false, false, chosen(ctx, id))(), id, chosen(ctx, id));
             console.log(`  ${set.package} is the latest.`);
             continue;
           }
           const upgraded: ManagedSet = { ...set, package: `${v.name}@${latest}` };
           const draft = draftOf(ctx);
           draft.registry.sets[id] = upgraded;
-          const p = fetchSet(draft, id, upgraded, staging, false)();
+          const p = fetchSet(draft, id, upgraded, staging, false, false, chosen(ctx, id))();
           console.log(`\n${v.name}@${latest} is out (pinned ${v.pinned}). If you bump it in the registry:`);
-          report(p);
+          reportChosen(p, id, chosen(ctx, id));
           continue;
         }
-        report(fetchSet(ctx, id, set, staging, false)());
+        reportChosen(fetchSet(ctx, id, set, staging, false, false, chosen(ctx, id))(), id, chosen(ctx, id));
         const hint = versionHint(set, staging);
         if (hint) console.log(`  ${hint}`);
       } finally {
@@ -498,17 +536,22 @@ async function check(ctx: Ctx, ids: string[]): Promise<number> {
 }
 
 function checkCli(ctx: Ctx, id: string): void {
-  const p = cliPlanner(ctx, id)();
+  const record = readState(ctx.paths.stateDir).cli?.[id];
+  const declined = record?.declined ?? [];
+  const p = cliPlanner(ctx, id, undefined, record?.skills.length ? record.skills : undefined)();
+  const pending = p.unselected.filter((n) => !declined.includes(n));
+  p.unselected = p.unselected.filter((n) => declined.includes(n));
   const upstream = upstreamChanges(readSkillLock(ctx.paths.skillLock), p.update);
   p.update = [...upstream.changed, ...upstream.unknown];
   reportCli(p, upstream.unknown);
+  printPending(id, pending);
   for (const [name, url] of Object.entries(upstream.links)) console.log(`    ${name}: ${url}`);
   if (upstream.unknown.length) console.log("  can't tell = not on GitHub, or GitHub did not answer; update re-fetches them.");
   if (!p.add.length && !p.update.length && !p.remove.length) console.log("  up to date.");
 }
 
 /** Plan a skills-cli set: lists its source once, re-reads lock and state each call. */
-function cliPlanner(ctx: Ctx, id: string, available?: string[]): () => CliPlan {
+function cliPlanner(ctx: Ctx, id: string, available?: string[], want?: string[]): () => CliPlan {
   const { source } = getSet(ctx.registry, id) as SkillsCliSet;
   available ??= listSource(ctx.paths, source);
   return () =>
@@ -520,7 +563,30 @@ function cliPlanner(ctx: Ctx, id: string, available?: string[]): () => CliPlan {
       lock: readSkillLock(ctx.paths.skillLock),
       state: readState(ctx.paths.stateDir),
       pluginSkills: pluginSkillNames(ctx.paths.claudePlugins),
+      want,
     });
+}
+
+/** What state says you chose for a managed set: installed (null if never) and declined vendor names. */
+function chosen(ctx: Ctx, id: string): { want?: string[]; declined: string[] } {
+  const st = readState(ctx.paths.stateDir).sets[id];
+  const installed = Object.entries(st?.skills ?? {}).map(([n, s]) => s.original ?? n);
+  return { want: installed.length ? installed : undefined, declined: st?.declined ?? [] };
+}
+
+/** Report a plan made from what you chose: new vendor skills listed as new, the rest as declined. */
+function reportChosen(p: Plan, id: string, choice: { declined: string[] }): void {
+  const pending = p.unselected.filter((n) => !choice.declined.includes(n));
+  p.unselected = p.unselected.filter((n) => choice.declined.includes(n));
+  report(p);
+  printPending(id, pending);
+}
+
+/** New skills nobody decided on yet (no terminal, or -y). */
+function printPending(id: string, pending: string[]): void {
+  if (!pending.length) return;
+  printItems("available", pending);
+  console.log(`  ${pending.length} not installed yet. To choose: skl update ${id} --pick`);
 }
 
 function status(ctx: Ctx): number {

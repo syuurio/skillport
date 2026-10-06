@@ -88,8 +88,8 @@
 - 執行時用真實 `HOME`（它要寫進 `~/.agents`），但環境變數一樣是最小集合（§9）。
 - skills-cli set 的擁有記錄在 `npx skills` 每一步（remove、add、update）成功後就寫入；`add` 中途失敗時，lock 裡已經出現的那些名稱也記下。所以任何一步失敗，已經裝上的 skill 仍算這個 set 的。
 - GitHub 來源比對時不分大小寫（`Owner/Repo` 與 `owner/repo` 是同一個來源）。
-- wizard 選 skills-cli 時至少要勾一個 skill；registry 省略 `skills` 才是「全部」。
-- `skl add <skills-cli set>` 和 `skl update <set> -i` 在終端機上先問要裝哪些 skill（空白鍵切換、`a` 全選），預設勾選 registry 的 `skills`，沒有時勾目前擁有的；選擇存成 `skills`。原因：skillport 以 `-y` 執行 `npx skills`，它自己的選單不會出現。取消勾選的、這個 set 擁有的 skill 會用 `npx skills remove` 移除（真的刪除，不進 trash；可以再裝回來）。`-y` 或沒有終端機時不問，照 registry。
+- wizard 不問要裝哪些 skill，只確認來源列得出來；要裝哪些在 `skl add` 時問（§5.5）。
+- skills-cli set 的「裝哪些」由 skillport 問（§5.5），因為 skillport 以 `-y` 執行 `npx skills`，它自己的選單不會出現；`-i` 在 skills-cli set 上等於 `--pick`。取消勾選的、這個 set 擁有的 skill 用 `npx skills remove` 移除（真的刪除，不進 trash；可以再裝回來）。
 - `links` 對 skills-cli set 也成立：npx skills 只在 add 時建 link，所以 skillport 每次 update 會替已安裝的 skill 補上或移除 Claude Code 的 link，讓它符合設定；不是 skillport 或 npx skills 建的東西不動。`status` 只算這個 set 記錄擁有的 skill，並列出同一來源中「留著不動」的。
 
 ### 5.2 `installer`
@@ -129,11 +129,19 @@
 `skl add` 對 installer 類型**預設互動**（決定紀錄 #6）；`skl add <set> -y` 改為非互動、安裝全部。`skl update` 預設非互動，`skl update <set> -i` 重新互動。
 
 - installer 拿到真正的 TTY，但仍在沙盒裡執行。範圍旗標（例如 `--global`）寫在 registry 的 `command` 裡，skillport 自己不加旗標（§5.2）；沙盒裡只有 `.claude`，所以「裝在哪裡」和「裝到哪些 agent」兩題不會出現（位置由 skillport 決定）；**「裝哪些 skill」和「要不要改名」照常由你回答**（依 `@aiforui/install@0.1.4` 原始碼第 320、350、395、413 行）。
-- installer 結束後，skillport 把你的回答轉成 registry 記錄：
-  - 勾選的 skill → `skills` 允許清單。
+- installer 結束後，它裝出來的 skill 就是你的選擇，記在 state（不寫進 registry）；在 installer 裡改的名稱則寫進 registry：
   - 在 installer 裡改的名稱（目錄名 ≠ frontmatter `name`）→ `rename`，`reason` 記為 `"renamed in installer"`，並補改 frontmatter 與引用（§8.3）。installer 的改名功能只改目錄名、不改 `name`，不補改的話 Codex 會用舊名稱識別它。
-- 之後的 `skl update`（不加 `-i`）用非互動模式執行，並套用記錄下來的 `skills` 與 `rename`，結果和你上次互動選擇的一樣。
-- 上游新增的 skill 不在允許清單裡，所以不會自動安裝；`check` 會列為「新增，未選」。想加入就跑一次 `-i`，或把名稱加進 `skills`。
+- 之後的 `skl update`（不加 `-i`）用非互動模式執行，只更新已經裝的 skill，並套用 `rename`；上游新增的 skill 照 §5.5 處理。
+
+### 5.5 要裝哪些 skill
+
+registry 只登記來源，不記要裝哪些 skill：作者會增刪 skill，固定的清單會過時。你的選擇記在 state（`~/.agents/.skillport/state.json`）：已安裝的 skill，加上問過而你拒絕的（`declined`）。三種 set 規則相同。
+
+- **第一次安裝**（`skl add`，終端機上）：列出來源所有的 skill，問「Install any of them?」；答是就多選（空白鍵切換、`a` 全選）。`skl add -y` 照字面裝全部。installer 以 `-i` 互動執行時，installer 自己問，它裝出來的就是選擇。
+- **之後的 update**：已安裝的照常更新；上游刪掉的移除。上游新增、沒問過的 skill 不會自己裝：終端機上列出來並問同一題；`-y` 或沒有終端機時只列為 `available`，提示 `skl update <set> --pick`，下次還會再列。拒絕的記進 `declined`，不再問，報告列為 `declined`。
+- **重選**：`skl update <set> --pick` 從全部 skill 重新多選，預設勾選已安裝的；取消勾選的移到 trash（skills-cli 是 `npx skills remove`），其餘記為 `declined`。
+- **`exclude`** 仍在 registry：那是撞名時的決定（§8），不是挑選；被 exclude 的不會出現在選單。
+- registry 若出現 `skills` 欄位，讀取時報錯並說明這件事。
 
 #### 防止卡住
 
@@ -188,7 +196,6 @@
 
 | 欄位 | 適用類型 | 說明 |
 |---|---|---|
-| `skills` | 全部 | 要裝哪些 skill；省略 = 全部。installer 互動安裝後由你的勾選寫入 |
 | `exclude` | 全部 | 不安裝的 skill（用 vendor 原名） |
 | `prefix` | installer、npm | 撞名時「加前綴」選項的預設前綴；省略 = set 名稱 |
 | `namespace` | installer、npm | 這個 set 的每個 skill 都裝成 `<namespace>-<名稱>`，之後 vendor 新增的也一樣；已經帶這個前綴的名稱不變，單一 skill 的 `rename` 規則優先。改名時 skill 內文的引用一起改寫（§8.4）。skills-cli 不可用：名稱屬於 `npx skills` |
@@ -223,18 +230,19 @@ registry 每次讀取都完整驗證（不只 wizard 寫入時），有問題就
     "animationsdev": {
       "skills": {
         "anim-prototype": { "original": "prototype", "hash": "c41d…", "installed": "7a03…", "updatedAt": "2026-10-05T08:30:00Z" }
-      }
+      },
+      "declined": ["gesture-ui"]
     }
   },
   "cli": {
-    "matt": { "syncedAt": "2026-10-06T10:00:00Z", "skills": ["tdd", "code-review"] }
+    "mattpocock": { "syncedAt": "2026-10-06T10:00:00Z", "skills": ["tdd", "code-review"], "declined": ["wizard"] }
   }
 }
 ```
 
 `hash` 用 **git tree hash**，和 `npx skills` 的 `skillFolderHash` 同一種演算法（已驗證：本機 16 個 skill 中 13 個與 lock 記錄一致，另 3 個是本機內容已偏離安裝時的版本）。同一種 hash 讓 skillport 能用 GitHub 的資料夾 hash 判斷 skills-cli 的上游有沒有變；但 `npx skills` 複製時會丟掉部分檔案、非 GitHub 來源記的是 sha256，所以不能拿它和磁碟比對偏離（§7.8）。
 
-`cli` 記錄每個 skills-cli set 實際擁有的 skill（§5.1）。
+`cli` 記錄每個 skills-cli set 實際擁有的 skill（§5.1）。`declined` 是問過而你拒絕安裝的 vendor 名稱（§5.5）；已安裝的加上 `declined`，就是你對這個來源的選擇。
 
 `installed` 是 skillport 實際寫入的內容（改名、改寫引用之後）的 tree hash；磁碟上的內容和它不同，就是有人手動改過（`status` 與 `doctor` 回報「edited」）。
 

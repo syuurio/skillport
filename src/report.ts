@@ -27,7 +27,7 @@ export function reportCli(p: CliPlan, unknown: string[]): void {
   printItems("changed", p.update.filter((n) => !unknown.includes(n)));
   printItems("can't tell", unknown);
   printItems("removed", p.remove);
-  printItems("unselected", p.unselected);
+  printItems("declined", p.unselected);
   printItems("left alone", p.others);
   for (const c of p.collisions) console.log(`  ✗ ${c.name} collides with ${c.holder}`);
   for (const w of p.warnings) console.log(`  ⚠ ${w}`);
@@ -66,7 +66,7 @@ export function report(p: Plan): void {
   printItems("new", by("new"));
   printItems("changed", by("changed"));
   printItems("removed", p.removed);
-  printItems("unselected", p.unselected);
+  printItems("declined", p.unselected);
   printItems("adopt", p.adopted);
   printItems("clean up", p.strays.map(home));
   const same = by("unchanged").length;

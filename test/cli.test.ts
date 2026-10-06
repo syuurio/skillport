@@ -202,11 +202,12 @@ process.exit(0);
   fs.chmodSync(path.join(bin, "npx"), 0o755);
   fs.mkdirSync(path.dirname(paths.registry), { recursive: true });
   fs.writeFileSync(paths.registry, JSON.stringify({ version: 1, sets: { acme: { type: "skills-cli", source: "acme/skills" } } }));
-  // a was added and recorded on an earlier run; this run adds b, then update of a fails.
+  // a and b were chosen earlier; b has gone missing, so this run adds it
+  // back, then the update of a fails. Both stay recorded, and b is on disk.
   fs.mkdirSync(path.join(paths.skillsDir, "a"), { recursive: true });
   fs.writeFileSync(paths.skillLock, JSON.stringify({ version: 3, skills: { a: { source: "acme/skills", skillPath: "", skillFolderHash: "", updatedAt: "" } } }));
   fs.mkdirSync(paths.stateDir, { recursive: true });
-  fs.writeFileSync(path.join(paths.stateDir, "state.json"), JSON.stringify({ version: 1, sets: {}, cli: { acme: { syncedAt: "", skills: ["a"] } } }));
+  fs.writeFileSync(path.join(paths.stateDir, "state.json"), JSON.stringify({ version: 1, sets: {}, cli: { acme: { syncedAt: "", skills: ["a", "b"] } } }));
   const r = spawnSync(BIN, ["update", "acme", "-y"], {
     env: { ...process.env, SKILLPORT_HOME: home, PATH: `${bin}:${process.env.PATH}` },
     encoding: "utf8",
@@ -215,6 +216,7 @@ process.exit(0);
   assert.match(r.stderr, /npx skills update failed/);
   const state = JSON.parse(fs.readFileSync(path.join(paths.stateDir, "state.json"), "utf8"));
   assert.deepEqual(state.cli.acme.skills, ["a", "b"]);
+  assert.ok(fs.existsSync(path.join(paths.skillsDir, "b", "SKILL.md")));
 });
 
 test("round 6: an add that fails partway still records the names it installed", () => {
@@ -251,19 +253,15 @@ process.exit(0);
   fs.chmodSync(path.join(bin, "npx"), 0o755);
   fs.mkdirSync(path.dirname(paths.registry), { recursive: true });
   fs.writeFileSync(paths.registry, JSON.stringify({ version: 1, sets: { acme: { type: "skills-cli", source: "acme/skills" } } }));
-  // a was added and recorded on an earlier run; this run adds b, then update of a fails.
-  fs.mkdirSync(path.join(paths.skillsDir, "a"), { recursive: true });
-  fs.writeFileSync(paths.skillLock, JSON.stringify({ version: 3, skills: { a: { source: "acme/skills", skillPath: "", skillFolderHash: "", updatedAt: "" } } }));
-  fs.mkdirSync(paths.stateDir, { recursive: true });
-  fs.writeFileSync(path.join(paths.stateDir, "state.json"), JSON.stringify({ version: 1, sets: {}, cli: { acme: { syncedAt: "", skills: ["a"] } } }));
-  const r = spawnSync(BIN, ["update", "acme", "-y"], {
+  // First install with -y: every skill is wanted; the add fails after a lands.
+  const r = spawnSync(BIN, ["add", "acme", "-y"], {
     env: { ...process.env, SKILLPORT_HOME: home, PATH: `${bin}:${process.env.PATH}` },
     encoding: "utf8",
   });
   assert.equal(r.status, 1);
   assert.match(r.stderr, /npx skills add failed/);
   const state = JSON.parse(fs.readFileSync(path.join(paths.stateDir, "state.json"), "utf8"));
-  assert.deepEqual(state.cli.acme.skills, ["a", "b"]); // c never landed
+  assert.deepEqual(state.cli.acme.skills, ["a"]); // b and c never landed
 });
 
 test("replace frees a name by excluding it from the set that holds it", async () => {
@@ -295,4 +293,21 @@ test("namespace: plan shows the new names, --dry-run saves nothing, update appli
   assert.ok(fs.existsSync(path.join(t.paths.skillsDir, "emil-animate", "SKILL.md")));
   assert.equal(t.skl("namespace", "emil", "--off", "-y").status, 0);
   assert.equal((readRegistry(regFile).sets.emil as { namespace?: string }).namespace, undefined);
+});
+
+test("update -y lists a new vendor skill but does not install it", () => {
+  const t = sandbox();
+  assert.equal(t.skl("update", "emil", "-y").status, 0);
+  // The vendor now ships a second skill.
+  const regFile = path.join(t.home, ".config", "skillport", "registry.json");
+  const reg = JSON.parse(fs.readFileSync(regFile, "utf8"));
+  reg.sets.emil.command[2] += `;const q=require("os").homedir()+"/.claude/skills/scroll";fs.mkdirSync(q,{recursive:true});fs.writeFileSync(q+"/SKILL.md","---\\nname: scroll\\ndescription: d\\n---\\n")`;
+  fs.writeFileSync(regFile, JSON.stringify(reg));
+  const r = t.skl("update", "emil", "-y");
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /available +scroll/);
+  assert.match(r.stdout, /skl update emil --pick/);
+  assert.ok(!fs.existsSync(path.join(t.paths.skillsDir, "scroll")));
+  assert.ok(fs.existsSync(path.join(t.paths.skillsDir, "animate")));
+  assert.equal(JSON.parse(fs.readFileSync(regFile, "utf8")).sets.emil.skills, undefined);
 });

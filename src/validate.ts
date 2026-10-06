@@ -205,7 +205,10 @@ const isWords = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) =
 /** Shapes of the per-set lists and rules; a wrong shape would silently change what installs. */
 function validateCommon(set: SkillSet, problems: string[]): void {
   const raw = set as unknown as Record<string, unknown>;
-  for (const key of ["skills", "exclude"] as const) {
+  if (raw.skills !== undefined) {
+    problems.push("skills is not a registry field: skl add asks which skills to install and remembers the answer in state");
+  }
+  for (const key of ["exclude"] as const) {
     if (raw[key] !== undefined && !(isWords(raw[key]) && (raw[key] as string[]).every(isValidSkillName))) {
       problems.push(`${key} must be a list of skill names`);
     }

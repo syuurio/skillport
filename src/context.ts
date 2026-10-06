@@ -7,6 +7,8 @@ export interface Flags {
   yes: boolean;
   interactive: boolean;
   dryRun: boolean;
+  /** Choose again which skills to install, from everything offered (--pick). */
+  pick?: boolean;
   /** Take over identical copies already on disk (skl adopt). */
   adopt?: boolean;
 }

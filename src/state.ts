@@ -19,6 +19,8 @@ export interface SetState {
   /** Pinned installer or package it was synced with, e.g. @aiforui/install@0.1.4. */
   source?: string;
   skills: Record<string, InstalledSkill>;
+  /** Vendor names you were offered and said no to; not asked about again. */
+  declined?: string[];
 }
 
 export interface State {
@@ -30,7 +32,7 @@ export interface State {
    * this is what a set may update or remove; anything else from the same
    * source is left alone.
    */
-  cli?: Record<string, { syncedAt: string; skills: string[] }>;
+  cli?: Record<string, { syncedAt: string; skills: string[]; declined?: string[] }>;
 }
 
 /** The vendor's name for a skill a set installed (its rule key), given the installed name. */

@@ -14,8 +14,6 @@ export interface RenameRule {
 }
 
 interface SetCommon {
-  /** Vendor skill names to install; omitted means all. */
-  skills?: string[];
   exclude?: string[];
   /**
    * Agents that do not read ~/.agents/skills and get symlinks, by id from

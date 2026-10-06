@@ -77,7 +77,7 @@ function recheck(paths: Paths, p: Plan, owned: Set<string>): void {
 
 /**
  * Apply a plan without collisions or errors. Writes the registry too when the
- * plan captured an interactive selection. Returns the trash folder used.
+ * plan captured renames chosen inside the installer. Returns the trash folder used.
  */
 export function apply(
   paths: Paths,
@@ -115,13 +115,13 @@ export function apply(
       updatedAt: s.write || !prev[s.name] ? now : prev[s.name].updatedAt,
     };
   }
-  state.sets[p.setId] = { syncedAt: now, ...(p.source ? { source: p.source } : {}), skills };
+  const declined = p.declined ?? state.sets[p.setId]?.declined;
+  state.sets[p.setId] = { syncedAt: now, ...(p.source ? { source: p.source } : {}), skills, ...(declined?.length ? { declined } : {}) };
   writeState(paths.stateDir, state);
 
   if (p.captured) {
     const set = registry.sets[p.setId];
     if (set.type !== "skills-cli") {
-      set.skills = p.captured.skills;
       if (Object.keys(p.captured.rename).length) set.rename = p.captured.rename;
       else delete set.rename;
       saveRegistry(registry);

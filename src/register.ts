@@ -41,7 +41,6 @@ export function splitCommand(line: string): string[] {
   return out;
 }
 
-const list = (line: string) => line.split(",").map((s) => s.trim()).filter(Boolean);
 
 /** Problems with an entry about to be added; empty when it can be written. */
 export function validateSet(id: string, set: SkillSet, reg: Registry): string[] {
@@ -188,25 +187,17 @@ export async function askForSet(id: string, paths: Paths): Promise<WizardResult>
       // Checked before npx skills ever sees it (a credential in it would reach the network).
       validate: (v) => sourceProblem(v),
     });
+    // Only a check that the source answers: which skills to install is asked
+    // on skl add and remembered in state, not written here.
     const s = spinner();
     s.start(`Asking npx skills what ${source} offers`);
-    let available: string[] = [];
     try {
-      available = listSource(paths, source);
-      s.stop(`${available.length} skills available`);
+      s.stop(`${listSource(paths, source).length} skills available; skl add asks which to install`);
     } catch {
-      s.stop("Could not list it; type the names instead");
+      s.stop("Could not list it now; skl add will try again");
     }
-    const skills = available.length
-      ? await chooseMany(
-          "Which skills? (space to toggle, enter to confirm; pick at least one)",
-          available.map((n) => ({ value: n, label: n })),
-          [],
-          true,
-        )
-      : list(await ask("Skills to install (comma-separated)", { placeholder: "tdd, code-review", validate: (v) => (list(v).length ? undefined : "Name at least one.") }));
     const links = await askLinks();
-    return { set: { type, source, ...(skills.length ? { skills } : {}), ...(links ? { links } : {}) } satisfies SkillsCliSet };
+    return { set: { type, source, ...(links ? { links } : {}) } satisfies SkillsCliSet };
   }
 
   // Installer: the vendor's own questions (which skills, renames) come later,

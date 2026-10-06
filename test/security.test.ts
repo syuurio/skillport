@@ -109,10 +109,10 @@ test("registry rules and lists are checked for shape", () => {
   const bad = (extra: Record<string, unknown>) =>
     validateEntry("x", { type: "npm", package: "a@1.0.0", path: "s", ...extra } as never, []).join();
   assert.match(bad({ rename: { prototype: "anim-prototype" } }), /rename must map/);
-  assert.match(bad({ skills: "tdd" }), /skills must be a list/);
+  assert.match(bad({ skills: ["tdd"] }), /skills is not a registry field/);
   assert.match(bad({ exclude: ["../x"] }), /exclude must be a list/);
   assert.match(bad({ prefix: "My_Set" }), /prefix must be/);
-  assert.equal(bad({ rename: { prototype: { to: "anim-prototype", reason: "x", at: "" } }, skills: ["tdd"] }), "");
+  assert.equal(bad({ rename: { prototype: { to: "anim-prototype", reason: "x", at: "" } }, exclude: ["tdd"] }), "");
 });
 
 test("credential flags in camelCase are caught too", () => {

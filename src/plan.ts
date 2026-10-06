@@ -69,15 +69,17 @@ export interface Plan {
   removed: string[];
   /** Of those, the ones you had edited (the edits go to trash with them). */
   removedEdits: string[];
-  /** Shipped by the vendor but not in the set's `skills` list. */
+  /** Shipped by the vendor but not chosen (declined, or not offered yet). */
   unselected: string[];
+  /** Vendor names declined, to record in state on apply. */
+  declined?: string[];
   collisions: Collision[];
   warnings: string[];
   errors: string[];
   rewrites: { file: string; change: Change }[];
   keptAsCode: { file: string; change: Change }[];
-  /** Interactive run: selection and in-installer renames to save. */
-  captured?: { skills: string[]; rename: Record<string, RenameRule> };
+  /** Interactive run: renames chosen inside the installer, to save. */
+  captured?: { rename: Record<string, RenameRule> };
 }
 
 export interface PlanInput {
@@ -94,6 +96,13 @@ export interface PlanInput {
   links: string[];
   /** The installer ran interactively; read selection and renames from it. */
   fromInteractiveRun: boolean;
+  /**
+   * Vendor names to install; omitted means every one shipped. Ignored after
+   * an interactive installer run, whose output is the selection.
+   */
+  want?: string[];
+  /** Vendor names declined, recorded in state on apply. */
+  declined?: string[];
   /**
    * Take over identical copies already on disk instead of calling them
    * collisions: every skill (`skl adopt`), or only the named ones (chosen in
@@ -135,11 +144,10 @@ export function plan(input: PlanInput): Plan {
       }
     }
     captured = {
-      skills: vendor.map((v) => v.original).sort(),
       rename: Object.fromEntries(Object.entries(rename).filter(([k]) => vendor.some((v) => v.original === k))),
     };
   }
-  const allow = input.fromInteractiveRun ? null : set.skills ? new Set(set.skills) : null;
+  const allow = input.fromInteractiveRun || !input.want ? null : new Set(input.want);
   const excluded = new Set(set.exclude ?? []);
   const selected = vendor.filter((v) => !excluded.has(v.original) && (!allow || allow.has(v.original)));
   const unselected = vendor
@@ -234,7 +242,7 @@ export function plan(input: PlanInput): Plan {
   });
 
   const pin = pinnedPackage(set);
-  return { setId, removedEdits, source: pin ? `${pin.name}@${pin.version}` : undefined, links: input.links, relink, ...adoption, skills, removed, unselected, collisions, warnings, errors, rewrites, keptAsCode, captured };
+  return { setId, removedEdits, source: pin ? `${pin.name}@${pin.version}` : undefined, links: input.links, relink, ...adoption, skills, removed, unselected, collisions, warnings, errors, rewrites, keptAsCode, captured, declined: input.declined };
 }
 
 /**

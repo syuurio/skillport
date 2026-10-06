@@ -90,11 +90,13 @@ export function planCli(input: {
   lock: Record<string, LockEntry>;
   state: State;
   pluginSkills?: Map<string, string>;
+  /** Names to install; omitted means every one the source offers. */
+  want?: string[];
 }): CliPlan {
   const owned = new Set(input.state.cli?.[input.setId]?.skills ?? []);
   const { paths, setId, set, available, lock, state } = input;
   const excluded = new Set(set.exclude ?? []);
-  const allow = set.skills ? new Set(set.skills) : null;
+  const allow = input.want ? new Set(input.want) : null;
   const wanted = available.filter((n) => !excluded.has(n) && (!allow || allow.has(n)));
   const unselected = available.filter((n) => !excluded.has(n) && allow && !allow.has(n));
   const installed = new Set(lockedFor(lock, set.source));
