@@ -9,7 +9,7 @@ import { type CliPlan, applyCli, applyCliLinks, cliLinkChanges, removeCliSkills,
 import { type Plan, plan } from "./plan.ts";
 import { pluginSkillNames } from "./plugins.ts";
 import { askForSet, validateSet } from "./register.ts";
-import { Cancelled, ask, askSecret, confirm, intro, isInteractive, log, note, outro } from "./prompt.ts";
+import { Cancelled, ask, askSecret, chooseMany, confirm, intro, isInteractive, log, note, outro } from "./prompt.ts";
 import {
   type ManagedSet,
   type Registry,
@@ -40,8 +40,8 @@ const USAGE = `skillport — one place for skills that vendor installers scatter
   skl doctor [--fix]               Find stray copies, broken or missing links, drift; fix the safe ones
   skl adopt <set> [-y]             Take over copies a vendor already installed, when they match
   skl check [set...]               Is anything new upstream? Changes nothing
-  skl add <set> [-y]               First install; installers run interactively unless -y
-  skl update [set...] [-i] [-y]    Apply upstream changes; -i re-runs the installer interactively
+  skl add <set> [-y]               First install; asks which skills (or runs the installer) unless -y
+  skl update [set...] [-i] [-y]    Apply upstream changes; -i re-runs the installer (or the skill pick) interactively
   skl diff <set> <skill>           What changed in one skill
   skl remove <set>                 Move a set's skills to trash and unregister it
   skl resolve <set> <skill> (--prefix [p] | --rename <name> | --exclude | --undo)
@@ -296,7 +296,27 @@ async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
   const draft = draftOf(ctx);
   let resolved = false;
   try {
-    const replan = cliPlanner(draft, id);
+    let available: string[] | undefined;
+    if (flags.interactive && isInteractive()) {
+      // npx skills itself asks which skills to install; it runs with -y here,
+      // so the same question is asked first and saved as the set's selection.
+      const set = getSet(draft.registry, id) as SkillsCliSet;
+      available = listSource(ctx.paths, set.source);
+      const offered = available.filter((n) => !(set.exclude ?? []).includes(n));
+      const owned = readState(ctx.paths.stateDir).cli?.[id]?.skills ?? [];
+      const current = set.skills ?? (owned.length ? owned : []);
+      const picked = await chooseMany(
+        `Which skills from ${set.source}? (space to toggle, a for all)`,
+        offered.map((n) => ({ value: n, label: n })),
+        offered.filter((n) => current.includes(n)),
+        true,
+      );
+      if (picked.join() !== (set.skills ?? []).join()) {
+        set.skills = picked;
+        resolved = true;
+      }
+    }
+    const replan = cliPlanner(draft, id, available);
     let p = replan();
     while (p.collisions.length) {
       if (flags.yes || !isInteractive()) {
@@ -488,9 +508,9 @@ function checkCli(ctx: Ctx, id: string): void {
 }
 
 /** Plan a skills-cli set: lists its source once, re-reads lock and state each call. */
-function cliPlanner(ctx: Ctx, id: string): () => CliPlan {
+function cliPlanner(ctx: Ctx, id: string, available?: string[]): () => CliPlan {
   const { source } = getSet(ctx.registry, id) as SkillsCliSet;
-  const available = listSource(ctx.paths, source);
+  available ??= listSource(ctx.paths, source);
   return () =>
     planCli({
       paths: ctx.paths,

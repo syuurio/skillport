@@ -89,6 +89,7 @@
 - skills-cli set 的擁有記錄在 `npx skills` 每一步（remove、add、update）成功後就寫入；`add` 中途失敗時，lock 裡已經出現的那些名稱也記下。所以任何一步失敗，已經裝上的 skill 仍算這個 set 的。
 - GitHub 來源比對時不分大小寫（`Owner/Repo` 與 `owner/repo` 是同一個來源）。
 - wizard 選 skills-cli 時至少要勾一個 skill；registry 省略 `skills` 才是「全部」。
+- `skl add <skills-cli set>` 和 `skl update <set> -i` 在終端機上先問要裝哪些 skill（空白鍵切換、`a` 全選），預設勾選 registry 的 `skills`，沒有時勾目前擁有的；選擇存成 `skills`。原因：skillport 以 `-y` 執行 `npx skills`，它自己的選單不會出現。取消勾選的、這個 set 擁有的 skill 會用 `npx skills remove` 移除（真的刪除，不進 trash；可以再裝回來）。`-y` 或沒有終端機時不問，照 registry。
 - `links` 對 skills-cli set 也成立：npx skills 只在 add 時建 link，所以 skillport 每次 update 會替已安裝的 skill 補上或移除 Claude Code 的 link，讓它符合設定；不是 skillport 或 npx skills 建的東西不動。`status` 只算這個 set 記錄擁有的 skill，並列出同一來源中「留著不動」的。
 
 ### 5.2 `installer`
