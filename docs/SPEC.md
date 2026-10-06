@@ -379,6 +379,14 @@ skills-cli set 不需要 adopt：`npx skills` 自己決定要不要覆蓋，skil
 
 非互動處理撞名：寫進 registry（§8.4）；state 在下一次 `update` 套用時才更新。先印出「原本 → 之後」，`--dry-run` 停在這裡，終端機上確認，沒有終端機要加 `-y`。`--undo` 撤銷一條 `rename` 或 `exclude`。skills-cli set 只能 `--exclude` / `--undo`。
 
+### 7.13 `skl bump <set> [version]`
+
+把 set 固定的 installer 或 npm 套件版號改成 npm 上的最新版（`latest` 標籤），或你指定的版本。只改 registry；`skl update <set>` 才實際執行新版。建議流程：`skl check` 看到「⬆ … is out」，並看新版會改哪些 skill → `skl bump` → `skl update`。
+
+- 會檢查：版本存在於 npm（`npm view <套件> time`）、是精確版號、比目前的新（同版或較舊時不動）。會顯示發布日期；發布不到 3 天時加上警告。
+- 不會檢查：新版程式碼安不安全、能不能用。`latest` 由作者帳號決定，帳號被盜時一樣會指向惡意版本；這仍是你的判斷（看 changelog，或 `npm pack` 兩版比對）。
+- 先印出「舊版 → 新版」，`--dry-run` 停在這裡，終端機上確認，沒有終端機要加 `-y`。skills-cli set 沒有版號，不適用。
+
 ### 7.12 `skl namespace <set> (<prefix> | --off)`
 
 設定或清除 set 的 `namespace`。先列出已安裝 skill 的「原名稱 → 新名稱」，`--dry-run` 停在這裡，終端機上確認，沒有終端機要加 `-y`。只寫 registry；`skl update <set>` 才實際改名、搬 link、把舊資料夾移到 trash。`namespace` 不是改名規則，所以 `doctor` 不會把它報成「不再需要」。改名後若撞到別的名稱，`update` 照 §8 詢問。

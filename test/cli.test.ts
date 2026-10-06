@@ -311,3 +311,54 @@ test("update -y lists a new vendor skill but does not install it", () => {
   assert.ok(fs.existsSync(path.join(t.paths.skillsDir, "animate")));
   assert.equal(JSON.parse(fs.readFileSync(regFile, "utf8")).sets.emil.skills, undefined);
 });
+
+test("bump: moves the pin to the latest version npm knows; refuses missing or older versions", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "skillport-bump-"));
+  const paths = defaultPaths(home);
+  const bin = path.join(home, "bin");
+  fs.mkdirSync(bin);
+  // A stand-in npm: x has 1.0.0 and 1.2.0 (latest, published today).
+  const today = new Date().toISOString();
+  fs.writeFileSync(
+    path.join(bin, "npm"),
+    `#!/usr/bin/env node
+const a = process.argv.slice(2);
+if (a[0] === "view" && a[2] === "version") { console.log("1.2.0"); process.exit(0); }
+if (a[0] === "view" && a[2] === "time") { console.log(JSON.stringify({ created: "2026-01-01T00:00:00Z", "1.0.0": "2026-01-01T00:00:00Z", "1.2.0": "${today}" })); process.exit(0); }
+process.exit(1);
+`,
+  );
+  fs.chmodSync(path.join(bin, "npm"), 0o755);
+  fs.mkdirSync(path.dirname(paths.registry), { recursive: true });
+  fs.writeFileSync(
+    paths.registry,
+    JSON.stringify({
+      version: 1,
+      sets: {
+        pkg: { type: "npm", package: "x@1.0.0", path: "skills" },
+        inst: { type: "installer", command: ["npx", "x@1.0.0", "--global"], unattended: [] },
+      },
+    }),
+  );
+  const skl = (...args: string[]) =>
+    spawnSync(BIN, args, { env: { ...process.env, SKILLPORT_HOME: home, PATH: `${bin}:${process.env.PATH}` }, encoding: "utf8" });
+  const sets = () => readRegistry(paths.registry).sets as Record<string, { package?: string; command?: string[] }>;
+
+  const dry = skl("bump", "pkg", "--dry-run");
+  assert.match(dry.stdout, /x 1\.0\.0 → 1\.2\.0/);
+  assert.match(dry.stdout, /today/);
+  assert.match(dry.stdout, /very new/);
+  assert.equal(sets().pkg.package, "x@1.0.0");
+
+  assert.equal(skl("bump", "pkg", "-y").status, 0);
+  assert.equal(sets().pkg.package, "x@1.2.0");
+  assert.equal(skl("bump", "inst", "-y").status, 0);
+  assert.deepEqual(sets().inst.command, ["npx", "x@1.2.0", "--global"]);
+
+  const missing = skl("bump", "pkg", "9.9.9", "-y");
+  assert.equal(missing.status, 1);
+  assert.match(missing.stderr, /does not exist on npm/);
+  const older = skl("bump", "pkg", "1.0.0", "-y");
+  assert.match(older.stdout, /nothing to bump/);
+  assert.equal(sets().pkg.package, "x@1.2.0");
+});

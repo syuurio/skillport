@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { NeedsInteraction, acquire, latestVersion, pinnedPackage } from "./acquire.ts";
+import { NeedsInteraction, acquire, compareVersions, latestVersion, pinnedPackage, publishTimes } from "./acquire.ts";
 import { acquireLock, apply, removeManaged } from "./apply.ts";
 import { hasSecret, storeSecret, storeSecretValue } from "./keychain.ts";
 import { type Kind, diagnose } from "./doctor.ts";
@@ -33,6 +33,7 @@ import { count, home, printItems, printResolveHints, report, reportCli, summariz
 import { isValidSkillName, withPrefix } from "./transform.ts";
 import { treeHash } from "./treehash.ts";
 import { select } from "./select.ts";
+import { isPinnedSpec } from "./validate.ts";
 
 const USAGE = `skillport — one place for skills that vendor installers scatter
 
@@ -48,6 +49,7 @@ const USAGE = `skillport — one place for skills that vendor installers scatter
   skl remove <set>                 Move a set's skills to trash and unregister it
   skl resolve <set> <skill> (--prefix [p] | --rename <name> | --exclude | --undo)
   skl namespace <set> (<prefix> | --off)   Prefix every skill of a set, new ones too
+  skl bump <set> [version]         Move a set's pinned installer or package to the latest (or given) version
   skl secret <set>                 Store a set's token in Keychain
 
 Flags: --dry-run prints the plan only.  -y skips confirmations.
@@ -70,7 +72,7 @@ async function main(argv: string[]): Promise<number> {
   };
   // Every command that writes state, staging, the registry or the Keychain
   // takes the lock; status, plain doctor and help do not.
-  const writes = ["add", "update", "check", "diff", "remove", "adopt", "register", "resolve", "namespace", "secret"];
+  const writes = ["add", "update", "check", "diff", "remove", "adopt", "register", "resolve", "namespace", "bump", "secret"];
   if (writes.includes(cmd) || (cmd === "doctor" && rest.includes("--fix"))) cleanups.add(acquireLock(paths));
   switch (cmd) {
     case "register":
@@ -103,6 +105,8 @@ async function main(argv: string[]): Promise<number> {
       return resolveCmd(ctx, args, rest, flags);
     case "namespace":
       return namespaceCmd(ctx, args, rest.includes("--off"), flags);
+    case "bump":
+      return bumpCmd(ctx, args, flags);
     case "secret":
       getSet(ctx.registry, args[0]);
       storeSecret(args[0]);
@@ -173,10 +177,10 @@ function versions(set: ManagedSet, staging: string): { name: string; pinned: str
 }
 
 /** "A newer pinned package exists" line for installer and npm sets, or null. */
-function versionHint(set: ManagedSet, staging: string): string | null {
+function versionHint(id: string, set: ManagedSet, staging: string): string | null {
   const v = versions(set, staging);
   if (!v?.latest || v.latest === v.pinned) return null;
-  return `⬆ ${v.name}@${v.latest} is out (pinned ${v.pinned}); bump it in the registry to upgrade.`;
+  return `⬆ ${v.name}@${v.latest} is out (pinned ${v.pinned}). To upgrade: skl bump ${id}`;
 }
 
 // Staging folders hold vendor content and the installer's fake HOME, where an
@@ -303,7 +307,7 @@ async function sync(ctx: Ctx, id: string, flags: Flags): Promise<number> {
     p.unselected = p.unselected.filter((n) => !pending.includes(n));
     report(p);
     printPending(id, pending);
-    const hint = versionHint(set, staging);
+    const hint = versionHint(id, set, staging);
     if (hint) console.log(`  ${hint}`);
     if (p.errors.length) return 1;
     const work =
@@ -480,6 +484,48 @@ async function namespaceCmd(ctx: Ctx, args: string[], off: boolean, flags: Flags
   return 0;
 }
 
+/**
+ * `skl bump`: move a set's pin to the latest version on npm, or the one you
+ * name. It checks the version exists and is newer, and shows when it was
+ * published; whether the new code is safe is still yours to judge.
+ */
+async function bumpCmd(ctx: Ctx, args: string[], flags: Flags): Promise<number> {
+  const [id, wanted] = args;
+  if (!id) throw new Error(USAGE);
+  const set = getSet(ctx.registry, id);
+  if (!isManaged(set)) throw new Error(`"${id}" is installed by npx skills; it has no version to pin.`);
+  const pin = pinnedPackage(set);
+  if (!pin) throw new Error(`"${id}" has no pinned package (name@x.y.z) in the registry.`);
+  const staging = stagingFor(ctx, id);
+  try {
+    const times = publishTimes(pin.name, staging);
+    const target = wanted ?? latestVersion(pin.name, staging);
+    if (!times || !target) throw new Error(`npm did not answer for ${pin.name}; try again later.`);
+    if (!isPinnedSpec(`${pin.name}@${target}`)) throw new Error(`"${target}" is not an exact version (x.y.z).`);
+    if (!times[target]) throw new Error(`${pin.name}@${target} does not exist on npm.`);
+    if (compareVersions(target, pin.version) <= 0) {
+      console.log(`${id}: ${pin.name}@${pin.version} is ${target === pin.version ? (wanted ? "already that version" : "already the latest") : `newer than ${target}`}; nothing to bump.`);
+      return 0;
+    }
+    const days = Math.floor((Date.now() - Date.parse(times[target])) / 86_400_000);
+    const draft = draftOf(ctx);
+    const next = draft.registry.sets[id] as ManagedSet;
+    const spec = `${pin.name}@${target}`;
+    if (next.type === "npm") next.package = spec;
+    else next.command = next.command.map((w) => (w === `${pin.name}@${pin.version}` ? spec : w));
+    console.log(`Plan: ${id}: ${pin.name} ${pin.version} → ${target} (in ${ctx.paths.registry})`);
+    console.log(`  published ${times[target].slice(0, 10)} (${days === 0 ? "today" : `${days} day${days === 1 ? "" : "s"} ago`})`);
+    if (days < 3) console.log("  ⚠ very new: if anything looks off, wait a few days before running it.");
+    if (!(await confirmChange(flags, "Save it?", "dry run: registry unchanged."))) return 0;
+    ctx.registry = draft.registry;
+    ctx.saveRegistry(ctx.registry);
+    console.log(`Recorded. Run: skl update ${id}`);
+    return 0;
+  } finally {
+    dropStaging(staging);
+  }
+}
+
 async function check(ctx: Ctx, ids: string[]): Promise<number> {
   let failed = 0;
   for (const id of ids.length ? ids : Object.keys(ctx.registry.sets)) {
@@ -516,12 +562,12 @@ async function check(ctx: Ctx, ids: string[]): Promise<number> {
           const draft = draftOf(ctx);
           draft.registry.sets[id] = upgraded;
           const p = fetchSet(draft, id, upgraded, staging, false, false, chosen(ctx, id))();
-          console.log(`\n${v.name}@${latest} is out (pinned ${v.pinned}). If you bump it in the registry:`);
+          console.log(`\n${v.name}@${latest} is out (pinned ${v.pinned}). After skl bump ${id}:`);
           reportChosen(p, id, chosen(ctx, id));
           continue;
         }
         reportChosen(fetchSet(ctx, id, set, staging, false, false, chosen(ctx, id))(), id, chosen(ctx, id));
-        const hint = versionHint(set, staging);
+        const hint = versionHint(id, set, staging);
         if (hint) console.log(`  ${hint}`);
       } finally {
         dropStaging(staging);

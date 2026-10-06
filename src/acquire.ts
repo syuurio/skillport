@@ -199,6 +199,38 @@ export function pinnedPackage(set: ManagedSet): { name: string; version: string 
   return m ? { name: m[1], version: m[2] } : null;
 }
 
+/** When each version of a package was published, from npm (`npm view <name> time`); null if npm did not answer. */
+export function publishTimes(name: string, staging: string): Record<string, string> | null {
+  if (!isPackageName(name)) return null;
+  fs.mkdirSync(staging, { recursive: true, mode: 0o700 });
+  const r = spawnSync("npm", ["view", name, "time", "--json"], {
+    cwd: staging,
+    encoding: "utf8",
+    env: sandboxEnv(os.homedir(), staging),
+  });
+  if (r.status !== 0) return null;
+  try {
+    return JSON.parse(r.stdout) as Record<string, string>;
+  } catch {
+    return null;
+  }
+}
+
+/** Compare two x.y.z[-pre] versions: negative when a is older. A prerelease is older than its release. */
+export function compareVersions(a: string, b: string): number {
+  const parse = (v: string) => {
+    const [core, pre] = v.split("+")[0].split(/-(.*)/s);
+    return { nums: core.split(".").map(Number), pre: pre ?? "" };
+  };
+  const x = parse(a);
+  const y = parse(b);
+  for (let i = 0; i < 3; i++) if (x.nums[i] !== y.nums[i]) return x.nums[i] - y.nums[i];
+  if (x.pre === y.pre) return 0;
+  if (!x.pre) return 1;
+  if (!y.pre) return -1;
+  return x.pre < y.pre ? -1 : 1;
+}
+
 export function latestVersion(name: string, staging: string): string | null {
   if (!isPackageName(name)) return null;
   fs.mkdirSync(staging, { recursive: true, mode: 0o700 });

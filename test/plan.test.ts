@@ -440,3 +440,10 @@ test("namespace: clearing it moves skills back to their shipped names", () => {
   assert.ok(fs.lstatSync(path.join(t.paths.links[0], "animate")).isSymbolicLink());
   assert.ok(!fs.lstatSync(path.join(t.paths.links[0], "emil-animate"), { throwIfNoEntry: false }));
 });
+
+test("compareVersions: numeric parts, prerelease before release", async () => {
+  const { compareVersions } = await import("../src/acquire.ts");
+  assert.ok(compareVersions("1.10.0", "1.9.0") > 0);
+  assert.ok(compareVersions("1.0.0-beta.1", "1.0.0") < 0);
+  assert.equal(compareVersions("2.0.0", "2.0.0"), 0);
+});
