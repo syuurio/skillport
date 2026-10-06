@@ -84,7 +84,7 @@
 - `-a codex` 讓實體放在 `~/.agents/skills`；`links` 含 Claude Code 時加 `-a claude-code`，得到相對 symlink（已驗證）。只給 `-a claude-code` 會把實體寫進 `~/.claude/skills`。
 - **`npx skills add` 會直接覆蓋同名目錄，不警告**（已驗證：在沙盒 `~/.agents/skills/tdd` 放自己的 `SKILL.md`，安裝後被換掉）。所以呼叫前先檢查：撞到 skillport 管理的 skill、其他 `npx skills` 來源、`~/.agents/skills` 下的無主目錄、或 `~/.claude/skills` 下的非 symlink，就中止。
 - **每個 set 只動自己裝的 skill**：lock 只記「從哪個來源來」，不記「是哪個 set 要的」，所以 skillport 在 state 的 `cli` 欄位記下每個 skills-cli set 叫 `npx skills` 裝過哪些 skill。`update` 與 `remove` 只會移除記錄裡、而且這個 set 不再要的 skill；同一來源中不在記錄裡的 skill（你手動裝的、別處裝的）列為「left alone」，不更新、不記錄、不移除，**即使這個 set 也想要同名的 skill**（`npx skills remove` 是真的刪除，不進 trash；收為己有會讓之後的 remove 刪掉它）。要讓 set 接手一個手動裝的 skill：先 `npx skills remove <name> -g`，再 `skl update <set>`。同一個來源只能有一個 skills-cli set（registry 讀取時檢查）。
-- skills-cli 的名稱屬於 `npx skills`，skillport 不改名；撞名時只能在這一邊 `exclude`，或去改另一邊（skillport 管理的 set）的名稱。
+- skills-cli 的名稱屬於 `npx skills`，skillport 不改名；撞名時只能在這一邊 `exclude`，或去改另一邊（skillport 管理的 set）的名稱，或用這邊覆蓋另一邊。
 - 執行時用真實 `HOME`（它要寫進 `~/.agents`），但環境變數一樣是最小集合（§9）。
 - skills-cli set 的擁有記錄在 `npx skills` 每一步（remove、add、update）成功後就寫入；`add` 中途失敗時，lock 裡已經出現的那些名稱也記下。所以任何一步失敗，已經裝上的 skill 仍算這個 set 的。
 - GitHub 來源比對時不分大小寫（`Owner/Repo` 與 `owner/repo` 是同一個來源）。
@@ -400,8 +400,9 @@ skills-cli set 不需要 adopt：`npx skills` 自己決定要不要覆蓋，skil
 - 每個選項的新名稱都先驗證規則；仍然撞名時，下一輪規劃會再問一次。
 - 「收進來」只在撞到無主目錄時出現，而且只作用在這一個 skill（含清理它在 agent 目錄裡的相同副本）：內容和這個 set 要裝的版本相同才會收進來，不同就再問一次（這時不再提供收進來）。`skl adopt` 才是整個 set 一起收。
 - 「改另一邊」在另一邊是 skillport 管理、且能非互動執行的 set 時可選：輸入那邊 skill 的新名稱，規則立即寫進 registry（原因記為 `made room for set "<這個 set>"`），並先更新那個 set 讓出名稱，再繼續這個 set。另一邊是 `npx skills`、只能互動執行，或正在 `--dry-run` 時不可選，並說明原因。
+- 「覆蓋另一邊」的條件和「改另一邊」相同：把那邊的 skill 寫成 `exclude` 規則並立即存檔，先更新那個 set（它的副本移到 trash），再安裝這邊的。適合另一邊的 skill 已經有更好的替代品時使用；用 `skl resolve <那個 set> <skill> --undo` 撤銷。
 - 這個 set 自己的回答（加前綴、改名、排除）先放在草稿裡，套用後才寫進 registry；`--dry-run` 或回答「不套用」都不會寫入。
-- skills-cli set 撞名時只能在自己這邊排除，或去改另一邊（skillport 管理的 set）。
+- skills-cli set 撞名時只能在自己這邊排除，或去改、覆蓋另一邊（skillport 管理的 set）。
 - 非互動（`-y` 或沒有終端機）時不猜：中止，並印出可以直接執行的處理指令：
   ```
   skl resolve animationsdev prototype --prefix        # → anim-prototype
@@ -520,6 +521,7 @@ skills-cli set 不需要 adopt：`npx skills` 自己決定要不要覆蓋，skil
 | 7 | `capture` 指令 | 不做；`-i` 已涵蓋，沒有 `unattended` 就是「只能互動」（§5.4） | 2026-10-06 |
 | 8 | installer 卡在問題時 | 回報「需要你」並以 0 結束，不中斷其他 set | 2026-10-06 |
 | 9 | 「改另一邊」 | 只對能非互動執行的 skillport set 開放；規則立即存檔並先更新那個 set | 2026-10-06 |
+| 9a | 「覆蓋另一邊」 | 和「改另一邊」同條件；在另一邊寫 `exclude`，舊副本進 trash | 2026-10-06 |
 | 10 | skills-cli 檢查的連結 | 給 GitHub 資料夾的 commit 歷史，不給 compare（lock 沒有 commit） | 2026-10-06 |
 | 11 | 沒登入 `gh` | 改用 GitHub 公開 API（curl），不另加依賴 | 2026-10-06 |
 | 12 | 非 GitHub 的 skills-cli 來源 | 檢查標為「can't tell」，`update` 直接重抓；不另做機制 | 2026-10-06 |

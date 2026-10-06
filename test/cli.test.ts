@@ -265,3 +265,19 @@ process.exit(0);
   const state = JSON.parse(fs.readFileSync(path.join(paths.stateDir, "state.json"), "utf8"));
   assert.deepEqual(state.cli.acme.skills, ["a", "b"]); // c never landed
 });
+
+test("replace frees a name by excluding it from the set that holds it", async () => {
+  const { freeOtherSide } = await import("../src/collide.ts");
+  const t = sandbox();
+  assert.equal(t.skl("update", "emil", "-y").status, 0);
+  const regFile = path.join(t.home, ".config", "skillport", "registry.json");
+  const ctx = {
+    paths: t.paths,
+    registry: readRegistry(regFile),
+    saveRegistry: (r: unknown) => fs.writeFileSync(regFile, JSON.stringify(r)),
+  };
+  await freeOtherSide(ctx, "emil", "animate", "incoming", "replace", async () => t.skl("update", "emil", "-y").status ?? 1);
+  assert.deepEqual(readRegistry(regFile).sets.emil.exclude, ["animate"]);
+  assert.ok(!fs.existsSync(path.join(t.paths.skillsDir, "animate")));
+  assert.ok(!fs.lstatSync(path.join(t.paths.links[0], "animate"), { throwIfNoEntry: false }));
+});
