@@ -281,3 +281,18 @@ test("replace frees a name by excluding it from the set that holds it", async ()
   assert.ok(!fs.existsSync(path.join(t.paths.skillsDir, "animate")));
   assert.ok(!fs.lstatSync(path.join(t.paths.links[0], "animate"), { throwIfNoEntry: false }));
 });
+
+test("namespace: plan shows the new names, --dry-run saves nothing, update applies it", () => {
+  const t = sandbox();
+  assert.equal(t.skl("update", "emil", "-y").status, 0);
+  const regFile = path.join(t.home, ".config", "skillport", "registry.json");
+  const dry = t.skl("namespace", "emil", "emil", "--dry-run");
+  assert.match(dry.stdout, /animate → emil-animate/);
+  assert.equal((readRegistry(regFile).sets.emil as { namespace?: string }).namespace, undefined);
+  assert.equal(t.skl("namespace", "emil", "emil", "-y").status, 0);
+  assert.equal((readRegistry(regFile).sets.emil as { namespace?: string }).namespace, "emil");
+  assert.equal(t.skl("update", "emil", "-y").status, 0);
+  assert.ok(fs.existsSync(path.join(t.paths.skillsDir, "emil-animate", "SKILL.md")));
+  assert.equal(t.skl("namespace", "emil", "--off", "-y").status, 0);
+  assert.equal((readRegistry(regFile).sets.emil as { namespace?: string }).namespace, undefined);
+});

@@ -300,3 +300,9 @@ test("round 8c: a name-like sk- match earlier in a word does not hide a key", ()
   const k = "sk-proj-AbCd3fGh1jKlMn0pQrStUvWxYz";
   assert.equal(extractSecret(["npx", "x@1.0.0", `--from=sk-design-system-skills-pack,${k}`]).secret, k);
 });
+
+test("namespace: must be a skill-name word; not for skills-cli sets", () => {
+  assert.equal(validateEntry("x", { type: "npm", package: "a@1.0.0", path: "s", namespace: "emil" } as never, []).join(), "");
+  assert.match(validateEntry("x", { type: "npm", package: "a@1.0.0", path: "s", namespace: "Emil!" } as never, []).join(), /namespace must be/);
+  assert.match(validateEntry("x", { type: "skills-cli", source: "a/b", namespace: "emil" } as never, []).join(), /not available for skills-cli/);
+});

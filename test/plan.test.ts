@@ -413,3 +413,31 @@ test("round 6: adopt leaves a copy in a link folder the set does not link into",
   const p = t.run({ adopt: true, links: [] });
   assert.deepEqual(p.strays, []);
 });
+
+test("namespace: every skill is prefixed, new ones too; prefixed names and rename rules are kept", () => {
+  const t = sandbox({ namespace: "emil", rename: { gesture: { to: "swipe", reason: "r", at: "2026-10-06" } } });
+  t.skill("animate", "See the `review-animations` skill.");
+  t.skill("review-animations");
+  t.skill("emil-design-engineering");
+  t.skill("gesture");
+  t.commit(t.run());
+  const names = fs.readdirSync(t.paths.skillsDir).filter((n) => !n.startsWith(".")).sort();
+  assert.deepEqual(names, ["emil-animate", "emil-design-engineering", "emil-review-animations", "swipe"]);
+  assert.match(t.read(t.paths.skillsDir, "emil-animate", "SKILL.md"), /name: emil-animate/);
+  assert.match(t.read(t.paths.skillsDir, "emil-animate", "SKILL.md"), /`emil-review-animations`/);
+  t.skill("scroll");
+  t.commit(t.run());
+  assert.ok(fs.existsSync(path.join(t.paths.skillsDir, "emil-scroll", "SKILL.md")));
+});
+
+test("namespace: clearing it moves skills back to their shipped names", () => {
+  const t = sandbox({ namespace: "emil" });
+  t.skill("animate");
+  t.commit(t.run());
+  delete (t.registry.sets.emil as ManagedSet).namespace;
+  t.commit(t.run());
+  assert.ok(fs.existsSync(path.join(t.paths.skillsDir, "animate", "SKILL.md")));
+  assert.ok(!fs.existsSync(path.join(t.paths.skillsDir, "emil-animate")));
+  assert.ok(fs.lstatSync(path.join(t.paths.links[0], "animate")).isSymbolicLink());
+  assert.ok(!fs.lstatSync(path.join(t.paths.links[0], "emil-animate"), { throwIfNoEntry: false }));
+});

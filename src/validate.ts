@@ -210,7 +210,13 @@ function validateCommon(set: SkillSet, problems: string[]): void {
       problems.push(`${key} must be a list of skill names`);
     }
   }
-  if (set.type === "skills-cli") return;
+  if (set.type === "skills-cli") {
+    if (raw.namespace !== undefined) problems.push("namespace is not available for skills-cli sets: npx skills owns their names");
+    return;
+  }
+  if (raw.namespace !== undefined && !(typeof raw.namespace === "string" && isValidSkillName(raw.namespace))) {
+    problems.push("namespace must be a-z, 0-9 and single hyphens");
+  }
   if (raw.prefix !== undefined && !(typeof raw.prefix === "string" && isValidSkillName(raw.prefix))) {
     problems.push("prefix must be a-z, 0-9 and single hyphens");
   }

@@ -17,7 +17,7 @@
 
 ### 非目標
 
-- **預設不改名、不加 namespace、不改寫 skill 內容。** 只有撞名且你選擇改名時，才改那一個 skill（§8）。
+- **預設不改名、不加 namespace、不改寫 skill 內容。** 只有撞名且你選擇改名時，才改那一個 skill（§8）；或你替整個 set 設定 `namespace`（§7.12）。
 - 不取代 `npx skills` 或 Claude Code plugin marketplace；能委派就委派。
 - 不管理 MCP 設定、Claude agent 定義等 installer 的附帶產物。
 - 不做跨機器同步。
@@ -190,6 +190,7 @@
 | `skills` | 全部 | 要裝哪些 skill；省略 = 全部。installer 互動安裝後由你的勾選寫入 |
 | `exclude` | 全部 | 不安裝的 skill（用 vendor 原名） |
 | `prefix` | installer、npm | 撞名時「加前綴」選項的預設前綴；省略 = set 名稱 |
+| `namespace` | installer、npm | 這個 set 的每個 skill 都裝成 `<namespace>-<名稱>`，之後 vendor 新增的也一樣；已經帶這個前綴的名稱不變，單一 skill 的 `rename` 規則優先。改名時 skill 內文的引用一起改寫（§8.4）。skills-cli 不可用：名稱屬於 `npx skills` |
 | `links` | 全部 | 要建 symlink 的 agent（`LINK_TARGETS` 的 id，目前只有 `claude-code`）；省略 = `["claude-code"]`；`[]` = 不連結。改掉某個目標時，skillport 只移除自己建的那條 symlink |
 | `rename` | installer、npm | vendor 原名 → 安裝名稱，附原因與日期；由撞名處理寫入，也可手動編輯 |
 | `command` | installer | 完整 argv，含範圍旗標；`{secret}` 執行時替換。skillport 不另加旗標 |
@@ -368,6 +369,10 @@ skills-cli set 不需要 adopt：`npx skills` 自己決定要不要覆蓋，skil
 ### 7.10 `skl resolve <set> <skill> (--prefix [p] | --rename <name> | --exclude | --undo)`
 
 非互動處理撞名：寫進 registry（§8.4）；state 在下一次 `update` 套用時才更新。先印出「原本 → 之後」，`--dry-run` 停在這裡，終端機上確認，沒有終端機要加 `-y`。`--undo` 撤銷一條 `rename` 或 `exclude`。skills-cli set 只能 `--exclude` / `--undo`。
+
+### 7.12 `skl namespace <set> (<prefix> | --off)`
+
+設定或清除 set 的 `namespace`。先列出已安裝 skill 的「原名稱 → 新名稱」，`--dry-run` 停在這裡，終端機上確認，沒有終端機要加 `-y`。只寫 registry；`skl update <set>` 才實際改名、搬 link、把舊資料夾移到 trash。`namespace` 不是改名規則，所以 `doctor` 不會把它報成「不再需要」。改名後若撞到別的名稱，`update` 照 §8 詢問。
 
 ## 8. 撞名
 

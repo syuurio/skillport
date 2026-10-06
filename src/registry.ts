@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { localDate } from "./transform.ts";
+import { localDate, withPrefix } from "./transform.ts";
 import { setUsingSource, validateEntry } from "./validate.ts";
 
 // The registry is what you want; it is hand-editable and the only file worth
@@ -35,6 +35,12 @@ export const DEFAULT_LINKS = ["claude-code"];
 interface ManagedCommon extends SetCommon {
   /** Default prefix offered when resolving a collision. */
   prefix?: string;
+  /**
+   * Install every skill of this set as `<namespace>-<name>`, including ones
+   * the vendor adds later. Names that already carry it are left as they
+   * are; a rename rule for a skill wins over it.
+   */
+  namespace?: string;
   rename?: Record<string, RenameRule>;
 }
 
@@ -173,6 +179,11 @@ export function linkDirsFor(paths: Paths, set: SkillSet): string[] {
     if (!dir) throw new Error(`Unknown link target "${id}". Known: ${Object.keys(paths.linkTargets).join(", ")}`);
     return dir;
   });
+}
+
+/** The name a set installs a vendor skill under: its rename rule, else the namespace, else as shipped. */
+export function skillName(set: ManagedSet, original: string): string {
+  return set.rename?.[original]?.to ?? (set.namespace ? withPrefix(original, set.namespace) : original);
 }
 
 /** The prefix offered for a set's collisions: its own setting, else its id. */

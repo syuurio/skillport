@@ -23,6 +23,7 @@ import {
   prefixOf,
   readRegistry,
   runsUnattended,
+  skillName,
   writeRegistry,
 } from "./registry.ts";
 import { readSkillLock, readState, writeState } from "./state.ts";
@@ -44,6 +45,7 @@ const USAGE = `skillport — one place for skills that vendor installers scatter
   skl diff <set> <skill>           What changed in one skill
   skl remove <set>                 Move a set's skills to trash and unregister it
   skl resolve <set> <skill> (--prefix [p] | --rename <name> | --exclude | --undo)
+  skl namespace <set> (<prefix> | --off)   Prefix every skill of a set, new ones too
   skl secret <set>                 Store a set's token in Keychain
 
 Flags: --dry-run prints the plan only.  -y skips confirmations.
@@ -65,7 +67,7 @@ async function main(argv: string[]): Promise<number> {
   };
   // Every command that writes state, staging, the registry or the Keychain
   // takes the lock; status, plain doctor and help do not.
-  const writes = ["add", "update", "check", "diff", "remove", "adopt", "register", "resolve", "secret"];
+  const writes = ["add", "update", "check", "diff", "remove", "adopt", "register", "resolve", "namespace", "secret"];
   if (writes.includes(cmd) || (cmd === "doctor" && rest.includes("--fix"))) cleanups.add(acquireLock(paths));
   switch (cmd) {
     case "register":
@@ -96,6 +98,8 @@ async function main(argv: string[]): Promise<number> {
       return remove(ctx, args[0], flags);
     case "resolve":
       return resolveCmd(ctx, args, rest, flags);
+    case "namespace":
+      return namespaceCmd(ctx, args, rest.includes("--off"), flags);
     case "secret":
       getSet(ctx.registry, args[0]);
       storeSecret(args[0]);
@@ -385,6 +389,32 @@ async function resolveCmd(ctx: Ctx, args: string[], rest: string[], flags: Flags
     return renamed ? `renamed to ${renamed}` : e.exclude?.includes(skill) ? "excluded" : "installed as is";
   };
   console.log(`Plan: ${id}/${skill}: ${show(ctx.registry)} → ${show(draft.registry)} (in ${ctx.paths.registry})`);
+  if (!(await confirmChange(flags, "Save it?", "dry run: registry unchanged."))) return 0;
+  ctx.registry = draft.registry;
+  ctx.saveRegistry(ctx.registry);
+  console.log(`Recorded. Run: skl update ${id}`);
+  return 0;
+}
+
+/**
+ * `skl namespace`: set or clear a set's namespace. The plan lists the names
+ * of its installed skills before and after; skl update applies it.
+ */
+async function namespaceCmd(ctx: Ctx, args: string[], off: boolean, flags: Flags): Promise<number> {
+  const [id, value] = args;
+  if (!id || (!value && !off) || (value && off)) throw new Error(USAGE);
+  const set = getSet(ctx.registry, id);
+  if (!isManaged(set)) throw new Error(`"${id}" is installed by npx skills, which owns its names; a namespace cannot apply.`);
+  if (value && !isValidSkillName(value)) throw new Error(`"${value}" is not a valid prefix (a-z, 0-9, single -).`);
+  const draft = draftOf(ctx);
+  const next = draft.registry.sets[id] as ManagedSet;
+  if (off) delete next.namespace;
+  else next.namespace = value;
+  const installed = Object.entries(readState(ctx.paths.stateDir).sets[id]?.skills ?? {}).map(([n, s]) => s.original ?? n);
+  const moves = installed.map((o) => [skillName(set, o), skillName(next, o)]).filter(([a, b]) => a !== b);
+  console.log(`Plan: ${id}: namespace ${set.namespace ?? "(none)"} → ${next.namespace ?? "(none)"} (in ${ctx.paths.registry})`);
+  for (const [a, b] of moves) console.log(`  ${a} → ${b}`);
+  if (!moves.length) console.log("  no installed skill changes name.");
   if (!(await confirmChange(flags, "Save it?", "dry run: registry unchanged."))) return 0;
   ctx.registry = draft.registry;
   ctx.saveRegistry(ctx.registry);

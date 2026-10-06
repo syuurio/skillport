@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { listSkillDirs, pinnedPackage } from "./acquire.ts";
 import { isOursOrFree } from "./apply.ts";
-import type { ManagedSet, Paths, RenameRule } from "./registry.ts";
+import { type ManagedSet, type Paths, type RenameRule, skillName } from "./registry.ts";
 import type { InstalledSkill, LockEntry, State } from "./state.ts";
 import {
   type Change,
@@ -146,7 +146,7 @@ export function plan(input: PlanInput): Plan {
     .filter((v) => allow && !allow.has(v.original) && !excluded.has(v.original))
     .map((v) => v.original);
 
-  const nameOf = (original: string) => rename[original]?.to ?? original;
+  const nameOf = (original: string) => skillName({ ...set, rename }, original);
 
   // A name becomes a path segment; reject it before anything is written.
   const safe = selected.filter((v) => {
