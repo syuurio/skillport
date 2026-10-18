@@ -105,13 +105,23 @@ export async function resolveInteractively(
     await freeOtherSide(ctx, c.holderId, c.name, id, action === "other" ? "rename" : "replace", opts.update);
     return "other";
   }
-  // The name is editable and validated; one that still collides is caught by
-  // the replan that follows and asked about again.
-  const to = await ask("New name", {
-    initial: action === "prefix" && isValidSkillName(prefixed) ? prefixed : undefined,
-    placeholder: c.original,
-    validate: valid,
-  });
+  // Validated against this collision only; a name that collides elsewhere is
+  // caught by the replan that follows and asked about again.
+  const to =
+    action === "prefix"
+      ? withPrefix(
+          c.original,
+          await ask(`Prefix for ${c.original}`, {
+            initial: prefixOf(set, id),
+            validate: (v) =>
+              !isValidSkillName(v)
+                ? "Use a-z, 0-9 and single hyphens."
+                : withPrefix(c.original, v) === c.name
+                  ? `${c.name} is the colliding name.`
+                  : undefined,
+          }),
+        )
+      : await ask("New name", { placeholder: c.original, validate: valid });
   setResolution(draft, id, c.original, { to, reason: `collides with ${c.holder}` });
   return "draft";
 }
