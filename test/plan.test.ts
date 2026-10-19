@@ -429,6 +429,24 @@ test("namespace: every skill is prefixed, new ones too; prefixed names and renam
   assert.ok(fs.existsSync(path.join(t.paths.skillsDir, "emil-scroll", "SKILL.md")));
 });
 
+test("namespace: rewrites are reported only for skills that will be written", () => {
+  const t = sandbox({ namespace: "emil" });
+  t.skill("animate", "See the `review-animations` skill.\nPass `animate` a target.");
+  t.skill("review-animations", "Back to the `animate` skill.");
+  const first = t.run();
+  assert.equal(first.rewrites.length, 2);
+  assert.equal(first.keptAsCode.length, 1);
+  t.commit(first);
+  const again = t.run();
+  assert.ok(again.skills.every((s) => !s.write));
+  assert.deepEqual([again.rewrites, again.keptAsCode], [[], []]);
+  // A vendor change to one skill reports only that skill's references.
+  t.skill("review-animations", "Back to the `animate` skill, changed.");
+  const changed = t.run();
+  assert.deepEqual(changed.rewrites.map((r) => r.file), [path.join("emil-review-animations", "SKILL.md")]);
+  assert.deepEqual(changed.keptAsCode, []);
+});
+
 test("namespace: clearing it moves skills back to their shipped names", () => {
   const t = sandbox({ namespace: "emil" });
   t.skill("animate");

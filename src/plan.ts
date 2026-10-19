@@ -212,6 +212,11 @@ export function plan(input: PlanInput): Plan {
     };
   });
 
+  // Every skill was rewritten in staging, but only the ones swapped in have
+  // references worth reporting; the rest are already that way on disk.
+  const writing = new Set(skills.filter((s) => s.write).map((s) => s.name));
+  const written = (r: { file: string }) => writing.has(r.file.split(path.sep)[0]);
+
   const keep = new Set(skills.map((s) => s.name));
   // State is our own file, but its keys become paths too.
   const removed = Object.keys(prev).filter((n) => !keep.has(n) && isValidSkillName(n));
@@ -242,7 +247,7 @@ export function plan(input: PlanInput): Plan {
   });
 
   const pin = pinnedPackage(set);
-  return { setId, removedEdits, source: pin ? `${pin.name}@${pin.version}` : undefined, links: input.links, relink, ...adoption, skills, removed, unselected, collisions, warnings, errors, rewrites, keptAsCode, captured, declined: input.declined };
+  return { setId, removedEdits, source: pin ? `${pin.name}@${pin.version}` : undefined, links: input.links, relink, ...adoption, skills, removed, unselected, collisions, warnings, errors, rewrites: rewrites.filter(written), keptAsCode: keptAsCode.filter(written), captured, declined: input.declined };
 }
 
 /**
