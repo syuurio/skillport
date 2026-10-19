@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { localDate, withPrefix } from "./transform.ts";
-import { setUsingSource, validateEntry } from "./validate.ts";
+import { setUsingSource, validateEntry, validateLinkTargets } from "./validate.ts";
 
 // The registry is what you want; it is hand-editable and the only file worth
 // keeping under version control. See docs/SPEC.md §6.1.
@@ -17,8 +17,9 @@ interface SetCommon {
   exclude?: string[];
   /**
    * Agents that do not read ~/.agents/skills and get symlinks, by id from
-   * LINK_TARGETS. Omitted means ["claude-code"]. Codex, Cursor and OpenCode
-   * read ~/.agents/skills themselves and need nothing here.
+   * LINK_TARGETS or the registry's linkTargets. Omitted means ["claude-code"].
+   * Codex, Cursor and OpenCode read ~/.agents/skills themselves and need
+   * nothing here.
    */
   links?: string[];
 }
@@ -28,6 +29,15 @@ export const LINK_TARGETS: Record<string, { label: string; dir: string[] }> = {
   "claude-code": { label: "Claude Code", dir: [".claude", "skills"] },
 };
 export const DEFAULT_LINKS = ["claude-code"];
+
+/**
+ * A folder of your own to link into, such as a second Claude Code account's
+ * `$CLAUDE_CONFIG_DIR/skills`. `dir` is absolute or starts with `~/`.
+ */
+export interface LinkTarget {
+  label?: string;
+  dir: string;
+}
 
 /** Sets whose folders skillport writes, so it can rename their skills. */
 interface ManagedCommon extends SetCommon {
@@ -78,6 +88,8 @@ export type ManagedSet = InstallerSet | NpmSet;
 
 export interface Registry {
   version: 1;
+  /** Link targets beyond LINK_TARGETS; sets opt in through `links`. */
+  linkTargets?: Record<string, LinkTarget>;
   sets: Record<string, SkillSet>;
 }
 
@@ -86,7 +98,7 @@ export interface Paths {
   registry: string;
   skillsDir: string;
   stateDir: string;
-  /** Every agent folder skillport may link into (LINK_TARGETS), by id. */
+  /** Every agent folder skillport may link into (LINK_TARGETS and the registry's), by id. */
   linkTargets: Record<string, string>;
   /** All of linkTargets' folders: where stale links of ours are cleaned up. */
   links: string[];
@@ -122,6 +134,47 @@ export function defaultPaths(home = process.env.SKILLPORT_HOME ?? os.homedir()):
   };
 }
 
+/** Ids a set's `links` may name: the built-in targets, then the registry's. */
+export function linkTargetIds(reg: Registry): string[] {
+  return [...Object.keys(LINK_TARGETS), ...Object.keys(reg.linkTargets ?? {})];
+}
+
+/** What the wizard shows for each link target. */
+export function linkTargetLabels(reg: Registry): Record<string, string> {
+  return {
+    ...Object.fromEntries(Object.entries(LINK_TARGETS).map(([id, t]) => [id, t.label])),
+    ...Object.fromEntries(Object.entries(reg.linkTargets ?? {}).map(([id, t]) => [id, t.label ?? id])),
+  };
+}
+
+/**
+ * Paths with the registry's link targets added. Their folders are also
+ * scanned by doctor, like the built-in agent folders.
+ */
+export function withLinkTargets(paths: Paths, reg: Registry): Paths {
+  const extra = Object.entries(reg.linkTargets ?? {}).map(([id, t]) => {
+    const dir = path.resolve(t.dir.startsWith("~/") ? path.join(paths.home, t.dir.slice(2)) : t.dir);
+    return [id, dir] as const;
+  });
+  if (!extra.length) return paths;
+  const taken = [paths.skillsDir, paths.stateDir];
+  const seen = new Set(paths.links);
+  for (const [id, dir] of extra) {
+    if (taken.some((t) => dir === t || dir.startsWith(`${t}${path.sep}`) || t.startsWith(`${dir}${path.sep}`))) {
+      throw new Error(`${paths.registry}: link target "${id}" (${dir}) overlaps skillport's own folders; pick an agent's skills folder.`);
+    }
+    if (seen.has(dir)) throw new Error(`${paths.registry}: link target "${id}" uses ${dir}, which another target already uses.`);
+    seen.add(dir);
+  }
+  const dirs = extra.map(([, dir]) => dir);
+  return {
+    ...paths,
+    linkTargets: { ...paths.linkTargets, ...Object.fromEntries(extra) },
+    links: [...paths.links, ...dirs],
+    agentDirs: [...new Set([...paths.agentDirs, ...dirs])],
+  };
+}
+
 export function readRegistry(file: string): Registry {
   if (!fs.existsSync(file)) return { version: 1, sets: {} };
   const reg = JSON.parse(fs.readFileSync(file, "utf8")) as Registry;
@@ -129,8 +182,9 @@ export function readRegistry(file: string): Registry {
   // Every entry, hand-edited or not: ids become folder names, packages reach
   // npm pack, paths are joined under the sandbox.
   const problems = Object.entries(reg.sets).flatMap(([id, set]) =>
-    validateEntry(id, set, Object.keys(LINK_TARGETS)).map((p) => `${id}: ${p}`),
+    validateEntry(id, set, linkTargetIds(reg)).map((p) => `${id}: ${p}`),
   );
+  problems.push(...validateLinkTargets(reg.linkTargets, Object.keys(LINK_TARGETS)));
   // One set per npx skills source: the lock cannot tell two of them apart.
   const earlier: Record<string, SkillSet> = {};
   for (const [id, set] of Object.entries(reg.sets)) {

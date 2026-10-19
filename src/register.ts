@@ -5,7 +5,7 @@ import { latestVersion, npmPack, sandboxEnv } from "./acquire.ts";
 import { withTempDir } from "./fsutil.ts";
 import { hasSecret } from "./keychain.ts";
 import { ask, askSecret, choose, chooseMany, confirm, log, spinner } from "./prompt.ts";
-import { DEFAULT_LINKS, LINK_TARGETS, type InstallerSet, type NpmSet, type Paths, type Registry, type SkillSet, type SkillsCliSet } from "./registry.ts";
+import { DEFAULT_LINKS, type InstallerSet, type NpmSet, type Paths, type Registry, type SkillSet, type SkillsCliSet, linkTargetIds, linkTargetLabels } from "./registry.ts";
 import { listSource } from "./skillscli.ts";
 import { extractSecret, isPackageName, isPinnedSpec, leadingEnv, setUsingSource, sourceProblem, usesSecret, validateEntry } from "./validate.ts";
 
@@ -51,7 +51,7 @@ export function validateSet(id: string, set: SkillSet, reg: Registry): string[] 
     const twin = setUsingSource(reg.sets, set.source, id);
     if (twin) problems.push(`source ${set.source} is already used by set "${twin}"`);
   }
-  return [...problems, ...validateEntry(id, set, Object.keys(LINK_TARGETS))];
+  return [...problems, ...validateEntry(id, set, linkTargetIds(reg))];
 }
 
 /** Index of the package an `npx`/`pnpm dlx`/`bunx` command runs, or -1. */
@@ -139,10 +139,10 @@ function readHelp(command: string[]): string {
 
 const SCOPE_FLAG = /^--?(global|user|g)$/;
 
-async function askLinks(): Promise<string[] | undefined> {
+async function askLinks(reg: Registry): Promise<string[] | undefined> {
   const links = await chooseMany(
     "Which agents should get these skills? (space to toggle, enter to confirm)",
-    Object.entries(LINK_TARGETS).map(([value, t]) => ({ value, label: t.label, hint: "symlink" })),
+    Object.entries(linkTargetLabels(reg)).map(([value, label]) => ({ value, label, hint: "symlink" })),
     DEFAULT_LINKS,
   );
   log.info("Codex, Cursor and OpenCode read ~/.agents/skills directly; they get every skill.");
@@ -154,7 +154,7 @@ const askTokenFlag = () =>
   ask("Flag the token goes in", { initial: "--token", validate: (v) => (/^-/.test(v) ? undefined : "Starts with -") });
 
 /** Arrow-key wizard for one registry entry. Throws Cancelled on Esc / Ctrl-C. */
-export async function askForSet(id: string, paths: Paths): Promise<WizardResult> {
+export async function askForSet(id: string, paths: Paths, reg: Registry): Promise<WizardResult> {
   const type = await choose(`What kind of source is "${id}"?`, [
     { value: "installer", label: "Installer", hint: "the vendor gave you a command such as npx @vendor/install …" },
     { value: "npm", label: "npm package", hint: "skill files ship inside a package; nothing is run" },
@@ -177,7 +177,7 @@ export async function askForSet(id: string, paths: Paths): Promise<WizardResult>
       ]);
     }
     if (!where) where = await ask("Folder inside the package", { placeholder: "skills", validate: (v) => (v ? undefined : "Required.") });
-    const links = await askLinks();
+    const links = await askLinks(reg);
     return { set: { type, package: spec, path: where, ...(links ? { links } : {}) } satisfies NpmSet };
   }
 
@@ -196,7 +196,7 @@ export async function askForSet(id: string, paths: Paths): Promise<WizardResult>
     } catch {
       s.stop("Could not list it now; skl add will try again");
     }
-    const links = await askLinks();
+    const links = await askLinks(reg);
     return { set: { type, source, ...(links ? { links } : {}) } satisfies SkillsCliSet };
   }
 
@@ -251,7 +251,7 @@ export async function askForSet(id: string, paths: Paths): Promise<WizardResult>
   if (runs === "other") unattended = splitCommand(await ask("Flag(s)", { placeholder: "--yes", validate: (v) => (v ? undefined : "Required.") }));
   if (runs === "none") unattended = [];
 
-  const links = await askLinks();
+  const links = await askLinks(reg);
   const set: InstallerSet = {
     type,
     command,

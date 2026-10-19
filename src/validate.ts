@@ -251,6 +251,26 @@ export function sourceProblem(source: unknown): string | undefined {
   return undefined;
 }
 
+/** Problems with the registry's own link targets; `builtIn` ids may not be redefined. */
+export function validateLinkTargets(targets: unknown, builtIn: string[]): string[] {
+  if (targets === undefined) return [];
+  if (typeof targets !== "object" || targets === null || Array.isArray(targets)) {
+    return ['linkTargets must map ids to { "dir": <folder>, "label": <text> }'];
+  }
+  const problems: string[] = [];
+  for (const [id, t] of Object.entries(targets)) {
+    const at = `linkTargets.${id}`;
+    if (!isValidSkillName(id)) problems.push(`${at}: id must use a-z, 0-9 and single hyphens`);
+    if (builtIn.includes(id)) problems.push(`${at}: "${id}" is built in; pick another id`);
+    const { dir, label } = (typeof t === "object" && t !== null ? t : {}) as { dir?: unknown; label?: unknown };
+    if (typeof dir !== "string" || !(dir.startsWith("/") || dir.startsWith("~/")) || dir.split("/").includes("..")) {
+      problems.push(`${at}: dir must be an absolute folder or start with ~/ (no ..)`);
+    }
+    if (label !== undefined && typeof label !== "string") problems.push(`${at}: label must be text`);
+  }
+  return problems;
+}
+
 /** Problems with one entry; empty when it is usable. `linkIds` are the known link targets. */
 export function validateEntry(id: string, set: SkillSet, linkIds: string[]): string[] {
   const problems: string[] = [];

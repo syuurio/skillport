@@ -64,6 +64,15 @@ default Claude Code), and for installer/npm sets `prefix` (offered on
 collisions) and `rename` (written when you resolve a collision or rename
 inside the installer).
 
+For another folder to link into, such as a second Claude Code account's
+`$CLAUDE_CONFIG_DIR/skills`, add a top-level `linkTargets` and name it in the
+`links` of the sets that should get it:
+
+```json
+"linkTargets": { "claude-work": { "label": "Claude Code (work)", "dir": "~/.claude-work/skills" } },
+"sets": { "motion": { "type": "npm", "package": "motion-ai@14.1.0", "path": "content/skills", "links": ["claude-code", "claude-work"] } }
+```
+
 ## Guarantees
 
 - Names are kept as the vendor ships them. A skill is renamed only when it

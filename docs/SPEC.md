@@ -90,7 +90,7 @@
 - GitHub 來源比對時不分大小寫（`Owner/Repo` 與 `owner/repo` 是同一個來源）。
 - wizard 不問要裝哪些 skill，只確認來源列得出來；要裝哪些在 `skl add` 時問（§5.5）。
 - skills-cli set 的「裝哪些」由 skillport 問（§5.5），因為 skillport 以 `-y` 執行 `npx skills`，它自己的選單不會出現；`-i` 在 skills-cli set 上等於 `--pick`。取消勾選的、這個 set 擁有的 skill 用 `npx skills remove` 移除（真的刪除，不進 trash；可以再裝回來）。
-- `links` 對 skills-cli set 也成立：npx skills 只在 add 時建 link，所以 skillport 每次 update 會替已安裝的 skill 補上或移除 Claude Code 的 link，讓它符合設定；不是 skillport 或 npx skills 建的東西不動。`status` 只算這個 set 記錄擁有的 skill，並列出同一來源中「留著不動」的。
+- `links` 對 skills-cli set 也成立：npx skills 只在 add 時建 link，而且只認得 `~/.claude/skills`，所以 skillport 每次 update 會替已安裝的 skill 補上或移除各目標的 link，讓它符合設定，新裝的 skill 則在 npx skills 跑完後補上 `linkTargets` 的 link；不是 skillport 或 npx skills 建的東西不動。`status` 只算這個 set 記錄擁有的 skill，並列出同一來源中「留著不動」的。
 
 ### 5.2 `installer`
 
@@ -199,7 +199,7 @@ registry 只登記來源，不記要裝哪些 skill：作者會增刪 skill，�
 | `exclude` | 全部 | 不安裝的 skill（用 vendor 原名） |
 | `prefix` | installer、npm | 撞名時「加前綴」選項的預設前綴；省略 = set 名稱 |
 | `namespace` | installer、npm | 這個 set 的每個 skill 都裝成 `<namespace>-<名稱>`，之後 vendor 新增的也一樣；已經帶這個前綴的名稱不變，單一 skill 的 `rename` 規則優先。改名時 skill 內文的引用一起改寫（§8.4）。skills-cli 不可用：名稱屬於 `npx skills` |
-| `links` | 全部 | 要建 symlink 的 agent（`LINK_TARGETS` 的 id，目前只有 `claude-code`）；省略 = `["claude-code"]`；`[]` = 不連結。改掉某個目標時，skillport 只移除自己建的那條 symlink |
+| `links` | 全部 | 要建 symlink 的 agent（內建的 `claude-code`，或 registry `linkTargets` 裡的 id）；省略 = `["claude-code"]`；`[]` = 不連結。改掉某個目標時，skillport 只移除自己建的那條 symlink |
 | `rename` | installer、npm | vendor 原名 → 安裝名稱，附原因與日期；由撞名處理寫入，也可手動編輯 |
 | `command` | installer | 完整 argv，含範圍旗標；`{secret}` 執行時替換。skillport 不另加旗標 |
 | `unattended` | installer | 非互動執行時附加的旗標，例如 `["-y"]`；不需要就寫 `[]`；省略 = 只能互動執行 |
@@ -207,6 +207,14 @@ registry 只登記來源，不記要裝哪些 skill：作者會增刪 skill，�
 | `secret` | installer | `"keychain"`：從 Keychain（service `skillport`、account = set 名稱）讀取 |
 | `package` / `path` | npm | 固定到 `name@x.y.z` 的 registry 套件（git URL、`owner/repo`、網址、本機路徑一律拒絕）、套件內 skill 目錄（相對路徑，不得有 `..`） |
 | `stage` / `harvest` | installer | 沙盒 HOME 裡的相對路徑，不得有 `..` |
+
+registry 最上層可選填 `linkTargets`：內建目標之外，自己的連結資料夾，例如第二個 Claude Code 帳號（`CLAUDE_CONFIG_DIR=~/.claude-work`）的 skill 目錄：
+
+```json
+"linkTargets": { "claude-work": { "label": "Claude Code (work)", "dir": "~/.claude-work/skills" } }
+```
+
+`dir` 須為絕對路徑或以 `~/` 開頭（`~` 跟著 `SKILLPORT_HOME`），不得有 `..`、不得與 `~/.agents/skills`、`~/.agents/.skillport` 或其他目標重疊；id 不可用內建的名稱。只有 `links` 列出它的 set 才會連進去（預設仍只有 `claude-code`）。這些資料夾也和 agent 目錄一樣由 `doctor`、`adopt` 掃描。已驗證：設定 `CLAUDE_CONFIG_DIR` 時，Claude Code 讀 `$CLAUDE_CONFIG_DIR/skills`，並跟隨其中的 symlink。
 
 registry 每次讀取都完整驗證（不只 wizard 寫入時），有問題就停止並列出。
 
@@ -370,10 +378,10 @@ skills-cli set 不需要 adopt：`npx skills` 自己決定要不要覆蓋，skil
 1. 類型：Installer / npm package（GitHub repo 在 M2 前不可選）。
 2. Installer：貼上 vendor 給的安裝指令。指令裡的 `--token=…` 會被抽出存進 Keychain，改寫成 `{secret}`；沒有 token 而 Keychain 已有這個 set 的 token 時，詢問是否沿用。未固定版本的套件提議固定到最新版。指令裡沒有 `--global` 之類的範圍旗標時才詢問。
 3. 在沙盒跑一次 `<command> --help`（不帶 token），找出 `-y`、`--yes`、`--non-interactive`、`--no-input`，作為「自動更新時怎麼略過問題」的預設選項。
-4. 多選要連結的 agent（目前只有已驗證的 Claude Code）；Codex、Cursor、OpenCode 直接讀 `~/.agents/skills`，只做說明。
+4. 多選要連結的 agent（已驗證的 Claude Code，加上 registry `linkTargets` 裡的目標）；Codex、Cursor、OpenCode 直接讀 `~/.agents/skills`，只做說明。
 5. 顯示 registry 內容，確認後寫入，接著詢問是否立刻安裝：installer 會在沙盒內互動執行，**由 vendor 自己的問題**決定裝哪些 skill、要不要改名，結果寫回 registry（§5.4）。
 
-「假裝成哪個 agent」（`stage`/`harvest`）不再詢問，固定 `.claude`；需要時用 `--json` 指定。沒有終端機時用 `--json` 傳入整筆設定：先印出要寫入的內容，`--dry-run` 停在這裡，沒有終端機要加 `-y`。寫入前驗證：set id、必要欄位、npm 版本固定、`{secret}` 與 `secret` 一致、`links` 為已知目標，且拒絕 token 明文。
+「假裝成哪個 agent」（`stage`/`harvest`）不再詢問，固定 `.claude`；需要時用 `--json` 指定。沒有終端機時用 `--json` 傳入整筆設定：先印出要寫入的內容，`--dry-run` 停在這裡，沒有終端機要加 `-y`。寫入前驗證：set id、必要欄位、npm 版本固定、`{secret}` 與 `secret` 一致、`links` 為已知目標（內建或 `linkTargets`），且拒絕 token 明文。
 
 ### 7.10 `skl resolve <set> <skill> (--prefix [p] | --rename <name> | --exclude | --undo)`
 

@@ -362,3 +362,42 @@ process.exit(1);
   assert.match(older.stdout, /nothing to bump/);
   assert.equal(sets().pkg.package, "x@1.2.0");
 });
+
+test("a registry link target gets links only from the sets that name it", () => {
+  const t = sandbox({ links: ["claude-code", "claude-work"] });
+  const file = t.paths.registry;
+  const reg = JSON.parse(fs.readFileSync(file, "utf8"));
+  reg.linkTargets = { "claude-work": { label: "Claude Code (work)", dir: "~/.claude-work/skills" } };
+  reg.sets.plain = { ...reg.sets.emil, links: undefined, namespace: "plain" };
+  fs.writeFileSync(file, JSON.stringify(reg));
+  const work = path.join(t.home, ".claude-work", "skills");
+  const dest = path.join(t.paths.skillsDir, "animate");
+  assert.equal(t.skl("update", "-y").status, 0);
+  assert.equal(fs.readlinkSync(path.join(t.paths.links[0], "animate")), dest);
+  assert.equal(fs.readlinkSync(path.join(work, "animate")), dest);
+  assert.ok(fs.lstatSync(path.join(t.paths.links[0], "plain-animate")).isSymbolicLink());
+  assert.ok(!fs.lstatSync(path.join(work, "plain-animate"), { throwIfNoEntry: false }));
+  // Dropping the target from a set removes only that link.
+  reg.sets.emil.links = ["claude-code"];
+  fs.writeFileSync(file, JSON.stringify(reg));
+  assert.equal(t.skl("update", "emil", "-y").status, 0);
+  assert.ok(!fs.lstatSync(path.join(work, "animate"), { throwIfNoEntry: false }));
+  assert.ok(fs.lstatSync(path.join(t.paths.links[0], "animate")).isSymbolicLink());
+});
+
+test("registry link targets are checked when the registry is read", () => {
+  const t = sandbox();
+  const file = t.paths.registry;
+  const reg = JSON.parse(fs.readFileSync(file, "utf8"));
+  const status = (linkTargets: unknown, links?: string[]) => {
+    fs.writeFileSync(file, JSON.stringify({ ...reg, linkTargets, sets: { emil: { ...reg.sets.emil, links } } }));
+    return t.skl("status").stderr;
+  };
+  assert.match(status({ "claude-code": { dir: "~/x/skills" } }), /"claude-code" is built in/);
+  assert.match(status({ work: { dir: "relative/skills" } }), /dir must be an absolute folder or start with ~\//);
+  assert.match(status({ work: { dir: "~/../skills" } }), /no \.\./);
+  assert.match(status({ work: { dir: "~/.agents/skills" } }), /overlaps skillport's own folders/);
+  assert.match(status({ work: { dir: "~/.claude/skills" } }), /another target already uses/);
+  assert.match(status(undefined, ["claude-work"]), /links must be a list of: claude-code/);
+  assert.match(status({ "claude-work": { dir: "~/w/skills" } }, ["claude-work"]), /^$/);
+});

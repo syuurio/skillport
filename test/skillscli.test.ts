@@ -138,3 +138,18 @@ test("a skills-cli set's links follow its setting for skills already installed",
   fs.mkdirSync(path.join(claude, "tdd"));
   assert.deepEqual(cliLinkChanges(paths, ["tdd"], []).remove, []);
 });
+
+test("a skills-cli set gets links in registry link targets, which npx skills does not know", async () => {
+  const { cliLinkChanges } = await import("../src/skillscli.ts");
+  const { withLinkTargets } = await import("../src/registry.ts");
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "skillport-clitarget-"));
+  const paths = withLinkTargets(defaultPaths(home), { version: 1, linkTargets: { work: { dir: "~/.claude-work/skills" } }, sets: {} });
+  const work = path.join(home, ".claude-work", "skills");
+  assert.equal(paths.linkTargets.work, work);
+  assert.ok(paths.agentDirs.includes(work));
+  fs.mkdirSync(path.join(paths.skillsDir, "tdd"), { recursive: true });
+  // npx skills already made Claude Code's link; only the work one is missing.
+  fs.mkdirSync(paths.links[0], { recursive: true });
+  fs.symlinkSync(path.join(paths.skillsDir, "tdd"), path.join(paths.links[0], "tdd"));
+  assert.deepEqual(cliLinkChanges(paths, ["tdd"], [paths.links[0], work]), { add: [path.join(work, "tdd")], remove: [] });
+});

@@ -22,6 +22,7 @@ import {
   linkDirsFor,
   prefixOf,
   readRegistry,
+  withLinkTargets,
   runsUnattended,
   skillName,
   writeRegistry,
@@ -64,10 +65,12 @@ async function main(argv: string[]): Promise<number> {
     dryRun: rest.includes("--dry-run"),
   };
   const args = rest.filter((a) => !a.startsWith("-"));
-  const paths = defaultPaths();
+  const base = defaultPaths();
+  const registry = readRegistry(base.registry);
+  const paths = withLinkTargets(base, registry);
   const ctx: Ctx = {
     paths,
-    registry: readRegistry(paths.registry),
+    registry,
     saveRegistry: (r) => writeRegistry(paths.registry, r),
   };
   // Every command that writes state, staging, the registry or the Keychain
@@ -139,7 +142,7 @@ async function register(ctx: Ctx, id: string | undefined, rest: string[], flags:
   } else if (ctx.registry.sets[id]) {
     throw new Error(`Set "${id}" already exists in ${ctx.paths.registry}.`);
   }
-  const { set, secret } = await askForSet(id, ctx.paths);
+  const { set, secret } = await askForSet(id, ctx.paths, ctx.registry);
   const problems = validateSet(id, set, ctx.registry);
   if (problems.length) throw new Error(`Not registered:\n  ${problems.join("\n  ")}`);
   note(JSON.stringify({ [id]: set }, null, 2), "Registry entry");
@@ -378,8 +381,8 @@ async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
     const links = linkDirsFor(ctx.paths, getSet(draft.registry, id));
     const before = readState(ctx.paths.stateDir).cli?.[id]?.skills ?? [];
     const recordChanged = ownedAfter.join() !== [...before].sort().join();
-    // Skills that stay installed must follow the set's links too.
-    // (New skills get their links from npx skills itself.)
+    // Skills that stay installed must follow the set's links too. New ones
+    // get Claude Code's link from npx skills and the rest after it runs.
     const linkChanges = cliLinkChanges(ctx.paths, ownedAfter.filter((n) => !p.add.includes(n)), links);
     printItems("link", linkChanges.add.map(home));
     printItems("unlink", linkChanges.remove.map(home));
@@ -412,6 +415,7 @@ async function syncCli(ctx: Ctx, id: string, flags: Flags): Promise<number> {
     });
     record(ownedAfter);
     applyCliLinks(ctx.paths, linkChanges);
+    applyCliLinks(ctx.paths, cliLinkChanges(ctx.paths, p.add, links));
     if (resolved) ctx.saveRegistry(draft.registry);
     ctx.registry = draft.registry;
     console.log("  applied.");
