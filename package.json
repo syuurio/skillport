@@ -2,6 +2,7 @@
   "name": "skillport",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "One place for agent skills from vendor installers, npm packages and npx skills: install into ~/.agents/skills, link into agents that need it, check and apply updates.",
   "type": "module",
   "bin": {

@@ -18,7 +18,7 @@ skl needs macOS (Keychain and the daily check), Node 23.6 or later (it runs
 its TypeScript directly), and git and npm on your PATH.
 
 ```
-git clone <skillport repo> ~/dev/skillport
+git clone git@github.com:syuurio/skillport.git ~/dev/skillport
 cd ~/dev/skillport && npm install
 ln -s ~/dev/skillport/bin/skillport ~/.local/bin/skl   # any folder on your PATH
 skl doctor
