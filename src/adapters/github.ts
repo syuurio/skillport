@@ -17,6 +17,32 @@ const TIMEOUT_MS = 5 * 60 * 1000;
 export const copySkips = (name: string, isDir: boolean) =>
   name === "metadata.json" || (isDir && (name === ".git" || name === "__pycache__" || name === "__pypackages__"));
 
+const SKIP_DIRS = ["node_modules", ".git", "dist", "build", "__pycache__"];
+const AGENT_SKILL_DIRS = [".agents", ".claude", ".cline", ".codebuddy", ".codex", ".commandcode", ".continue", ".factory", ".github", ".goose", ".grok", ".iflow", ".junie", ".kilo", ".kilocode", ".kimchi", ".kiro", ".minimax", ".mux", ".neovate", ".opencode", ".openhands"].map((d) => `${d}/skills`);
+
+/**
+ * Which of a repo's SKILL.md folders npx skills@1.7.0 installs (its
+ * discoverSkills), from the repo's file listing: a SKILL.md at the root is
+ * the only skill; otherwise the root's own folders and the usual skill
+ * folders, and only when those hold none, every folder five levels down.
+ * Skills a .claude-plugin manifest points at elsewhere are not seen here.
+ */
+export function npxSkillDirs(dirs: readonly string[]): string[] {
+  const has = new Set(dirs);
+  if (has.has(".")) return ["."];
+  const under = (d: string, root: string) => (root === "." ? d.split("/") : d.startsWith(`${root}/`) ? d.slice(root.length + 1).split("/") : null);
+  // A folder with a SKILL.md is taken and not looked inside; skipped folders are not entered.
+  const reached = (d: string, root: string, maxDepth: number) => {
+    const rel = under(d, root);
+    if (!rel || rel.length > maxDepth) return false;
+    return rel.slice(0, -1).every((seg, i) => !SKIP_DIRS.includes(seg) && !has.has([root, ...rel.slice(0, i + 1)].filter((s) => s !== ".").join("/")));
+  };
+  const containers: [string, number][] = [[".", 1], ...["skills", "skills/.curated", "skills/.experimental", "skills/.system", ...AGENT_SKILL_DIRS].map((c): [string, number] => [c, 3])];
+  const found = dirs.filter((d) => containers.some(([root, depth]) => reached(d, root, depth)));
+  if (found.length) return found;
+  return dirs.filter((d) => d.split("/").length <= 5 && !d.split("/").some((seg) => SKIP_DIRS.includes(seg)));
+}
+
 export function shadowHome(sklDir: string, id: SourceId): string {
   return path.join(sklDir, "cli", id);
 }

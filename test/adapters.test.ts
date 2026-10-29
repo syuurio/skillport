@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { buildSource } from "../src/add.ts";
+import { npxSkillDirs } from "../src/adapters/github.ts";
 import { skillsIn } from "../src/adapters/index.ts";
 import { fetchInstaller } from "../src/adapters/installer.ts";
 import { readLock } from "../src/lock.ts";
@@ -143,4 +144,17 @@ test("the shadow HOME environment leaves out every variable that would point npx
   } finally {
     process.env = saved;
   }
+});
+
+test("npxSkillDirs takes the folders npx skills installs, not every SKILL.md in the repo", () => {
+  // skillport's own layout: test fixtures are not skills.
+  assert.deepEqual(npxSkillDirs(["skills/edit", "skills/merge", "test/fixtures/v2/local/alpha", "test/fixtures/v2/local/beta"]), ["skills/edit", "skills/merge"]);
+  // Grouped skills, three levels into skills/.
+  assert.deepEqual(npxSkillDirs(["skills/engineering/tdd", "skills/misc/a/b/deep"]), ["skills/engineering/tdd"]);
+  // Skills straight under the root, and a folder inside a skill is not another skill.
+  assert.deepEqual(npxSkillDirs(["wiki", "wiki/examples/demo", "docs/guide/x"]), ["wiki"]);
+  // A SKILL.md at the root is the only skill.
+  assert.deepEqual(npxSkillDirs([".", "skills/a"]), ["."]);
+  // Nothing in the usual places: every folder five levels down, outside skipped ones.
+  assert.deepEqual(npxSkillDirs(["pkg/a/b/one", "a/b/c/d/e/six", "node_modules/x/y"]), ["pkg/a/b/one"]);
 });

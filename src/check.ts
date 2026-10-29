@@ -5,7 +5,7 @@ import path from "node:path";
 import { latestVersion, sandboxEnv } from "./acquire.ts";
 import { hasSecret } from "./keychain.ts";
 import { fetchLocal } from "./adapters/local.ts";
-import { copySkips, headCommit } from "./adapters/github.ts";
+import { copySkips, headCommit, npxSkillDirs } from "./adapters/github.ts";
 import { describeExternal, externalSkills } from "./external.ts";
 import type { Lock, SkillLock } from "./lock.ts";
 import { type Manifest, type SkillId, type SkillName, type Source, type SourceId, installedName, splitSkillId } from "./manifest.ts";
@@ -81,7 +81,7 @@ function checkGithub(sid: SourceId, source: Extract<Source, { type: "github" }>,
   // Skills by their folder in the repo, as the lock recorded at install;
   // older locks without paths fall back to the folder's own name.
   const known = lock.sources[sid]?.paths;
-  const dirs = tree.filter((e) => e.type === "blob" && path.posix.basename(e.path) === "SKILL.md").map((e) => path.posix.dirname(e.path));
+  const dirs = npxSkillDirs(tree.filter((e) => e.type === "blob" && path.posix.basename(e.path) === "SKILL.md").map((e) => path.posix.dirname(e.path)));
   const dirOf = (o: string) => known?.[o] ?? dirs.find((d) => path.posix.basename(d) === o);
   // Hash each folder the way npx skills copies it, so files it leaves out
   // do not read as a change.
