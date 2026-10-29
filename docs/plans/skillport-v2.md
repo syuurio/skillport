@@ -417,17 +417,17 @@ A phase is verified only when its unit and live boxes are all checked. Tests alo
 
 - [x] Copy your real v1 registry and state into the sandbox. Run `skl migrate --dry-run` and `skl migrate`. Paste both.
 - [x] Run `rg` for every deleted module name and paste the empty result.
-- [ ] On your real machine, run `skl migrate --dry-run` and show you the plan. The real migration runs only after your approval.
+- [x] On your real machine, run `skl migrate --dry-run` and show you the plan. The real migration runs only after your approval.
 
 **Done.**
 
-- [ ] Commit `feat!: migrate to skillport v2 and remove v1` with a `BREAKING CHANGE` footer and close LAB-23.
+- [x] Commit `feat!: migrate to skillport v2 and remove v1` with a `BREAKING CHANGE` footer and close LAB-23. Landed as `38668e7` (migrate) and `31b492c` (`feat!: remove skillport v1`); the real migration ran on 2026-10-29.
 
 ## Close the program
 
-- [ ] Every box above is checked with its evidence.
-- [ ] LAB-12 moves to Done with a summary of the commits.
-- [ ] LAB-24 and LAB-25 stay in the backlog for after v1.
+- [x] Every phase is verified with its evidence. P1 to P8 were not ticked in this file as they landed; their evidence, the commit SHA and live output, is in the comments of LAB-13 to LAB-20, all Done.
+- [x] LAB-12 moves to Done with a summary of the commits.
+- [x] LAB-24 and LAB-25 stay in the backlog for after v1.
 
 ## Appendix A. Prototype evidence
 
