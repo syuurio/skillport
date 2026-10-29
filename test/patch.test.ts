@@ -179,3 +179,22 @@ test("--from-disk takes an edit right next to a rewritten reference", async () =
   assert.deepEqual(sync(), []);
   assert.equal(treeHash(dest), edited);
 });
+
+test("applying a patch ignores a .git that came with the vendor's content", async () => {
+  const { paths, write, release, run, installed } = sandbox();
+  write(lines(20));
+  // Run inside the folder, git would take this as its repository and fail on it.
+  fs.writeFileSync(path.join(paths.home, "vendor", "alpha", ".git"), "gitdir: /nonexistent/skl-test\n");
+  release();
+  await run("edit", replaceLine(2, "line 2, mine"));
+  assert.match(installed(), /line 2, mine/);
+});
+
+test("a patch reaching outside the skill is refused", async () => {
+  const { applyPatch } = await import("../src/patch.ts");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "skl-unsafe-"));
+  const evil = "diff --git a/../x b/../x\nnew file mode 100644\n--- /dev/null\n+++ b/../x\n@@ -0,0 +1 @@\n+x\n";
+  assert.throws(() => applyPatch(dir, evil), /paths or modes skl does not apply/);
+  const link = "diff --git a/l b/l\nnew file mode 120000\n--- /dev/null\n+++ b/l\n@@ -0,0 +1 @@\n+/etc/passwd\n\\ No newline at end of file\n";
+  assert.throws(() => applyPatch(dir, link), /paths or modes skl does not apply/);
+});

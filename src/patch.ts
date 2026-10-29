@@ -67,8 +67,18 @@ export function diffTrees(a: string, b: string): string {
 
 /** Apply a patch from diffTrees to `dir` in place; throws with git's reason when it does not apply. */
 export function applyPatch(dir: string, text: string): void {
-  const r = git(["apply", "-p1", "--whitespace=nowarn", "-"], dir, text);
-  if (r.status !== 0) throw new Error(r.stderr.trim() || "git apply failed");
+  // git runs from an empty folder of ours: started inside `dir`, a .git that
+  // vendor content brought would be read as a repository, config included.
+  // --unsafe-paths lets --directory point outside that folder, so the check
+  // it turns off (paths stay inside the target) is done here.
+  const bad = [...text.matchAll(/^(?:diff --git a\/(\S+) b\/(\S+)|(?:new|deleted) file mode (\d+)|new mode (\d+))$/gm)].filter(
+    ([, a, b, mode1, mode2]) => [a, b].some((p) => p !== undefined && (p.startsWith("/") || p.split("/").includes(".."))) || [mode1, mode2].some((m) => m !== undefined && !/^100[67][0-9]{2}$/.test(m)),
+  );
+  if (bad.length) throw new Error(`the patch has paths or modes skl does not apply: ${bad.map(([line]) => line).join("; ")}`);
+  withTemp((tmp) => {
+    const r = git(["apply", "-p1", "--whitespace=nowarn", "--unsafe-paths", `--directory=${fs.realpathSync(dir)}`, "-"], tmp, text);
+    if (r.status !== 0) throw new Error(r.stderr.trim() || "git apply failed");
+  });
 }
 
 interface Entry {
