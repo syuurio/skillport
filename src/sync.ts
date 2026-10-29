@@ -4,7 +4,7 @@ import type { Fetched } from "./adapters/index.ts";
 import { fetchLocal } from "./adapters/local.ts";
 import { isOursOrFree, link, moveToTrash, trashDir, unlink } from "./apply.ts";
 import { type Lock, type SkillLock, writeLock } from "./lock.ts";
-import { type Manifest, type SkillId, type SkillName, type Source, type SourceId, installedName, skillId } from "./manifest.ts";
+import { type Manifest, type SkillId, type SkillName, type Source, type SourceId, installedName, skillId, splitSkillId } from "./manifest.ts";
 import { DEFAULT_LINKS, type Paths } from "./registry.ts";
 import { type Rewrite, render } from "./render.ts";
 import { putInStore, storedAt } from "./store.ts";
@@ -50,6 +50,18 @@ export interface SyncOptions {
   now?: string;
   /** Sources fetched just now, by id. */
   fetched?: ReadonlyMap<SourceId, Fetched>;
+  /** Replace skills you changed in place; your copies go to trash. */
+  discardEdits?: boolean;
+}
+
+/** Installed skills whose folder is no longer what skl wrote: you changed them in place. */
+function editedInPlace(paths: Paths, lock: Lock): Map<SkillId, SkillLock> {
+  const edited = new Map<SkillId, SkillLock>();
+  for (const [id, entry] of Object.entries(lock.skills) as [SkillId, SkillLock][]) {
+    const dest = path.join(paths.skillsDir, entry.name);
+    if (fs.lstatSync(dest, { throwIfNoEntry: false })?.isDirectory() && treeHash(dest) !== entry.output) edited.set(id, entry);
+  }
+  return edited;
 }
 
 /** The skills the manifest asks for; stores what was fetched and records it in the lock. */
@@ -101,13 +113,15 @@ function wanted(paths: Paths, manifest: Manifest, lock: Lock, now: string, fetch
   return { wants, offered };
 }
 
-/** Refuse to replace anything skl did not create, before the first move. */
-function recheck(paths: Paths, lock: Lock, wants: Want[]): void {
+/** Refuse to replace anything skl did not create, or that you edited, before the first move. */
+function recheck(paths: Paths, lock: Lock, wants: Want[], held: Map<SkillId, SkillLock>): void {
   const owned = new Set(Object.values(lock.skills).map((s) => s.name));
+  const kept = new Map([...held].map(([id, s]) => [s.name, id]));
   const problems: string[] = [];
   for (const w of wants) {
     const dest = path.join(paths.skillsDir, w.name);
     if (fs.lstatSync(dest, { throwIfNoEntry: false }) && !owned.has(w.name)) problems.push(`${dest} exists and was not installed by skl`);
+    if (kept.has(w.name)) problems.push(`${w.id} would replace ${w.name}, which you edited (${kept.get(w.name)})`);
     for (const dir of w.dirs) {
       const at = path.join(dir, w.name);
       if (!isOursOrFree(at, dest)) problems.push(`${at} exists and is not skl's link`);
@@ -120,16 +134,24 @@ function recheck(paths: Paths, lock: Lock, wants: Want[]): void {
 export function sync(paths: Paths, manifest: Manifest, lock: Lock, opts: SyncOptions = {}): string[] {
   const now = opts.now ?? new Date().toISOString();
   const before = JSON.stringify(lock);
-  const { wants, offered } = wanted(paths, manifest, lock, now, opts.fetched ?? new Map());
-  recheck(paths, lock, wants);
+  const { wants: all, offered } = wanted(paths, manifest, lock, now, opts.fetched ?? new Map());
+  // A skill you changed in place stays as it is until you say otherwise.
+  const held = opts.discardEdits ? new Map<SkillId, SkillLock>() : editedInPlace(paths, lock);
+  const wants = all.filter((w) => !held.has(w.id));
+  recheck(paths, lock, wants, held);
 
   const staging = path.join(paths.sklDir, "staging");
   fs.rmSync(staging, { recursive: true, force: true });
   fs.mkdirSync(staging, { recursive: true, mode: 0o700 });
   const renames = new Map<SourceId, Map<string, string>>();
-  for (const w of wants) {
-    if (!renames.has(w.source)) renames.set(w.source, new Map());
-    renames.get(w.source)?.set(w.original, w.name);
+  const installedAs = [
+    ...wants.map((w) => [w.id, w.name] as const),
+    ...[...held].map(([id, s]) => [id, s.name] as const),
+  ];
+  for (const [id, name] of installedAs) {
+    const { source, original } = splitSkillId(id);
+    if (!renames.has(source)) renames.set(source, new Map());
+    renames.get(source)?.set(original, name);
   }
   const rendered = wants.map((w) => {
     const to = path.join(staging, w.name);
@@ -147,8 +169,11 @@ export function sync(paths: Paths, manifest: Manifest, lock: Lock, opts: SyncOpt
   const lines: string[] = [];
   const trash = trashDir(paths.sklDir, "sync");
   const keep = new Map(wants.map((w) => [w.id, w.name]));
+  for (const [id, entry] of held) {
+    lines.push(`edited ${entry.name} (${id}) was changed in place; kept as is`, "  to replace it with skl's version: skl sync --discard-edits");
+  }
   for (const [id, entry] of Object.entries(lock.skills) as [SkillId, SkillLock][]) {
-    if (keep.get(id) === entry.name) continue;
+    if (keep.get(id) === entry.name || held.has(id)) continue;
     moveToTrash(trash, path.join(paths.skillsDir, entry.name));
     unlink(paths, entry.name);
     delete lock.skills[id];

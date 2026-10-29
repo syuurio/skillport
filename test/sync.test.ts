@@ -105,3 +105,24 @@ test("a new folder in a local source is installed on the next sync", () => {
   assert.deepEqual(run(), ["fx/gamma -> fx-gamma"]);
   assert.deepEqual(ls(paths.skillsDir), ["fx-alpha", "fx-beta", "fx-gamma"]);
 });
+
+test("a skill you changed in place is kept, reported, and replaced only with discardEdits", () => {
+  const { paths, manifest, run, trashed } = sandbox();
+  run();
+  const alpha = path.join(paths.skillsDir, "fx-alpha", "SKILL.md");
+  fs.appendFileSync(alpha, "\nMine.\n");
+  const held = ["edited fx-alpha (fx/alpha) was changed in place; kept as is", "  to replace it with skl's version: skl sync --discard-edits"];
+  assert.deepEqual(run(), held);
+  assert.match(fs.readFileSync(alpha, "utf8"), /Mine\./);
+
+  const renamed = run(manifest({ prefix: "f" }));
+  assert.deepEqual(renamed.slice(0, 2), held);
+  assert.ok(renamed.includes("fx/beta -> f-beta"), renamed.join("\n"));
+  assert.deepEqual(ls(paths.skillsDir), ["f-beta", "fx-alpha"]);
+  assert.match(fs.readFileSync(path.join(paths.skillsDir, "f-beta", "SKILL.md"), "utf8"), /The `fx-alpha` skill/);
+
+  const replaced = sync(paths, manifest({ prefix: "f" }), readLock(paths.lockFile), { discardEdits: true });
+  assert.ok(replaced.includes("fx/alpha -> f-alpha"), replaced.join("\n"));
+  assert.deepEqual(ls(paths.skillsDir), ["f-alpha", "f-beta"]);
+  assert.ok(trashed().includes("fx-alpha"));
+});

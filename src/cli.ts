@@ -57,7 +57,8 @@ const USAGE = `skillport — one place for skills that vendor installers scatter
   skl namespace <set> (<prefix> | --off)   Prefix every skill of a set, new ones too
   skl bump <set> [version]         Move a set's pinned installer or package to the latest (or given) version
   skl secret <set>                 Store a set's token in Keychain
-  skl sync                         v2: make ~/.agents/skills match the manifest and lock (offline)
+  skl sync [--discard-edits]       v2: make ~/.agents/skills match the manifest and lock (offline)
+                                   skills you changed in place are kept unless --discard-edits
   skl add <id> (--installer "<command>" [--unattended "<args>"] | --npm <pkg@ver> --path <dir> | --local <dir>)
            [--prefix <p> | --no-prefix] [-y]   v2: add a source and install its skills
 
@@ -87,7 +88,7 @@ async function main(argv: string[]): Promise<number> {
   if (writes.includes(cmd) || (cmd === "doctor" && rest.includes("--fix"))) cleanups.add(acquireLock(paths.stateDir));
   switch (cmd) {
     case "sync":
-      return syncCmd(base);
+      return syncCmd(base, rest.includes("--discard-edits"));
     case "register":
       return register(ctx, args[0], rest, flags);
     case "status":
@@ -170,11 +171,11 @@ async function addCmd(base: Paths, rest: string[]): Promise<number> {
   return 0;
 }
 
-function syncCmd(base: Paths): number {
+function syncCmd(base: Paths, discardEdits: boolean): number {
   const manifest = readManifest(base.manifest);
   const paths = withLinkTargets(base, manifest, base.manifest);
   cleanups.add(acquireLock(paths.sklDir));
-  const lines = syncV2(paths, manifest, readLock(paths.lockFile));
+  const lines = syncV2(paths, manifest, readLock(paths.lockFile), { discardEdits });
   console.log(lines.length ? lines.join("\n") : "up to date");
   return 0;
 }
