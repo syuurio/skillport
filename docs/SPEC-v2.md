@@ -219,7 +219,7 @@ store 每個身分保留目前的 `base`；有 patch 的身分另外保留 patch
 }
 ```
 
-來源的 `state` 只會是 `up-to-date`、`updates`、`pinned-behind`、`unknown`、`error`、`blocked` 其中之一，各自帶不同欄位。skill 的旗標：`customized`（有 patch）、`edited`（磁碟和 `output` 不符）、`conflict`（合併衝突，值是 merge 資料夾）。
+每個來源另外帶自己的 `checkedAt`（範例省略）：`skl check <source>` 只檢查部分來源時，其他來源保留上次的結果與時間。來源的 `state` 只會是 `up-to-date`、`updates`、`pinned-behind`、`unknown`、`error`、`blocked` 其中之一，各自帶不同欄位。skill 的旗標：`customized`（有 patch）、`edited`（磁碟和 `output` 不符）、`conflict`（合併衝突，值是 merge 資料夾）。
 
 ### 5.5 Patch 與 note
 

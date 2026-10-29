@@ -37,6 +37,8 @@ import { treeHash } from "./treehash.ts";
 import { select } from "./select.ts";
 import { type AddKind, addSource, buildSource } from "./add.ts";
 import { adopt } from "./adopt.ts";
+import { check as checkSources, realNet } from "./check.ts";
+import { formatStatus, readStatus, which, writeStatus } from "./status.ts";
 import { readLock } from "./lock.ts";
 import { readManifest } from "./manifest.ts";
 import { sync as syncV2 } from "./sync.ts";
@@ -63,6 +65,7 @@ const USAGE = `skillport — one place for skills that vendor installers scatter
   skl add <id> (--github <owner/repo> | --installer "<command>" [--unattended "<args>"] | --npm <pkg@ver> --path <dir> | --local <dir>)
            [--prefix <p> | --no-prefix] [-y]   v2: add a source and install its skills
   skl adopt <owner/repo> [--as <id>] [-y]   v2: take over skills you installed with npx skills
+  skl which <name>                 v2: the source, original name and version of an installed skill
 
 Flags: --dry-run prints the plan only.  -y skips confirmations.
 Registry: ${defaultPaths().registry}`;
@@ -94,11 +97,13 @@ async function main(argv: string[]): Promise<number> {
     case "register":
       return register(ctx, args[0], rest, flags);
     case "status":
-      return status(ctx);
+      return fs.existsSync(base.manifest) ? statusV2(base) : status(ctx);
+    case "which":
+      return whichCmd(base, args[0]);
     case "doctor":
       return doctor(ctx, rest.includes("--fix"), flags);
     case "check":
-      return check(ctx, args);
+      return fs.existsSync(base.manifest) ? checkV2(base, args) : check(ctx, args);
     case "add":
       if (V2_KINDS.some((k) => rest.includes(`--${k}`))) return addCmd(base, rest);
       getSet(ctx.registry, args[0]);
@@ -182,6 +187,40 @@ async function adoptCmd(base: Paths, from: string, rest: string[]): Promise<numb
   const yes = rest.includes("-y") || rest.includes("--yes");
   const lines = await adopt(paths, manifest, readLock(paths.lockFile), from, { id: option(rest, "--as"), yes });
   console.log(lines.join("\n"));
+  return 0;
+}
+
+/** The manifest, the paths with its link targets, and the lock: what every v2 command starts from. */
+function v2(base: Paths) {
+  const manifest = readManifest(base.manifest);
+  const paths = withLinkTargets(base, manifest, base.manifest);
+  return { manifest, paths, lock: readLock(paths.lockFile) };
+}
+
+function checkV2(base: Paths, ids: string[]): number {
+  const { manifest, paths, lock } = v2(base);
+  cleanups.add(acquireLock(paths.sklDir));
+  const staging = path.join(paths.sklDir, "check");
+  cleanups.add(() => fs.rmSync(staging, { recursive: true, force: true }));
+  const result = checkSources(paths, manifest, lock, readStatus(paths.statusFile), ids, realNet(staging));
+  writeStatus(paths.statusFile, result);
+  console.log(formatStatus(manifest, lock, result));
+  for (const [id, s] of Object.entries(result.sources)) {
+    if (s.state === "updates" && s.link && (!ids.length || ids.includes(id))) console.log(`\n${id}: ${s.link}`);
+  }
+  return 0;
+}
+
+function statusV2(base: Paths): number {
+  const { manifest, paths, lock } = v2(base);
+  console.log(formatStatus(manifest, lock, readStatus(paths.statusFile)));
+  return 0;
+}
+
+function whichCmd(base: Paths, name: string | undefined): number {
+  if (!name) throw new Error("Usage: skl which <installed name>");
+  const { manifest, paths, lock } = v2(base);
+  console.log(which(paths, manifest, lock, name));
   return 0;
 }
 
