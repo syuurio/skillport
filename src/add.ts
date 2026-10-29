@@ -5,8 +5,7 @@ import { hasSecret, storeSecret, storeSecretValue } from "./keychain.ts";
 import type { Lock } from "./lock.ts";
 import { type Manifest, type SkillName, type Source, type SourceId, parseManifest, writeManifest } from "./manifest.ts";
 import { chooseMany, isInteractive } from "./prompt.ts";
-import type { Paths } from "./registry.ts";
-import { splitCommand } from "./register.ts";
+import type { Paths } from "./paths.ts";
 import { describeSync, sync } from "./sync.ts";
 import { extractSecret, usesSecret } from "./validate.ts";
 
@@ -95,4 +94,31 @@ function pick(id: string, all: SkillName[]): Promise<string[]> {
     all.map((n) => ({ value: n, label: n })),
     all,
   );
+}
+
+/** A command line split into words the way a shell would, quotes included. */
+function splitCommand(line: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let quote: string | null = null;
+  let started = false;
+  for (const ch of line.trim()) {
+    if (quote) {
+      if (ch === quote) quote = null;
+      else cur += ch;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+      started = true;
+    } else if (/\s/.test(ch)) {
+      if (started) out.push(cur);
+      cur = "";
+      started = false;
+    } else {
+      cur += ch;
+      started = true;
+    }
+  }
+  if (quote) throw new Error("Unclosed quote in command.");
+  if (started) out.push(cur);
+  return out;
 }

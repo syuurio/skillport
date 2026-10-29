@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { renderToString } from "ink";
 import type { Lock } from "../src/lock.ts";
 import { type SkillId, type SourceId, parseManifest } from "../src/manifest.ts";
-import { defaultPaths } from "../src/registry.ts";
+import { defaultPaths } from "../src/paths.ts";
 import type { Status } from "../src/status.ts";
 import { type Frame, Screen } from "../src/tui/app.ts";
 import { headerRight, listAction, skillRows, sourceRows, viewAction } from "../src/tui/model.ts";

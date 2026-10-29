@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { readSecret } from "./keychain.ts";
 import { isPackageName, isPinnedSpec, isReservedEnv, leadingEnv, usesSecret } from "./validate.ts";
-import type { InstallerSet, ManagedSet, NpmSet } from "./registry.ts";
+import type { InstallerSource, NpmSource } from "./manifest.ts";
 
 const INSTALLER_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -47,25 +47,8 @@ export interface AcquireOptions {
   secret?: string;
 }
 
-/** What an installer run needs, shared by v1 sets and v2 sources. */
-export type InstallerRun = Pick<InstallerSet, "command" | "unattended" | "secret" | "stage" | "harvest">;
-
-/**
- * Produce a directory holding one folder per skill, exactly as the vendor
- * ships it. `staging` is emptied first and belongs to the caller.
- */
-export function acquire(
-  id: string,
-  set: ManagedSet,
-  staging: string,
-  opts: AcquireOptions,
-): string {
-  fs.rmSync(staging, { recursive: true, force: true });
-  fs.mkdirSync(staging, { recursive: true, mode: 0o700 });
-  return set.type === "installer"
-    ? runInstaller(id, set, staging, opts)
-    : extractNpm(set, staging);
-}
+/** What an installer run needs. */
+export type InstallerRun = Pick<InstallerSource, "command" | "unattended" | "secret" | "stage" | "harvest">;
 
 /** Run an installer in a fake HOME under `staging`; returns the harvested folder. */
 export function runInstaller(
@@ -79,13 +62,13 @@ export function runInstaller(
     fs.mkdirSync(path.join(fakeHome, d), { recursive: true });
   }
   if (set.secret !== "keychain" && usesSecret(set)) {
-    // Running it would pass an empty token; a registry typo, not a choice.
+    // Running it would pass an empty token; a manifest typo, not a choice.
     throw new Error(`"${id}" uses {secret} in its command but has no "secret": "keychain".`);
   }
   const secret = set.secret === "keychain" ? (opts.secret ?? readSecret(id)) : "";
   const redact = (s: string) => (secret ? s.replaceAll(secret, "***") : s);
   // No vendor knowledge lives here: the scope flag is part of `command`, and
-  // the non-interactive switch is whatever the registry says it is.
+  // the non-interactive switch is whatever the manifest says it is.
   if (!opts.interactive && set.unattended === undefined) {
     throw new Error(`"${id}" declares no \`unattended\` args, so it only runs interactively: skl update ${id} -i`);
   }
@@ -94,7 +77,7 @@ export function runInstaller(
     ...(opts.interactive ? [] : (set.unattended ?? []).map((a) => a.replaceAll("{secret}", secret))),
   ];
   // Leading NAME=value words are environment for the installer, as a shell
-  // would treat them (GITHUB_TOKEN={secret} npx ...). The registry refuses
+  // would treat them (GITHUB_TOKEN={secret} npx ...). The manifest refuses
   // names the sandbox controls; checked again here in case it was bypassed.
   const { env, rest: argv } = leadingEnv(words);
   const extraEnv = Object.fromEntries(env);
@@ -169,7 +152,7 @@ export function npmPack(spec: string, dir: string): string {
   return realFolderPath(dir, "package");
 }
 
-export function extractNpm(set: Pick<NpmSet, "package" | "path">, staging: string): string {
+export function extractNpm(set: Pick<NpmSource, "package" | "path">, staging: string): string {
   return realFolderPath(npmPack(set.package, staging), set.path);
 }
 
@@ -196,45 +179,6 @@ export function listSkillDirs(root: string): string[] {
     .map((e) => path.join(root, e.name))
     .filter((d) => fs.existsSync(path.join(d, "SKILL.md")))
     .sort();
-}
-
-/** Package spec pinned in a set, e.g. `@aiforui/install@0.1.4`. */
-export function pinnedPackage(set: ManagedSet): { name: string; version: string } | null {
-  const spec = set.type === "npm" ? set.package : set.command.find(isPinnedSpec);
-  const m = spec && isPinnedSpec(spec) ? /^(@?[^@]+)@(.+)$/.exec(spec) : null;
-  return m ? { name: m[1], version: m[2] } : null;
-}
-
-/** When each version of a package was published, from npm (`npm view <name> time`); null if npm did not answer. */
-export function publishTimes(name: string, staging: string): Record<string, string> | null {
-  if (!isPackageName(name)) return null;
-  fs.mkdirSync(staging, { recursive: true, mode: 0o700 });
-  const r = spawnSync("npm", ["view", name, "time", "--json"], {
-    cwd: staging,
-    encoding: "utf8",
-    env: sandboxEnv(os.homedir(), staging),
-  });
-  if (r.status !== 0) return null;
-  try {
-    return JSON.parse(r.stdout) as Record<string, string>;
-  } catch {
-    return null;
-  }
-}
-
-/** Compare two x.y.z[-pre] versions: negative when a is older. A prerelease is older than its release. */
-export function compareVersions(a: string, b: string): number {
-  const parse = (v: string) => {
-    const [core, pre] = v.split("+")[0].split(/-(.*)/s);
-    return { nums: core.split(".").map(Number), pre: pre ?? "" };
-  };
-  const x = parse(a);
-  const y = parse(b);
-  for (let i = 0; i < 3; i++) if (x.nums[i] !== y.nums[i]) return x.nums[i] - y.nums[i];
-  if (x.pre === y.pre) return 0;
-  if (!x.pre) return 1;
-  if (!y.pre) return -1;
-  return x.pre < y.pre ? -1 : 1;
 }
 
 export function latestVersion(name: string, staging: string): string | null {

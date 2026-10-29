@@ -4,11 +4,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { SkillName, SourceId } from "./manifest.ts";
-import type { Paths } from "./registry.ts";
+import type { Paths } from "./paths.ts";
 
 // Customizations as patches against the vendor's original-name folder, and
 // the three-way merge that carries them across upstream changes. See
-// docs/SPEC-v2.md §5.5 and §10.
+// docs/SPEC.md §5.5 and §10.
 
 export function patchFiles(paths: Paths, source: SourceId, original: SkillName) {
   const dir = path.join(paths.patchesDir, source);

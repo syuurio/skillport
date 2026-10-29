@@ -5,7 +5,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { readLock } from "../src/lock.ts";
 import { type Manifest, type Source, type SourceId, parseManifest } from "../src/manifest.ts";
-import { defaultPaths, withLinkTargets } from "../src/registry.ts";
+import { defaultPaths, withLinkTargets } from "../src/paths.ts";
 import { describeSync, sync } from "../src/sync.ts";
 
 const fixtures = path.join(import.meta.dirname, "fixtures", "v2", "local");

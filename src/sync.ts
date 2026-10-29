@@ -7,7 +7,7 @@ import { describeExternal, externalSkills, foreignInTarget } from "./external.ts
 import { type Lock, type SkillLock, writeLock } from "./lock.ts";
 import { type Manifest, type SkillId, type SkillName, type Source, type SourceId, installedName, skillId, splitSkillId } from "./manifest.ts";
 import { type MergeInfo, applyPatch, applyPatchPartly, diffTrees, mergeDir, mergeTrees, patchFiles, patchHash, readMergeInfo } from "./patch.ts";
-import { DEFAULT_LINKS, type Paths } from "./registry.ts";
+import { DEFAULT_LINKS, type Paths } from "./paths.ts";
 import { home } from "./report.ts";
 import { type Rewrite, render } from "./render.ts";
 import { putInStore, storedAt } from "./store.ts";

@@ -1,8 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { Plan } from "./plan.ts";
-import type { Paths, Registry } from "./registry.ts";
-import { type State, writeState } from "./state.ts";
+import type { Paths } from "./paths.ts";
 import { isValidSkillName } from "./transform.ts";
 
 // Moving things into place. Every replaced or removed folder goes to the
@@ -59,93 +57,6 @@ export function unlink(paths: Paths, name: string): void {
     const at = path.join(dir, name);
     if (fs.lstatSync(at, { throwIfNoEntry: false }) && isOursOrFree(at, target)) fs.unlinkSync(at);
   }
-}
-
-/**
- * The plan was made before a confirmation prompt that may have sat for a
- * while. Re-check every destination and link before the first move, so a
- * folder or link that appeared meanwhile stops the run instead of being
- * trashed or unlinked, and nothing is left half-applied.
- */
-function recheck(paths: Paths, p: Plan, owned: Set<string>): void {
-  const problems: string[] = [];
-  for (const s of p.skills) {
-    const dest = path.join(paths.skillsDir, s.name);
-    if (fs.lstatSync(dest, { throwIfNoEntry: false }) && !owned.has(s.name)) problems.push(`${dest} appeared and is not managed by "${p.setId}"`);
-    for (const dir of p.links) {
-      const at = path.join(dir, s.name);
-      if (!p.strays.includes(at) && !isOursOrFree(at, dest)) problems.push(`${at} is not skillport's link`);
-    }
-  }
-  if (problems.length) throw new Error(`Something changed since the plan was made:\n  ${problems.join("\n  ")}`);
-}
-
-/**
- * Apply a plan without collisions or errors. Writes the registry too when the
- * plan captured renames chosen inside the installer. Returns the trash folder used.
- */
-export function apply(
-  paths: Paths,
-  p: Plan,
-  state: State,
-  registry: Registry,
-  saveRegistry: (r: Registry) => void,
-): string {
-  if (p.errors.length || p.collisions.length) throw new Error("Refusing to apply a plan with unresolved problems.");
-  const prev = state.sets[p.setId]?.skills ?? {};
-  const trash = trashDir(paths.stateDir, p.setId);
-  recheck(paths, p, new Set([...Object.keys(prev), ...p.adopted]));
-  // Adopting: identical copies scattered in agent folders go to the trash
-  // first, so the links can take their place.
-  for (const at of p.strays) moveToTrash(trash, at, path.join("strays", path.relative(paths.home, at)));
-  fs.mkdirSync(paths.skillsDir, { recursive: true });
-
-  for (const name of p.removed) {
-    moveToTrash(trash, path.join(paths.skillsDir, name));
-    unlink(paths, name);
-  }
-  const now = new Date().toISOString();
-  const skills: State["sets"][string]["skills"] = {};
-  for (const s of p.skills) {
-    const dest = path.join(paths.skillsDir, s.name);
-    if (s.write) {
-      moveToTrash(trash, dest);
-      fs.renameSync(s.staged, dest);
-    }
-    link(paths, s.name, p.links);
-    skills[s.name] = {
-      ...(s.original !== s.name ? { original: s.original } : {}),
-      hash: s.hash,
-      installed: s.installed,
-      updatedAt: s.write || !prev[s.name] ? now : prev[s.name].updatedAt,
-    };
-  }
-  const declined = p.declined ?? state.sets[p.setId]?.declined;
-  state.sets[p.setId] = { syncedAt: now, ...(p.source ? { source: p.source } : {}), skills, ...(declined?.length ? { declined } : {}) };
-  writeState(paths.stateDir, state);
-
-  if (p.captured) {
-    const set = registry.sets[p.setId];
-    if (set.type !== "skills-cli") {
-      if (Object.keys(p.captured.rename).length) set.rename = p.captured.rename;
-      else delete set.rename;
-      saveRegistry(registry);
-    }
-  }
-  return trash;
-}
-
-/** Remove every skill a managed set installed. */
-export function removeManaged(paths: Paths, setId: string, state: State): string[] {
-  const names = Object.keys(state.sets[setId]?.skills ?? {}).filter(isValidSkillName);
-  const trash = trashDir(paths.stateDir, `removed-${setId}`);
-  for (const name of names) {
-    moveToTrash(trash, path.join(paths.skillsDir, name));
-    unlink(paths, name);
-  }
-  delete state.sets[setId];
-  writeState(paths.stateDir, state);
-  return names;
 }
 
 /**

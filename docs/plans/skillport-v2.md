@@ -394,29 +394,29 @@ A phase is verified only when its unit and live boxes are all checked. Tests alo
 
 **Files.**
 
-- [ ] Create `src/migrate.ts`.
-- [ ] Delete `src/state.ts`, `src/collide.ts`, `src/register.ts`, `src/plan.ts`, the v1 parts of `src/registry.ts` and `src/skillscli.ts`, and their tests.
-- [ ] Delete `docs/SPEC.md` and rename `docs/SPEC-v2.md` to `docs/SPEC.md`.
-- [ ] Edit `README.md` for v2, including what goes into dotfiles (`~/.config/skl/` only) and the steps on a new machine (SPEC §5.3).
+- [x] Create `src/migrate.ts`.
+- [x] Delete `src/state.ts`, `src/collide.ts`, `src/register.ts`, `src/plan.ts`, the v1 parts of `src/registry.ts` and `src/skillscli.ts`, and their tests.
+- [x] Delete `docs/SPEC.md` and rename `docs/SPEC-v2.md` to `docs/SPEC.md`.
+- [x] Edit `README.md` for v2, including what goes into dotfiles (`~/.config/skl/` only) and the steps on a new machine (SPEC §5.3).
 
 **Build.**
 
-- [ ] `skl migrate [--dry-run]` turns the v1 registry and state into a manifest, lock and store. installer and npm sets keep their ids, `rename` and `namespace`. skills-cli sets become github sources installed on a shadow HOME before their originals are removed. Keychain tokens carry over.
-- [ ] The plan lists every skill as `old name -> new name` and needs confirmation.
-- [ ] Remove `skl register`, `skl resolve` and `skl bump`.
+- [x] `skl migrate [--dry-run]` turns the v1 registry and state into a manifest, lock and store. installer and npm sets keep their ids, `rename` and `namespace`. skills-cli sets become github sources installed on a shadow HOME before their originals are removed. Keychain tokens carry over.
+- [x] The plan lists every renamed skill as `old name -> new name`, counts the ones that keep their names, and needs confirmation.
+- [x] Remove `skl register`, `skl resolve` and `skl bump`.
 
 **You see.**
 
-- [ ] After migration, `skl status` lists every source you had in v1.
+- [x] After migration, `skl status` lists every source you had in v1. A skills-cli set with nothing installed (your `pstack`) is listed under Not migrated instead.
 
 **Verify, unit.**
 
-- [ ] `test/migrate.test.ts` converts a v1 registry fixture with all three set types. Run `npm test`.
+- [x] `test/migrate.test.ts` converts a v1 registry fixture with all three set types. Run `npm test`.
 
 **Verify, live.**
 
-- [ ] Copy your real v1 registry and state into the sandbox. Run `skl migrate --dry-run` and `skl migrate`. Paste both.
-- [ ] Run `rg` for every deleted module name and paste the empty result.
+- [x] Copy your real v1 registry and state into the sandbox. Run `skl migrate --dry-run` and `skl migrate`. Paste both.
+- [x] Run `rg` for every deleted module name and paste the empty result.
 - [ ] On your real machine, run `skl migrate --dry-run` and show you the plan. The real migration runs only after your approval.
 
 **Done.**

@@ -1,8 +1,7 @@
-import type { SkillSet } from "./registry.ts";
 import { isValidSkillName } from "./transform.ts";
 
-// Rules for registry entries, in one place. The registry is checked when it
-// is read, so a hand-edited entry gets the same scrutiny as one the wizard
+// Rules for manifest sources, in one place. The manifest is checked when it
+// is read, so a hand-edited source gets the same scrutiny as one skl add
 // wrote.
 
 /**
@@ -179,22 +178,6 @@ export function githubRepo(source: string): string | null {
   return m ? m[1].toLowerCase() : null;
 }
 
-/** `owner/repo` for GitHub sources in any spelling; other sources as given. */
-export function normalizeSource(source: string): string {
-  return githubRepo(source) ?? source.trim();
-}
-
-/**
- * The set that already uses `source` (compared as normalizeSource does), if
- * any. npx skills' lock cannot tell two sets on one source apart.
- */
-export function setUsingSource(sets: Record<string, SkillSet>, source: string, exceptId?: string): string | undefined {
-  const key = normalizeSource(source);
-  return Object.entries(sets).find(
-    ([id, s]) => id !== exceptId && s.type === "skills-cli" && typeof s.source === "string" && normalizeSource(s.source) === key,
-  )?.[0];
-}
-
 /** A path inside a folder: relative, no `..` segments. */
 export function isInside(p: unknown): boolean {
   return typeof p === "string" && p.length > 0 && !p.startsWith("/") && !p.split("/").includes("..");
@@ -202,47 +185,7 @@ export function isInside(p: unknown): boolean {
 
 export const isWords = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
 
-/** Shapes of the per-set lists and rules; a wrong shape would silently change what installs. */
-function validateCommon(set: SkillSet, problems: string[]): void {
-  const raw = set as unknown as Record<string, unknown>;
-  if (raw.skills !== undefined) {
-    problems.push("skills is not a registry field: skl add asks which skills to install and remembers the answer in state");
-  }
-  for (const key of ["exclude"] as const) {
-    if (raw[key] !== undefined && !(isWords(raw[key]) && (raw[key] as string[]).every(isValidSkillName))) {
-      problems.push(`${key} must be a list of skill names`);
-    }
-  }
-  if (set.type === "skills-cli") {
-    if (raw.namespace !== undefined) problems.push("namespace is not available for skills-cli sets: npx skills owns their names");
-    return;
-  }
-  if (raw.namespace !== undefined && !(typeof raw.namespace === "string" && isValidSkillName(raw.namespace))) {
-    problems.push("namespace must be a-z, 0-9 and single hyphens");
-  }
-  if (raw.prefix !== undefined && !(typeof raw.prefix === "string" && isValidSkillName(raw.prefix))) {
-    problems.push("prefix must be a-z, 0-9 and single hyphens");
-  }
-  if (raw.rename !== undefined) {
-    const rules = raw.rename;
-    const ok =
-      typeof rules === "object" &&
-      rules !== null &&
-      !Array.isArray(rules) &&
-      Object.entries(rules).every(
-        ([from, r]) =>
-          isValidSkillName(from) &&
-          typeof r === "object" &&
-          r !== null &&
-          typeof (r as { to?: unknown }).to === "string" &&
-          isValidSkillName((r as { to: string }).to) &&
-          typeof (r as { reason?: unknown }).reason === "string",
-      );
-    if (!ok) problems.push('rename must map skill names to { "to": <skill name>, "reason": <text>, "at": <date> }');
-  }
-}
-
-/** What is wrong with a skills-cli source, if anything. Used by the wizard before it lists the source. */
+/** What is wrong with a source passed to npx skills, if anything. */
 export function sourceProblem(source: unknown): string | undefined {
   if (typeof source !== "string" || !source || /\s/.test(source) || source.startsWith("-")) {
     return "source must be one word, as passed to npx skills add";
@@ -251,7 +194,7 @@ export function sourceProblem(source: unknown): string | undefined {
   return undefined;
 }
 
-/** Problems with the registry's own link targets; `builtIn` ids may not be redefined. */
+/** Problems with the manifest's own link targets; `builtIn` ids may not be redefined. */
 export function validateLinkTargets(targets: unknown, builtIn: string[]): string[] {
   if (targets === undefined) return [];
   if (typeof targets !== "object" || targets === null || Array.isArray(targets)) {
@@ -316,31 +259,5 @@ export function npmProblems(set: { package?: unknown; path?: unknown }): string[
     problems.push("package must be a registry package pinned to a version, e.g. motion-ai@14.1.0");
   }
   if (!isInside(set.path)) problems.push("path must be a folder inside the package (relative, no ..)");
-  return problems;
-}
-
-/** Problems with one entry; empty when it is usable. `linkIds` are the known link targets. */
-export function validateEntry(id: string, set: SkillSet, linkIds: string[]): string[] {
-  const problems: string[] = [];
-  if (!isValidSkillName(id)) problems.push(`set id "${id}" must use a-z, 0-9 and single hyphens`);
-  if (set.links !== undefined && !(isWords(set.links) && set.links.every((l) => linkIds.includes(l)))) {
-    problems.push(`links must be a list of: ${linkIds.join(", ")}`);
-  }
-  validateCommon(set, problems);
-  switch (set.type) {
-    case "installer":
-      problems.push(...installerProblems(set));
-      break;
-    case "npm":
-      problems.push(...npmProblems(set));
-      break;
-    case "skills-cli": {
-      const problem = sourceProblem(set.source);
-      if (problem) problems.push(problem);
-      break;
-    }
-    default:
-      problems.push('type must be "installer", "npm" or "skills-cli"');
-  }
   return problems;
 }

@@ -3,11 +3,11 @@ import path from "node:path";
 import { describeExternal, externalSkills } from "./external.ts";
 import type { Lock } from "./lock.ts";
 import { type Manifest, type SkillId, type SourceId, splitSkillId } from "./manifest.ts";
-import type { Paths } from "./registry.ts";
+import type { Paths } from "./paths.ts";
 import { count, home } from "./report.ts";
 
 // What `skl check` last found, so `skl status` and the TUI answer offline.
-// See docs/SPEC-v2.md §5.4.
+// See docs/SPEC.md §5.4.
 
 export type SourceStatus = { checkedAt: string } & (
   | { state: "up-to-date"; pinned?: string }

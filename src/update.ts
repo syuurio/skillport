@@ -3,7 +3,7 @@ import { type FetchOptions, type Fetched, fetchSource } from "./adapters/index.t
 import { skillFlags } from "./check.ts";
 import type { Lock } from "./lock.ts";
 import { type Manifest, type SkillId, type Source, type SourceId, splitSkillId, writeManifest } from "./manifest.ts";
-import type { Paths } from "./registry.ts";
+import type { Paths } from "./paths.ts";
 import { home } from "./report.ts";
 import { type Status, writeStatus } from "./status.ts";
 import { type SyncChange, describeSync, sync } from "./sync.ts";

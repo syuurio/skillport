@@ -4,11 +4,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { npmPack, realFolderPath } from "../src/acquire.ts";
+import { npmPack, realFolderPath, runInstaller } from "../src/acquire.ts";
 import { acquireLock } from "../src/apply.ts";
 import { diagnose } from "../src/doctor.ts";
-import { defaultPaths, readRegistry } from "../src/registry.ts";
-import { extractSecret, isPinnedSpec, normalizeSource, sourceProblem, validateEntry } from "../src/validate.ts";
+import { readManifest } from "../src/manifest.ts";
+import { defaultPaths } from "../src/paths.ts";
+import { extractSecret, githubRepo, installerProblems, isPinnedSpec, sourceProblem } from "../src/validate.ts";
 
 const tmp = (label: string) => fs.mkdtempSync(path.join(os.tmpdir(), `skillport-sec-${label}-`));
 
@@ -29,13 +30,12 @@ test("N2: npm pack never sees a git, shorthand, URL or path spec, so no prepare 
   assert.ok(isPinnedSpec("motion-ai@14.1.0") && isPinnedSpec("@aiforui/install@0.1.4"));
 });
 
-test("N2: a hand-edited registry entry is validated when the registry is read", () => {
-  const home = tmp("reg");
-  const file = path.join(home, "registry.json");
-  fs.writeFileSync(file, JSON.stringify({ version: 1, sets: { bad: { type: "npm", package: "owner/repo", path: "skills" } } }));
-  assert.throws(() => readRegistry(file), /bad: package must be a registry package pinned/);
-  fs.writeFileSync(file, JSON.stringify({ version: 1, sets: { h: { type: "installer", command: ["x"], unattended: [], harvest: "../.." } } }));
-  assert.throws(() => readRegistry(file), /harvest must be a folder inside/);
+test("N2: a hand-edited manifest source is validated when the manifest is read", () => {
+  const file = path.join(tmp("reg"), "manifest.json");
+  fs.writeFileSync(file, JSON.stringify({ version: 2, sources: { bad: { type: "npm", package: "owner/repo", path: "skills" } } }));
+  assert.throws(() => readManifest(file), /package must be a registry package pinned/);
+  fs.writeFileSync(file, JSON.stringify({ version: 2, sources: { h: { type: "installer", command: ["x"], unattended: [], harvest: "../.." } } }));
+  assert.throws(() => readManifest(file), /harvest must be a folder inside/);
 });
 
 test("S7: every credential-looking flag is caught, paths and URLs are not", () => {
@@ -44,13 +44,13 @@ test("S7: every credential-looking flag is caught, paths and URLs are not", () =
   }
   assert.equal(extractSecret(["npx", "i", "--api=https://animations.dev"]).secret, undefined);
   assert.equal(extractSecret(["npx", "i", "--key-file=./k.pem"]).secret, undefined);
-  assert.match(validateEntry("x", { type: "installer", command: ["npx", "i", "--access-token=abc"] }, []).join(), /literal token/);
+  assert.match(installerProblems({ command: ["npx", "i", "--access-token=abc"] }).join(), /literal token/);
 });
 
 test("N1: a lock taken over by another run in between is put back, not stolen", () => {
   const paths = defaultPaths(tmp("lock"));
-  fs.mkdirSync(path.join(paths.stateDir, "lock.d"), { recursive: true });
-  fs.writeFileSync(path.join(paths.stateDir, "lock.d", "pid"), "999999"); // dead
+  fs.mkdirSync(path.join(paths.sklDir, "lock.d"), { recursive: true });
+  fs.writeFileSync(path.join(paths.sklDir, "lock.d", "pid"), "999999"); // dead
   // Make the rename land on a lock another live run (this test's parent) took meanwhile.
   const realRename = fs.renameSync;
   let once = true;
@@ -62,11 +62,11 @@ test("N1: a lock taken over by another run in between is put back, not stolen", 
     return realRename(from, to);
   };
   try {
-    assert.throws(() => acquireLock(paths.stateDir), new RegExp(`pid ${process.ppid}`));
+    assert.throws(() => acquireLock(paths.sklDir), new RegExp(`pid ${process.ppid}`));
   } finally {
     (fs as { renameSync: typeof fs.renameSync }).renameSync = realRename;
   }
-  assert.equal(fs.readFileSync(path.join(paths.stateDir, "lock.d", "pid"), "utf8"), String(process.ppid));
+  assert.equal(fs.readFileSync(path.join(paths.sklDir, "lock.d", "pid"), "utf8"), String(process.ppid));
 });
 
 test("C1: a doctor fix re-checks its target; your link that appeared meanwhile is left alone", () => {
@@ -75,7 +75,7 @@ test("C1: a doctor fix re-checks its target; your link that appeared meanwhile i
   fs.mkdirSync(paths.links[0], { recursive: true });
   const at = path.join(paths.links[0], "gone");
   fs.symlinkSync(path.join(paths.skillsDir, "gone"), at);
-  const f = diagnose(paths, { version: 1, sets: {} }, { version: 1, sets: {} }, {}).find((x) => x.kind === "broken-link");
+  const f = diagnose(paths, { version: 2, sources: {} }, { version: 2, sources: {}, skills: {} }).find((x) => x.kind === "broken-link");
   assert.ok(f?.fix);
   fs.unlinkSync(at);
   fs.mkdirSync(path.join(home, "mine"));
@@ -105,16 +105,6 @@ test("S7: credential words are matched whole: --license and --pat yes, --author 
   assert.equal(found("--no-auth", "global"), undefined);
 });
 
-test("registry rules and lists are checked for shape", () => {
-  const bad = (extra: Record<string, unknown>) =>
-    validateEntry("x", { type: "npm", package: "a@1.0.0", path: "s", ...extra } as never, []).join();
-  assert.match(bad({ rename: { prototype: "anim-prototype" } }), /rename must map/);
-  assert.match(bad({ skills: ["tdd"] }), /skills is not a registry field/);
-  assert.match(bad({ exclude: ["../x"] }), /exclude must be a list/);
-  assert.match(bad({ prefix: "My_Set" }), /prefix must be/);
-  assert.equal(bad({ rename: { prototype: { to: "anim-prototype", reason: "x", at: "" } }, exclude: ["tdd"] }), "");
-});
-
 test("credential flags in camelCase are caught too", () => {
   for (const f of ["--accessToken=abc", "--authToken=abc", "--privateKey=abc", "--apiKey=abc", "--githubPat=abc"]) {
     assert.equal(extractSecret(["npx", "x@1.0.0", f]).secret, "abc", f);
@@ -127,17 +117,6 @@ test("the package root itself may not be a symlink", () => {
   const elsewhere = tmp("elsewhere");
   fs.symlinkSync(elsewhere, path.join(dir, "package"));
   assert.throws(() => realFolderPath(dir, "package"), /goes through a symlink \(package\)/);
-});
-
-test("round 4: a skill installed by hand from the same source is never adopted or removed", async () => {
-  const { planCli } = await import("../src/skillscli.ts");
-  const paths = defaultPaths(tmp("own4"));
-  const lock = { mine: { source: "acme/skills", skillPath: "", skillFolderHash: "", updatedAt: "" } };
-  const p = planCli({ paths, setId: "acme", set: { type: "skills-cli", source: "acme/skills" }, available: ["mine", "other"], lock, state: { version: 1, sets: {} } });
-  assert.deepEqual(p.update, []);
-  assert.deepEqual(p.remove, []);
-  assert.deepEqual(p.others, ["mine"]);
-  assert.deepEqual([...p.add, ...p.update], ["other"]); // what would be recorded as owned
 });
 
 test("round 4: credential matching skips file, method and license-id flags", () => {
@@ -161,10 +140,10 @@ test("exceptions do not open bypasses: a qualifier counts only as the last word,
 
 test("taking the lock clears lock folders set aside by runs that are gone", () => {
   const paths = defaultPaths(tmp("stale"));
-  fs.mkdirSync(path.join(paths.stateDir, "lock.d.stale-1-0"), { recursive: true });
-  fs.writeFileSync(path.join(paths.stateDir, "lock.d.stale-1-0", "pid"), "999999");
-  acquireLock(paths.stateDir)();
-  assert.ok(!fs.existsSync(path.join(paths.stateDir, "lock.d.stale-1-0")));
+  fs.mkdirSync(path.join(paths.sklDir, "lock.d.stale-1-0"), { recursive: true });
+  fs.writeFileSync(path.join(paths.sklDir, "lock.d.stale-1-0", "pid"), "999999");
+  acquireLock(paths.sklDir)();
+  assert.ok(!fs.existsSync(path.join(paths.sklDir, "lock.d.stale-1-0")));
 });
 
 test("round 5: env assignments, slash-leading tokens and URLs with credentials are caught", () => {
@@ -178,16 +157,16 @@ test("round 5: env assignments, slash-leading tokens and URLs with credentials a
 });
 
 test("round 5: GitHub sources match regardless of case", () => {
-  assert.equal(normalizeSource("https://github.com/Owner/Repo"), normalizeSource("owner/repo"));
+  assert.equal(githubRepo("https://github.com/Owner/Repo"), githubRepo("owner/repo"));
 });
 
 test("round 5: a lock folder without a pid that is not fresh is taken over", () => {
   const paths = defaultPaths(tmp("nopid"));
-  const dir = path.join(paths.stateDir, "lock.d");
+  const dir = path.join(paths.sklDir, "lock.d");
   fs.mkdirSync(dir, { recursive: true });
   const old = new Date(Date.now() - 60_000);
   fs.utimesSync(dir, old, old);
-  acquireLock(paths.stateDir)();
+  acquireLock(paths.sklDir)();
 });
 
 test("round 6: credentials anywhere in a word are caught, and validation covers unattended and source", () => {
@@ -197,13 +176,12 @@ test("round 6: credentials anywhere in a word are caught, and validation covers 
   assert.equal(found("-t", "ghp_0123456789abcdefghij0123").secret, "ghp_0123456789abcdefghij0123");
   assert.equal(found("--header", "Authorization: Bearer abc.def").secret, "abc.def");
   assert.equal(found("--registry", "https://npm.example.com/").secret, undefined);
-  const v = (set: unknown) => validateEntry("x", set as never, []).join();
+  const v = (set: unknown) => installerProblems(set as never).join();
   assert.match(v({ type: "installer", command: ["npx", "i"], unattended: ["--token", "ghp_0123456789abcdefghij0123"] }), /unattended contains a literal token/);
-  assert.match(v({ type: "skills-cli", source: "https://me:ghp_0123456789abcdefghij0123@github.com/o/r.git" }), /source contains a credential/);
+  assert.match(sourceProblem("https://me:ghp_0123456789abcdefghij0123@github.com/o/r.git") ?? "", /source contains a credential/);
 });
 
 test("round 6: a leading NAME={secret} word reaches the installer as environment, not argv", async () => {
-  const { acquire } = await import("../src/acquire.ts");
   const staging = tmp("envrun");
   const out = path.join(staging, "seen");
   const set = {
@@ -211,13 +189,13 @@ test("round 6: a leading NAME={secret} word reaches the installer as environment
     command: ["DEMO_VAR=hello", "node", "-e", `const fs=require("fs"),p=require("os").homedir()+"/.claude/skills/a";fs.mkdirSync(p,{recursive:true});fs.writeFileSync(p+"/SKILL.md","x");fs.writeFileSync(${JSON.stringify(out)},process.env.DEMO_VAR)`],
     unattended: [],
   };
-  acquire("demo", set, staging, { interactive: false });
+  runInstaller("demo", set, staging, { interactive: false });
   assert.equal(fs.readFileSync(out, "utf8"), "hello");
 });
 
 test("round 6: a takeover that would move a fresh pid-less lock puts it back", () => {
   const paths = defaultPaths(tmp("fresh"));
-  const dir = path.join(paths.stateDir, "lock.d");
+  const dir = path.join(paths.sklDir, "lock.d");
   fs.mkdirSync(dir, { recursive: true });
   const old = new Date(Date.now() - 60_000);
   fs.utimesSync(dir, old, old);
@@ -234,7 +212,7 @@ test("round 6: a takeover that would move a fresh pid-less lock puts it back", (
   };
   try {
     // The fresh one gets put back; on retry it is fresh and pid-less, so we wait and finally give up.
-    assert.throws(() => acquireLock(paths.stateDir), /Could not take the lock/);
+    assert.throws(() => acquireLock(paths.sklDir), /Could not take the lock/);
   } finally {
     (fs as { renameSync: typeof fs.renameSync }).renameSync = realRename;
   }
@@ -248,11 +226,11 @@ test("round 7: embedded credentials behind any flag, real token formats, no fals
   assert.equal(ex("sk-ant-api03-AbCd3fGh1jKlMn0pQrStUvWx").secret, "sk-ant-api03-AbCd3fGh1jKlMn0pQrStUvWx");
   assert.equal(ex("sk-proj-AbCd3fGh1jKlMn0pQrStUvWxYz").secret, "sk-proj-AbCd3fGh1jKlMn0pQrStUvWxYz");
   assert.equal(ex("@acme/risk-assessmentframework@1.0.0").secret, undefined);
-  assert.deepEqual(validateEntry("x", { type: "skills-cli", source: "acme/risk-assessmentframework" }, []), []);
+  assert.equal(sourceProblem("acme/risk-assessmentframework"), undefined);
 });
 
 test("round 7: {secret} in unattended needs secret; env prefixes may not set sandbox variables", () => {
-  const v = (set: unknown) => validateEntry("x", set as never, []).join();
+  const v = (set: unknown) => installerProblems(set as never).join();
   assert.match(v({ type: "installer", command: ["npx", "i"], unattended: ["--token={secret}"] }), /"secret" is not "keychain"/);
   assert.equal(v({ type: "installer", command: ["npx", "i"], unattended: ["--token={secret}"], secret: "keychain" }), "");
   assert.match(v({ type: "installer", command: ["HOME=/Users/me", "npx", "i"] }), /may not set HOME/);
@@ -266,18 +244,16 @@ test("round 8: sk- inside ordinary names is not a key; reserved env is one list 
   assert.equal(extractSecret(["npx", "-y", "@acme/sk-design-system-installer"]).secret, undefined);
   assert.equal(sourceProblem("acme/sk-design-system-skills"), undefined);
   assert.equal(extractSecret(["npx", "x@1.0.0", "sk-AbCd3fGh1jKlMn0pQrStUvWx"]).secret, "sk-AbCd3fGh1jKlMn0pQrStUvWx");
-  const v = (set: unknown) => validateEntry("x", set as never, []).join();
+  const v = (set: unknown) => installerProblems(set as never).join();
   // Allowed: pass-through settings a prefix may override.
   assert.equal(v({ type: "installer", command: ["HTTPS_PROXY=http://proxy:8080", "LANG=C", "npx", "i@1.0.0"], unattended: [] }), "");
   // Refused in any case, and wherever the run's prefix ends up.
   assert.match(v({ type: "installer", command: ["Npm_Config_Logs_Max=5", "npx", "i"] }), /may not set Npm_Config_Logs_Max/);
   assert.match(v({ type: "installer", command: ["X=1"], unattended: ["NODE_PATH=/evil", "npx", "i"] }), /may not set NODE_PATH/);
   // Running: the allowed prefix actually runs.
-  const { acquire } = await import("../src/acquire.ts");
   const staging = tmp("proxy");
   const out = path.join(staging, "seen");
-  acquire("p", {
-    type: "installer",
+  runInstaller("p", {
     command: ["HTTPS_PROXY=http://proxy:8080", "node", "-e", `const fs=require("fs"),p=require("os").homedir()+"/.claude/skills/a";fs.mkdirSync(p,{recursive:true});fs.writeFileSync(p+"/SKILL.md","x");fs.writeFileSync(${JSON.stringify(out)},process.env.HTTPS_PROXY)`],
     unattended: [],
   }, staging, { interactive: false });
@@ -301,8 +277,3 @@ test("round 8c: a name-like sk- match earlier in a word does not hide a key", ()
   assert.equal(extractSecret(["npx", "x@1.0.0", `--from=sk-design-system-skills-pack,${k}`]).secret, k);
 });
 
-test("namespace: must be a skill-name word; not for skills-cli sets", () => {
-  assert.equal(validateEntry("x", { type: "npm", package: "a@1.0.0", path: "s", namespace: "emil" } as never, []).join(), "");
-  assert.match(validateEntry("x", { type: "npm", package: "a@1.0.0", path: "s", namespace: "Emil!" } as never, []).join(), /namespace must be/);
-  assert.match(validateEntry("x", { type: "skills-cli", source: "a/b", namespace: "emil" } as never, []).join(), /not available for skills-cli/);
-});

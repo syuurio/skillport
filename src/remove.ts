@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Lock } from "./lock.ts";
 import { type Manifest, type SourceId, splitSkillId, writeManifest } from "./manifest.ts";
-import type { Paths } from "./registry.ts";
+import type { Paths } from "./paths.ts";
 import { home } from "./report.ts";
 import { describeSync, sync } from "./sync.ts";
 

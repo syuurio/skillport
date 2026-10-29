@@ -7,7 +7,7 @@ import { type Fetched, skillsIn } from "../src/adapters/index.ts";
 import { readLock } from "../src/lock.ts";
 import { type SourceId, readManifest } from "../src/manifest.ts";
 import { describePlan, migrate, planMigration, v1Files } from "../src/migrate.ts";
-import { defaultPaths } from "../src/registry.ts";
+import { defaultPaths } from "../src/paths.ts";
 import { treeHash } from "../src/treehash.ts";
 
 const writeJson = (file: string, data: unknown) => {

@@ -4,7 +4,7 @@ import type { SkillName, SourceId } from "./manifest.ts";
 import { type Change, rewriteReferences, setFrontmatterMetadata, setFrontmatterName } from "./transform.ts";
 
 // A vendor's skill as an agent reads it: installed name, provenance in the
-// frontmatter, references to sibling skills renamed. See docs/SPEC-v2.md §8.
+// frontmatter, references to sibling skills renamed. See docs/SPEC.md §8.
 
 export interface RenderInput {
   /** The vendor's folder, from the store. */

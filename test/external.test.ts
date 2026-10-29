@@ -5,7 +5,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { readLock } from "../src/lock.ts";
 import { parseManifest } from "../src/manifest.ts";
-import { defaultPaths, withLinkTargets } from "../src/registry.ts";
+import { defaultPaths, withLinkTargets } from "../src/paths.ts";
 import { sync } from "../src/sync.ts";
 import { treeHash } from "../src/treehash.ts";
 
@@ -53,7 +53,7 @@ test("a real folder in a link target stops the run", () => {
 });
 
 test("doctor reports drift and fixes only the safe parts", async () => {
-  const { diagnoseV2 } = await import("../src/doctor.ts");
+  const { diagnose } = await import("../src/doctor.ts");
   const { paths, manifest } = sandbox();
   const m = manifest();
   sync(paths, m, readLock(paths.lockFile));
@@ -69,7 +69,7 @@ test("doctor reports drift and fixes only the safe parts", async () => {
   fs.writeFileSync(path.join(paths.patchesDir, "fx", "alpha.patch"), "");
   fs.mkdirSync(path.join(paths.skillsDir, "mine"));
 
-  const findings = diagnoseV2(paths, m, readLock(paths.lockFile));
+  const findings = diagnose(paths, m, readLock(paths.lockFile));
   const summary = findings.map((f) => `${f.fix ? "fix" : "report"} ${f.kind} ${path.basename(f.message.split(" ")[0])}`).sort();
   assert.deepEqual(summary, [
     "fix broken-link gone",

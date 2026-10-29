@@ -3,7 +3,7 @@ import { fetchSource } from "./adapters/index.ts";
 import type { Lock } from "./lock.ts";
 import { type GithubSource, type Manifest, type SourceId, parseManifest, writeManifest } from "./manifest.ts";
 import { confirm, isInteractive } from "./prompt.ts";
-import type { Paths } from "./registry.ts";
+import type { Paths } from "./paths.ts";
 import { readSkillLock, removeCliSkills } from "./npxskills.ts";
 import { describeSync, sync } from "./sync.ts";
 import { githubRepo } from "./validate.ts";

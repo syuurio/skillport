@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { skillsIn } from "../src/adapters/index.ts";
 import { readLock } from "../src/lock.ts";
 import { type SourceId, parseManifest } from "../src/manifest.ts";
-import { defaultPaths, withLinkTargets } from "../src/registry.ts";
+import { defaultPaths, withLinkTargets } from "../src/paths.ts";
 import { sync } from "../src/sync.ts";
 import { treeHash } from "../src/treehash.ts";
 import { edit } from "../src/edit.ts";

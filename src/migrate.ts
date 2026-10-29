@@ -5,8 +5,8 @@ import { moveToTrash, trashDir } from "./apply.ts";
 import { foreignInTarget } from "./external.ts";
 import { type Lock, readLock } from "./lock.ts";
 import { type Manifest, type Source, type SourceId, installedName, parseManifest, writeManifest } from "./manifest.ts";
-import { type Paths, withLinkTargets } from "./registry.ts";
-import { count, home } from "./report.ts";
+import { type Paths, withLinkTargets } from "./paths.ts";
+import { home } from "./report.ts";
 import { readSkillLock, removeCliSkills } from "./npxskills.ts";
 import { describeSync, sync } from "./sync.ts";
 import { treeHash } from "./treehash.ts";
@@ -139,7 +139,7 @@ export function describePlan(plan: MigrationPlan): string[] {
     lines.push(`${id}  (${what})`);
     const moves = [...plan.replaced, ...plan.adopted].filter((m) => m.source === id);
     const same = moves.filter((m) => m.from === m.to).length;
-    if (same) lines.push(`  ${count(same, "skill")} keep their names`);
+    if (same) lines.push(same === 1 ? "  1 skill keeps its name" : `  ${same} skills keep their names`);
     for (const m of moves) if (m.from !== m.to) lines.push(`  ${m.from} -> ${m.to}`);
   }
   if (plan.skipped.length) lines.push("", "Not migrated:", ...plan.skipped.map((s) => `  ${s.id}: ${s.reason}`));

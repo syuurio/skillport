@@ -4,7 +4,7 @@ import type { SkillId, SourceId } from "./manifest.ts";
 import { isValidSkillName } from "./transform.ts";
 
 // What skl last installed, so it can tell upstream changes from your edits.
-// See docs/SPEC-v2.md §5.2. Hashes are git tree hashes.
+// See docs/SPEC.md §5.2. Hashes are git tree hashes.
 
 export interface SourceLock {
   /** GitHub: commit. installer and npm: pinned version. local: tree hash. */

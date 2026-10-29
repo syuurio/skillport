@@ -1,14 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { SkillName, SourceId } from "./manifest.ts";
-import type { Paths } from "./registry.ts";
+import type { Paths } from "./paths.ts";
 import { irregularEntries } from "./render.ts";
 import { isValidSkillName } from "./transform.ts";
 import { treeHash } from "./treehash.ts";
 
 // Vendor content as shipped, under its original name, one folder per tree
 // hash. A hash folder is never changed once written, so the lock's `base`
-// always names exactly what was installed. See docs/SPEC-v2.md §5.3.
+// always names exactly what was installed. See docs/SPEC.md §5.3.
 
 export function storedAt(paths: Paths, source: SourceId, original: SkillName, hash: string): string {
   // Every part becomes a path segment; the lock and vendor content are not trusted to be well formed.

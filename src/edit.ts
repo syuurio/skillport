@@ -5,7 +5,7 @@ import { moveToTrash, trashDir } from "./apply.ts";
 import type { Lock, SkillLock } from "./lock.ts";
 import { type Manifest, type SkillId, type SkillName, type SourceId, installedName, splitSkillId } from "./manifest.ts";
 import { applyPatch, diffTrees, mergeDir, mergeTrees, patchFiles, readMergeInfo } from "./patch.ts";
-import type { Paths } from "./registry.ts";
+import type { Paths } from "./paths.ts";
 import { markdownFiles, render } from "./render.ts";
 import { home } from "./report.ts";
 import { storedAt } from "./store.ts";

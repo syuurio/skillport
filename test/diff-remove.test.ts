@@ -7,7 +7,7 @@ import { skillsIn } from "../src/adapters/index.ts";
 import { diff } from "../src/diff.ts";
 import { readLock } from "../src/lock.ts";
 import { type SourceId, parseManifest, readManifest, writeManifest } from "../src/manifest.ts";
-import { defaultPaths, withLinkTargets } from "../src/registry.ts";
+import { defaultPaths, withLinkTargets } from "../src/paths.ts";
 import { removeSource } from "../src/remove.ts";
 import { sync } from "../src/sync.ts";
 import { treeHash } from "../src/treehash.ts";

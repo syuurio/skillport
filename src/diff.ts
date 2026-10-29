@@ -5,7 +5,7 @@ import type { Fetched } from "./adapters/index.ts";
 import type { Lock } from "./lock.ts";
 import { type Manifest, type SourceId, splitSkillId } from "./manifest.ts";
 import { diffTrees } from "./patch.ts";
-import type { Paths } from "./registry.ts";
+import type { Paths } from "./paths.ts";
 import { describeSync, sync } from "./sync.ts";
 
 // `skl diff <source>[/<skill>]`: what the next update would do to the

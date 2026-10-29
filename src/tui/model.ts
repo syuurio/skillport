@@ -5,7 +5,7 @@ import { githubRepo } from "../validate.ts";
 
 // What the TUI shows, computed from the manifest, the lock and status.json
 // alone, and what each key does. No terminal, no network: the tests drive
-// these directly. See docs/SPEC-v2.md §12.
+// these directly. See docs/SPEC.md §12.
 
 export type Tone = "warn" | "ok" | "bad" | "dim";
 

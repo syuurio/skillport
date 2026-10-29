@@ -8,7 +8,7 @@ import { skillsIn } from "../src/adapters/index.ts";
 import { fetchInstaller } from "../src/adapters/installer.ts";
 import { readLock } from "../src/lock.ts";
 import { type InstallerSource, type SourceId, parseManifest } from "../src/manifest.ts";
-import { defaultPaths, withLinkTargets } from "../src/registry.ts";
+import { defaultPaths, withLinkTargets } from "../src/paths.ts";
 import { describeSync, sync } from "../src/sync.ts";
 
 const TOKEN = "tok_9f8e7d6c5b4a3210";

@@ -9,7 +9,7 @@ import { copySkips, headCommit } from "./adapters/github.ts";
 import { describeExternal, externalSkills } from "./external.ts";
 import type { Lock, SkillLock } from "./lock.ts";
 import { type Manifest, type SkillId, type SkillName, type Source, type SourceId, installedName, splitSkillId } from "./manifest.ts";
-import type { Paths } from "./registry.ts";
+import type { Paths } from "./paths.ts";
 import type { SkillFlags, SourceStatus, Status } from "./status.ts";
 import { type GitEntry, treeHash, treeHashOfListing } from "./treehash.ts";
 import { githubRepo, isPinnedSpec } from "./validate.ts";

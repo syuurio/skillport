@@ -1,15 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Lock } from "./lock.ts";
-import type { Paths } from "./registry.ts";
+import type { Paths } from "./paths.ts";
 import { readSkillLock } from "./npxskills.ts";
-import { readState } from "./state.ts";
 import { isValidSkillName } from "./transform.ts";
 
 // Skills in ~/.agents/skills that skl v2 did not install. They are only read:
 // for the collision check before every write, and for doctor. See SPEC §9.
 
-export type ExternalKind = "npx-skills" | "skillport-v1" | "unowned";
+export type ExternalKind = "npx-skills" | "unowned";
 
 export interface External {
   name: string;
@@ -20,7 +19,6 @@ export interface External {
 
 const WHAT: Record<ExternalKind, string> = {
   "npx-skills": "an external npx skills install",
-  "skillport-v1": "a skill installed by skillport v1",
   unowned: "a folder in ~/.agents/skills that skl did not install",
 };
 
@@ -34,11 +32,6 @@ export function externalSkills(paths: Paths, lock: Lock): Map<string, External> 
   // next `npx skills update` would bring the folder back.
   for (const [name, e] of Object.entries(readSkillLock(paths.skillLock))) {
     if (!ours.has(name)) out.set(name, { name, kind: "npx-skills", source: e.source });
-  }
-  for (const set of Object.values(readState(paths.stateDir).sets)) {
-    for (const name of Object.keys(set.skills)) {
-      if (!ours.has(name) && !out.has(name)) out.set(name, { name, kind: "skillport-v1" });
-    }
   }
   const entries = fs.existsSync(paths.skillsDir) ? fs.readdirSync(paths.skillsDir) : [];
   for (const name of entries) {

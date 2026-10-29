@@ -7,7 +7,7 @@ import { type Net, type TreeEntry, check } from "../src/check.ts";
 import { treeHashOfListing } from "../src/treehash.ts";
 import type { Lock } from "../src/lock.ts";
 import { type SkillId, type SourceId, parseManifest } from "../src/manifest.ts";
-import { defaultPaths, withLinkTargets } from "../src/registry.ts";
+import { defaultPaths, withLinkTargets } from "../src/paths.ts";
 import { formatStatus } from "../src/status.ts";
 import { readLock } from "../src/lock.ts";
 import { sync } from "../src/sync.ts";

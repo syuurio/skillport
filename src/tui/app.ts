@@ -10,7 +10,7 @@ import { storeSecretValue } from "../keychain.ts";
 import { type Lock, readLock } from "../lock.ts";
 import { type Manifest, type SourceId, readManifest } from "../manifest.ts";
 import { Cancelled } from "../prompt.ts";
-import { type Paths, withLinkTargets } from "../registry.ts";
+import { type Paths, withLinkTargets } from "../paths.ts";
 import { type Status, readStatus, writeStatus } from "../status.ts";
 import { type Fetch, type UpdateIO, fetchSources, update } from "../update.ts";
 import { type Pane, type SkillRow, type SourceRow, type Tone, LIST_HINTS, headerRight, listAction, skillRows, sourceRows, sourceTitle, viewAction } from "./model.ts";

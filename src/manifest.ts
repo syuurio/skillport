@@ -1,11 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
-import { LINK_TARGETS } from "./registry.ts";
+import { LINK_TARGETS } from "./paths.ts";
 import { isValidSkillName, withPrefix } from "./transform.ts";
 import { githubRepo, installerProblems, isWords, npmProblems, sourceProblem, validateLinkTargets } from "./validate.ts";
 
 // The manifest is what you want; skl derives everything else from it.
-// See docs/SPEC-v2.md §5.1 and §6.
+// See docs/SPEC.md §5.1 and §6.
 
 declare const brand: unique symbol;
 type Brand<T, B extends string> = T & { readonly [brand]: B };

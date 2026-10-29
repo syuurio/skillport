@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { sandboxEnv } from "./acquire.ts";
 import { withTempDir } from "./fsutil.ts";
-import type { Paths } from "./registry.ts";
+import type { Paths } from "./paths.ts";
 
 // Your own `npx skills` setup: skl reads its lock, and removes skills through
 // it only when you adopt them (SPEC §9).

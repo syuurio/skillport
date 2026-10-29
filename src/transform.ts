@@ -140,9 +140,3 @@ export function rewriteReferences(
   );
   return { text: out.join("\n"), changes, skipped };
 }
-
-/** Today as YYYY-MM-DD in your time zone, for dates recorded in the registry. */
-export function localDate(d = new Date()): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
