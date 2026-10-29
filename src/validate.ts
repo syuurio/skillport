@@ -196,11 +196,11 @@ export function setUsingSource(sets: Record<string, SkillSet>, source: string, e
 }
 
 /** A path inside a folder: relative, no `..` segments. */
-function isInside(p: unknown): boolean {
+export function isInside(p: unknown): boolean {
   return typeof p === "string" && p.length > 0 && !p.startsWith("/") && !p.split("/").includes("..");
 }
 
-const isWords = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
+export const isWords = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
 
 /** Shapes of the per-set lists and rules; a wrong shape would silently change what installs. */
 function validateCommon(set: SkillSet, problems: string[]): void {
@@ -271,6 +271,54 @@ export function validateLinkTargets(targets: unknown, builtIn: string[]): string
   return problems;
 }
 
+interface InstallerFields {
+  command?: unknown;
+  unattended?: unknown;
+  secret?: unknown;
+  stage?: unknown;
+  harvest?: unknown;
+}
+
+/** Problems with an installer's run: its words, secret handling, environment and sandbox paths. */
+export function installerProblems(set: InstallerFields): string[] {
+  if (!isWords(set.command) || set.command.length === 0) return ["command must be a non-empty list of words"];
+  const problems: string[] = [];
+  if (set.unattended !== undefined && !isWords(set.unattended)) problems.push("unattended must be a list of words");
+  if (set.secret !== undefined && set.secret !== "keychain") problems.push('secret must be "keychain"');
+  if (set.secret === "keychain" && !usesSecret(set)) {
+    problems.push("secret is set but no command or unattended word contains {secret}");
+  }
+  if (usesSecret(set) && set.secret !== "keychain") {
+    problems.push('{secret} is used but "secret" is not "keychain"');
+  }
+  for (const name of runEnvNames(set)) {
+    if (isReservedEnv(name)) problems.push(`command may not set ${name}: skillport controls it for the sandbox`);
+  }
+  if (extractSecret(set.command).secret !== undefined) {
+    problems.push("command contains a literal token; use {secret} and store it with skl secret");
+  }
+  if (isWords(set.unattended) && extractSecret(set.unattended).secret !== undefined) {
+    problems.push("unattended contains a literal token; use {secret} and store it with skl secret");
+  }
+  if (set.stage !== undefined && !(isWords(set.stage) && set.stage.every(isInside))) {
+    problems.push("stage must be folders inside the sandbox HOME (relative, no ..)");
+  }
+  if (set.harvest !== undefined && !isInside(set.harvest)) {
+    problems.push("harvest must be a folder inside the sandbox HOME (relative, no ..)");
+  }
+  return problems;
+}
+
+/** Problems with an npm package source: pinned to a version, and a folder inside the package. */
+export function npmProblems(set: { package?: unknown; path?: unknown }): string[] {
+  const problems: string[] = [];
+  if (!isPinnedSpec(typeof set.package === "string" ? set.package : "")) {
+    problems.push("package must be a registry package pinned to a version, e.g. motion-ai@14.1.0");
+  }
+  if (!isInside(set.path)) problems.push("path must be a folder inside the package (relative, no ..)");
+  return problems;
+}
+
 /** Problems with one entry; empty when it is usable. `linkIds` are the known link targets. */
 export function validateEntry(id: string, set: SkillSet, linkIds: string[]): string[] {
   const problems: string[] = [];
@@ -281,37 +329,10 @@ export function validateEntry(id: string, set: SkillSet, linkIds: string[]): str
   validateCommon(set, problems);
   switch (set.type) {
     case "installer":
-      if (!isWords(set.command) || set.command.length === 0) {
-        problems.push("command must be a non-empty list of words");
-        break;
-      }
-      if (set.unattended !== undefined && !isWords(set.unattended)) problems.push("unattended must be a list of words");
-      if (set.secret !== undefined && set.secret !== "keychain") problems.push('secret must be "keychain"');
-      if (set.secret === "keychain" && !usesSecret(set)) {
-        problems.push("secret is set but no command or unattended word contains {secret}");
-      }
-      if (usesSecret(set) && set.secret !== "keychain") {
-        problems.push('{secret} is used but "secret" is not "keychain"');
-      }
-      for (const name of runEnvNames(set)) {
-        if (isReservedEnv(name)) problems.push(`command may not set ${name}: skillport controls it for the sandbox`);
-      }
-      if (extractSecret(set.command).secret !== undefined) {
-        problems.push("command contains a literal token; use {secret} and store it with skl secret");
-      }
-      if (isWords(set.unattended) && extractSecret(set.unattended).secret !== undefined) {
-        problems.push("unattended contains a literal token; use {secret} and store it with skl secret");
-      }
-      if (set.stage !== undefined && !(isWords(set.stage) && set.stage.every(isInside))) {
-        problems.push("stage must be folders inside the sandbox HOME (relative, no ..)");
-      }
-      if (set.harvest !== undefined && !isInside(set.harvest)) {
-        problems.push("harvest must be a folder inside the sandbox HOME (relative, no ..)");
-      }
+      problems.push(...installerProblems(set));
       break;
     case "npm":
-      if (!isPinnedSpec(set.package ?? "")) problems.push("package must be a registry package pinned to a version, e.g. motion-ai@14.1.0");
-      if (!isInside(set.path)) problems.push("path must be a folder inside the package (relative, no ..)");
+      problems.push(...npmProblems(set));
       break;
     case "skills-cli": {
       const problem = sourceProblem(set.source);

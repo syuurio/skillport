@@ -107,6 +107,15 @@ export interface Paths {
   skillLock: string;
   /** ~/.claude/plugins, where installed_plugins.json lives. */
   claudePlugins: string;
+  /** v2: what you want (docs/SPEC-v2.md §5.1). */
+  manifest: string;
+  /** v2: your customizations, next to the manifest (§5.5). */
+  patchesDir: string;
+  /** v2: skl's own state under ~/.agents (§5.3). */
+  sklDir: string;
+  lockFile: string;
+  storeDir: string;
+  statusFile: string;
 }
 
 /**
@@ -131,6 +140,12 @@ export function defaultPaths(home = process.env.SKILLPORT_HOME ?? os.homedir()):
     ],
     skillLock: h(".agents", ".skill-lock.json"),
     claudePlugins: h(".claude", "plugins"),
+    manifest: h(".config", "skl", "manifest.json"),
+    patchesDir: h(".config", "skl", "patches"),
+    sklDir: h(".agents", ".skl"),
+    lockFile: h(".agents", ".skl", "lock.json"),
+    storeDir: h(".agents", ".skl", "store"),
+    statusFile: h(".agents", ".skl", "status.json"),
   };
 }
 
