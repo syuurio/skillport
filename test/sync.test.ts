@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { readLock } from "../src/lock.ts";
 import { type Manifest, type Source, type SourceId, parseManifest } from "../src/manifest.ts";
 import { defaultPaths, withLinkTargets } from "../src/registry.ts";
-import { sync } from "../src/sync.ts";
+import { describeSync, sync } from "../src/sync.ts";
 
 const fixtures = path.join(import.meta.dirname, "fixtures", "v2", "local");
 
@@ -17,7 +17,7 @@ function sandbox(fx: Partial<Source> = {}) {
   const manifest = (extra: Partial<Source> = fx): Manifest =>
     parseManifest({ version: 2, sources: { fx: { type: "local", path: src, ...extra } } }, "manifest.json");
   const paths = withLinkTargets(defaultPaths(home), {});
-  const run = (m = manifest()) => sync(paths, m, readLock(paths.lockFile), { now: "2026-10-29T08:00:00.000Z" });
+  const run = (m = manifest()) => describeSync(sync(paths, m, readLock(paths.lockFile), { now: "2026-10-29T08:00:00.000Z" }));
   const trashed = () => {
     const trash = path.join(paths.sklDir, "trash");
     return fs.existsSync(trash) ? fs.readdirSync(trash).flatMap((t) => fs.readdirSync(path.join(trash, t))) : [];
@@ -121,7 +121,7 @@ test("a skill you changed in place is kept, reported, and replaced only with dis
   assert.deepEqual(ls(paths.skillsDir), ["f-beta", "fx-alpha"]);
   assert.match(fs.readFileSync(path.join(paths.skillsDir, "f-beta", "SKILL.md"), "utf8"), /The `fx-alpha` skill/);
 
-  const replaced = sync(paths, manifest({ prefix: "f" }), readLock(paths.lockFile), { discardEdits: true });
+  const replaced = describeSync(sync(paths, manifest({ prefix: "f" }), readLock(paths.lockFile), { discardEdits: true }));
   assert.ok(replaced.includes("fx/alpha -> f-alpha"), replaced.join("\n"));
   assert.deepEqual(ls(paths.skillsDir), ["f-alpha", "f-beta"]);
   assert.ok(trashed().includes("fx-alpha"));

@@ -9,7 +9,7 @@ import { fetchInstaller } from "../src/adapters/installer.ts";
 import { readLock } from "../src/lock.ts";
 import { type InstallerSource, type SourceId, parseManifest } from "../src/manifest.ts";
 import { defaultPaths, withLinkTargets } from "../src/registry.ts";
-import { sync } from "../src/sync.ts";
+import { describeSync, sync } from "../src/sync.ts";
 
 const TOKEN = "tok_9f8e7d6c5b4a3210";
 
@@ -103,28 +103,30 @@ test("fetched installer skills are stored, rendered and linked by sync", () => {
   const paths = withLinkTargets(defaultPaths(home), {});
   const manifest = parseManifest({ version: 2, sources: { vend: source } }, "manifest.json");
   const fetched = fetchInstaller("vend" as SourceId, source, { staging, interactive: false, home, sklDir: path.join(home, "skl"), secret: TOKEN });
-  const lines = sync(paths, manifest, readLock(paths.lockFile), { fetched: new Map([["vend" as SourceId, fetched]]) });
+  const lines = describeSync(sync(paths, manifest, readLock(paths.lockFile), { fetched: new Map([["vend" as SourceId, fetched]]) }));
   assert.deepEqual(lines.filter((l) => !l.startsWith(" ")), ["vend/alpha -> vend-alpha", "vend/beta -> vend-beta"]);
   assert.match(fs.readFileSync(path.join(paths.skillsDir, "vend-alpha", "SKILL.md"), "utf8"), /`vend-beta` skill/);
   assert.equal(readLock(paths.lockFile).sources["vend" as SourceId].resolved.length, 40);
   // Offline afterwards: the store has what the lock names.
   fs.rmSync(staging, { recursive: true });
-  assert.deepEqual(sync(paths, manifest, readLock(paths.lockFile)), []);
+  assert.deepEqual(describeSync(sync(paths, manifest, readLock(paths.lockFile))), []);
 });
 
-test("a skill a vendor adds later is offered once, not installed, unless picked", () => {
+test("a skill a vendor adds later is offered until you see it, and installed only when picked", () => {
   const { home, source, staging } = sandbox();
   const paths = withLinkTargets(defaultPaths(home), {});
   const manifest = (pick?: string[]) => parseManifest({ version: 2, sources: { vend: { ...source, ...(pick ? { pick } : {}) } } }, "manifest.json");
   const fetchAndSync = (m = manifest()) => {
     const fetched = fetchInstaller("vend" as SourceId, source, { staging, interactive: false, home, sklDir: path.join(home, "skl"), secret: TOKEN });
-    return sync(paths, m, readLock(paths.lockFile), { fetched: new Map([["vend" as SourceId, fetched]]) });
+    return describeSync(sync(paths, m, readLock(paths.lockFile), { fetched: new Map([["vend" as SourceId, fetched]]) }));
   };
   fetchAndSync();
   fakeInstaller(home, 0, ["gamma"]);
-  assert.deepEqual(fetchAndSync(), ["new vend/gamma (not installed; skl update vend --pick)"]);
+  const offered = ["new vend/gamma (not installed; skl update vend --pick)"];
+  assert.deepEqual(fetchAndSync(), offered);
   assert.deepEqual(ls(paths.skillsDir), ["vend-alpha", "vend-beta"]);
-  assert.deepEqual(fetchAndSync(), []);
+  // Without a terminal nobody saw it, so it is offered again.
+  assert.deepEqual(fetchAndSync(), offered);
   assert.ok(fetchAndSync(manifest(["alpha", "beta", "gamma"])).includes("vend/gamma -> vend-gamma"));
 });
 

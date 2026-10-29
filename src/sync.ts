@@ -54,6 +54,37 @@ export interface SyncOptions {
   fetched?: ReadonlyMap<SourceId, Fetched>;
   /** Replace skills you changed in place; your copies go to trash. */
   discardEdits?: boolean;
+  /** Compute the changes only: nothing on disk or in the lock changes. */
+  dryRun?: boolean;
+  /** New skills you chose to install this run. */
+  accept?: ReadonlySet<SkillId>;
+  /** You were shown every skill of the fetched sources, so all of them count as seen. */
+  offeredNow?: boolean;
+}
+
+export type SyncChange =
+  | { kind: "install"; id: SkillId; name: string; replaced: boolean; rewrites: Rewrite[] }
+  | { kind: "relink"; id: SkillId; name: string }
+  | { kind: "remove"; id: SkillId; name: string }
+  | { kind: "edited"; id: SkillId; name: string }
+  | { kind: "offered"; id: SkillId };
+
+/** The lines `skl sync` prints for its changes. */
+export function describeSync(changes: SyncChange[]): string[] {
+  return changes.flatMap((c) => {
+    switch (c.kind) {
+      case "install":
+        return [`${c.id} -> ${c.name}`, ...describe(c.rewrites)];
+      case "relink":
+        return [`${c.id} -> ${c.name}`];
+      case "remove":
+        return [`removed ${c.name} (${c.id})`];
+      case "edited":
+        return [`edited ${c.name} (${c.id}) was changed in place; kept as is`, "  to replace it with skl's version: skl sync --discard-edits"];
+      case "offered":
+        return [`new ${c.id} (not installed; skl update ${splitSkillId(c.id).source} --pick)`];
+    }
+  });
 }
 
 /** Installed skills whose folder is no longer what skl wrote: you changed them in place. */
@@ -67,9 +98,10 @@ function editedInPlace(paths: Paths, lock: Lock): Map<SkillId, SkillLock> {
 }
 
 /** The skills the manifest asks for; stores what was fetched and records it in the lock. */
-function wanted(paths: Paths, manifest: Manifest, lock: Lock, now: string, fetched: ReadonlyMap<SourceId, Fetched>): { wants: Want[]; offered: string[] } {
+function wanted(paths: Paths, manifest: Manifest, lock: Lock, now: string, opts: SyncOptions): { wants: Want[]; offered: SkillId[] } {
+  const fetched = opts.fetched ?? new Map<SourceId, Fetched>();
   const wants: Want[] = [];
-  const offered: string[] = [];
+  const offered: SkillId[] = [];
   const problems: string[] = [];
   for (const [sid, source] of Object.entries(manifest.sources) as [SourceId, Source][]) {
     const dirs = linkDirs(paths, manifest, source);
@@ -77,20 +109,30 @@ function wanted(paths: Paths, manifest: Manifest, lock: Lock, now: string, fetch
       wants.push({ id: skillId(sid, original), source: sid, original, base, name: installedName(sid, original, source), dirs });
     const fresh = source.type === "local" ? fetchLocal(source, paths.home) : fetched.get(sid);
     if (fresh) {
-      const seen = fresh.skills.map((s) => s.original).sort();
-      const twice = seen.filter((o, i) => seen.indexOf(o) !== i);
+      const shipped = fresh.skills.map((s) => s.original).sort();
+      const twice = shipped.filter((o, i) => shipped.indexOf(o) !== i);
       if (twice.length) problems.push(`sources.${sid}: more than one folder is named ${[...new Set(twice)].join(", ")}`);
       const prev = lock.sources[sid];
       // Without `pick`, the first install takes everything; after that a
       // skill a vendor adds is only offered, never installed unreviewed. A
       // local folder is yours: a new folder there is the request to install.
       const installed = new Set(Object.keys(lock.skills).filter((id) => id.startsWith(`${sid}/`)));
-      const takes = (o: SkillName) => source.pick !== undefined || source.type === "local" || !prev || installed.has(skillId(sid, o));
+      // `pick` names what to install; a skill outside it that you have not
+      // seen is offered too, so an explicit list never hides a new skill.
+      const takes = (o: SkillName) =>
+        Boolean(opts.accept?.has(skillId(sid, o))) ||
+        (source.pick ? source.pick.includes(o) : source.type === "local" || !prev || installed.has(skillId(sid, o)));
+      const taken: string[] = [];
       for (const s of fresh.skills) {
-        if (!selected(source, s.original)) continue;
-        if (takes(s.original)) add(s.original, putInStore(paths, sid, s.original, s.dir));
-        else if (!prev?.seen.includes(s.original)) offered.push(`new ${sid}/${s.original} (not installed; skl update ${sid} --pick)`);
+        if (source.exclude?.includes(s.original)) continue;
+        if (takes(s.original)) {
+          add(s.original, putInStore(paths, sid, s.original, s.dir));
+          taken.push(s.original);
+        } else if (prev && !prev.seen.includes(s.original)) offered.push(skillId(sid, s.original));
       }
+      // Seen means shown to you: everything when you were offered the full
+      // list, otherwise what was seen before plus what is installed now.
+      const seen = opts.offeredNow || !prev ? [...new Set(shipped)] : [...new Set([...prev.seen, ...taken])].sort();
       if (prev?.resolved !== fresh.resolved || prev.seen.join() !== seen.join()) {
         lock.sources[sid] = { resolved: fresh.resolved, syncedAt: now, seen };
       }
@@ -142,10 +184,12 @@ function recheck(paths: Paths, lock: Lock, wants: Want[], held: Map<SkillId, Ski
 }
 
 /** Sync and save the lock; returns one line per change, none when up to date. */
-export function sync(paths: Paths, manifest: Manifest, lock: Lock, opts: SyncOptions = {}): string[] {
+export function sync(paths: Paths, manifest: Manifest, given: Lock, opts: SyncOptions = {}): SyncChange[] {
   const now = opts.now ?? new Date().toISOString();
+  const dry = Boolean(opts.dryRun);
+  const lock = dry ? structuredClone(given) : given;
   const before = JSON.stringify(lock);
-  const { wants: all, offered } = wanted(paths, manifest, lock, now, opts.fetched ?? new Map());
+  const { wants: all, offered } = wanted(paths, manifest, lock, now, opts);
   // A skill you changed in place stays as it is until you say otherwise.
   const held = opts.discardEdits ? new Map<SkillId, SkillLock>() : editedInPlace(paths, lock);
   const wants = all.filter((w) => !held.has(w.id));
@@ -177,40 +221,47 @@ export function sync(paths: Paths, manifest: Manifest, lock: Lock, opts: SyncOpt
     return { ...w, staged: to, output: treeHash(to), rewrites };
   });
 
-  const lines: string[] = [];
+  const changes: SyncChange[] = [];
   const trash = trashDir(paths.sklDir, "sync");
   const keep = new Map(wants.map((w) => [w.id, w.name]));
-  for (const [id, entry] of held) {
-    lines.push(`edited ${entry.name} (${id}) was changed in place; kept as is`, "  to replace it with skl's version: skl sync --discard-edits");
-  }
+  const wasAt = new Map((Object.entries(lock.skills) as [SkillId, SkillLock][]).map(([id, s]) => [id, s.name]));
+  for (const [id, entry] of held) changes.push({ kind: "edited", id, name: entry.name });
   for (const [id, entry] of Object.entries(lock.skills) as [SkillId, SkillLock][]) {
     if (keep.get(id) === entry.name || held.has(id)) continue;
-    moveToTrash(trash, path.join(paths.skillsDir, entry.name));
-    unlink(paths, entry.name);
+    if (!dry) {
+      moveToTrash(trash, path.join(paths.skillsDir, entry.name));
+      unlink(paths, entry.name);
+    }
     delete lock.skills[id];
-    if (!keep.has(id)) lines.push(`removed ${entry.name} (${id})`);
+    if (!keep.has(id)) changes.push({ kind: "remove", id, name: entry.name });
   }
   for (const sid of Object.keys(lock.sources) as SourceId[]) {
     if (!manifest.sources[sid]) delete lock.sources[sid];
   }
 
-  fs.mkdirSync(paths.skillsDir, { recursive: true });
+  if (!dry) fs.mkdirSync(paths.skillsDir, { recursive: true });
   for (const r of rendered) {
     const dest = path.join(paths.skillsDir, r.name);
-    const written = !fs.existsSync(dest) || treeHash(dest) !== r.output;
-    if (written) {
-      moveToTrash(trash, dest);
-      fs.renameSync(r.staged, dest);
+    // A name that moved (a new prefix) was trashed above in a real run; in
+    // a dry run it is still there, so judge by where the skill was.
+    const moved = wasAt.has(r.id) && wasAt.get(r.id) !== r.name;
+    const written = moved || !fs.existsSync(dest) || treeHash(dest) !== r.output;
+    const relinked = !written && !linksMatch(paths, r.name, r.dirs);
+    if (!dry) {
+      if (written) {
+        moveToTrash(trash, dest);
+        fs.renameSync(r.staged, dest);
+      }
+      link(paths, r.name, r.dirs);
     }
-    const relinked = !linksMatch(paths, r.name, r.dirs);
-    link(paths, r.name, r.dirs);
-    if (written || relinked) lines.push(`${r.id} -> ${r.name}`, ...(written ? describe(r.rewrites) : []));
+    if (written) changes.push({ kind: "install", id: r.id, name: r.name, replaced: wasAt.get(r.id) === r.name, rewrites: r.rewrites });
+    else if (relinked) changes.push({ kind: "relink", id: r.id, name: r.name });
     const prev = lock.skills[r.id];
     lock.skills[r.id] = { name: r.name, base: r.base, output: r.output, updatedAt: written || !prev ? now : prev.updatedAt };
   }
   fs.rmSync(staging, { recursive: true, force: true });
-  if (JSON.stringify(lock) !== before) writeLock(paths.lockFile, lock);
-  return [...lines, ...offered];
+  if (!dry && JSON.stringify(lock) !== before) writeLock(paths.lockFile, lock);
+  return [...changes, ...offered.map((id) => ({ kind: "offered" as const, id }))];
 }
 
 /** One line per rewritten reference; repeats on the same line are counted, not listed. */

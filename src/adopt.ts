@@ -6,7 +6,7 @@ import { confirm, isInteractive } from "./prompt.ts";
 import type { Paths } from "./registry.ts";
 import { removeCliSkills } from "./skillscli.ts";
 import { readSkillLock } from "./state.ts";
-import { sync } from "./sync.ts";
+import { describeSync, sync } from "./sync.ts";
 import { githubRepo } from "./validate.ts";
 
 // `skl adopt <owner/repo>`: take over skills you installed with plain
@@ -44,7 +44,7 @@ export async function adopt(paths: Paths, manifest: Manifest, lock: Lock, from: 
   const fetched = fetchSource(id, next.sources[id], { staging, interactive: false, home: paths.home, sklDir: paths.sklDir });
   const missing = names.filter((n) => !fetched.skills.some((s) => s.original === n));
   if (missing.length) throw new Error(`${repo} no longer ships ${missing.join(", ")}; nothing was changed. Remove them with npx skills, then adopt again.`);
-  const lines = sync(paths, next, lock, { fetched: new Map([[id, fetched]]) });
+  const lines = describeSync(sync(paths, next, lock, { fetched: new Map([[id, fetched]]) }));
   writeManifest(paths.manifest, next);
 
   // A real delete, so it is the last step and asks first.

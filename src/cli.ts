@@ -9,7 +9,7 @@ import { type CliPlan, applyCli, applyCliLinks, cliLinkChanges, removeCliSkills,
 import { type Plan, plan } from "./plan.ts";
 import { pluginSkillNames } from "./plugins.ts";
 import { askForSet, validateSet } from "./register.ts";
-import { Cancelled, ask, askSecret, confirm, intro, isInteractive, log, note, outro } from "./prompt.ts";
+import { Cancelled, ask, askSecret, chooseMany, confirm, intro, isInteractive, log, note, outro } from "./prompt.ts";
 import {
   type ManagedSet,
   type Paths,
@@ -37,11 +37,12 @@ import { treeHash } from "./treehash.ts";
 import { select } from "./select.ts";
 import { type AddKind, addSource, buildSource } from "./add.ts";
 import { adopt } from "./adopt.ts";
+import { type UpdateIO, update } from "./update.ts";
 import { check as checkSources, realNet } from "./check.ts";
 import { formatStatus, readStatus, which, writeStatus } from "./status.ts";
 import { readLock } from "./lock.ts";
 import { readManifest } from "./manifest.ts";
-import { sync as syncV2 } from "./sync.ts";
+import { describeSync, sync as syncV2 } from "./sync.ts";
 import { isPinnedSpec } from "./validate.ts";
 
 const USAGE = `skillport — one place for skills that vendor installers scatter
@@ -109,6 +110,7 @@ async function main(argv: string[]): Promise<number> {
       getSet(ctx.registry, args[0]);
       return sync(ctx, args[0], { ...flags, interactive: !flags.yes });
     case "update": {
+      if (fs.existsSync(base.manifest)) return updateV2(base, args, rest, flags);
       const ids = args.length ? args : Object.keys(ctx.registry.sets);
       let failed = 0;
       for (const id of ids) failed += await sync(ctx, id, flags);
@@ -211,6 +213,21 @@ function checkV2(base: Paths, ids: string[]): number {
   return 0;
 }
 
+async function updateV2(base: Paths, ids: string[], rest: string[], flags: Flags): Promise<number> {
+  const { manifest, paths, lock } = v2(base);
+  cleanups.add(acquireLock(paths.sklDir));
+  // Vendor content and installer HOMEs live here until the run ends.
+  cleanups.add(() => fs.rmSync(path.join(paths.sklDir, "fetch"), { recursive: true, force: true }));
+  const io: UpdateIO = {
+    canAsk: isInteractive(),
+    confirm: (q) => confirm(q, false),
+    chooseMany: (q, options, initial) => chooseMany(q, options.map((o) => ({ value: o, label: o })), initial),
+    print: (line) => console.log(line),
+  };
+  const updateFlags = { ...flags, pick: Boolean(flags.pick), discardEdits: rest.includes("--discard-edits") };
+  return update(paths, manifest, lock, readStatus(paths.statusFile), ids, updateFlags, io);
+}
+
 function statusV2(base: Paths): number {
   const { manifest, paths, lock } = v2(base);
   console.log(formatStatus(manifest, lock, readStatus(paths.statusFile)));
@@ -228,7 +245,7 @@ function syncCmd(base: Paths, discardEdits: boolean): number {
   const manifest = readManifest(base.manifest);
   const paths = withLinkTargets(base, manifest, base.manifest);
   cleanups.add(acquireLock(paths.sklDir));
-  const lines = syncV2(paths, manifest, readLock(paths.lockFile), { discardEdits });
+  const lines = describeSync(syncV2(paths, manifest, readLock(paths.lockFile), { discardEdits }));
   console.log(lines.length ? lines.join("\n") : "up to date");
   return 0;
 }

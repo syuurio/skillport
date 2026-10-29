@@ -7,7 +7,7 @@ import { type Manifest, type SkillName, type Source, type SourceId, parseManifes
 import { chooseMany, isInteractive } from "./prompt.ts";
 import type { Paths } from "./registry.ts";
 import { splitCommand } from "./register.ts";
-import { sync } from "./sync.ts";
+import { describeSync, sync } from "./sync.ts";
 import { extractSecret, usesSecret } from "./validate.ts";
 
 // `skl add`: one new source, from flags to installed skills. The manifest is
@@ -80,7 +80,7 @@ export async function addSource(paths: Paths, manifest: Manifest, lock: Lock, id
     const picked = opts.yes || !isInteractive() ? all : await pick(id, all);
     if (!picked.length) return [];
     if (picked.length < all.length) entry.pick = picked;
-    const lines = sync(paths, next, lock, { fetched: new Map([[sid, fetched]]) });
+    const lines = describeSync(sync(paths, next, lock, { fetched: new Map([[sid, fetched]]), offeredNow: !opts.yes && isInteractive() }));
     writeManifest(paths.manifest, next);
     return lines;
   } finally {
