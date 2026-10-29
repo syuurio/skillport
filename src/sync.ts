@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import type { Fetched } from "./adapters/index.ts";
 import { fetchLocal } from "./adapters/local.ts";
 import { isOursOrFree, link, moveToTrash, trashDir, unlink } from "./apply.ts";
 import { type Lock, type SkillLock, writeLock } from "./lock.ts";
@@ -11,7 +12,8 @@ import { isValidSkillName } from "./transform.ts";
 import { treeHash } from "./treehash.ts";
 
 // Make ~/.agents/skills and the link targets match the manifest and the lock.
-// Offline: only local sources are read again; every other source installs
+// Offline: local sources are read again, sources the caller just fetched
+// (add, update) are taken from `fetched`, and every other source installs
 // what the lock's `base` names in the store.
 
 interface Want {
@@ -44,23 +46,38 @@ function linksMatch(paths: Paths, name: string, dirs: string[]): boolean {
   });
 }
 
-/** The skills the manifest asks for; refreshes local sources in the store and lock. */
-function wanted(paths: Paths, manifest: Manifest, lock: Lock, now: string): Want[] {
+export interface SyncOptions {
+  now?: string;
+  /** Sources fetched just now, by id. */
+  fetched?: ReadonlyMap<SourceId, Fetched>;
+}
+
+/** The skills the manifest asks for; stores what was fetched and records it in the lock. */
+function wanted(paths: Paths, manifest: Manifest, lock: Lock, now: string, fetched: ReadonlyMap<SourceId, Fetched>): { wants: Want[]; offered: string[] } {
   const wants: Want[] = [];
+  const offered: string[] = [];
   const problems: string[] = [];
   for (const [sid, source] of Object.entries(manifest.sources) as [SourceId, Source][]) {
     const dirs = linkDirs(paths, manifest, source);
     const add = (original: SkillName, base: string) =>
       wants.push({ id: skillId(sid, original), source: sid, original, base, name: installedName(sid, original, source), dirs });
-    if (source.type === "local") {
-      const fetched = fetchLocal(source, paths.home);
-      const seen = fetched.skills.map((s) => s.original).sort();
+    const fresh = source.type === "local" ? fetchLocal(source, paths.home) : fetched.get(sid);
+    if (fresh) {
+      const seen = fresh.skills.map((s) => s.original).sort();
       const twice = seen.filter((o, i) => seen.indexOf(o) !== i);
       if (twice.length) problems.push(`sources.${sid}: more than one folder is named ${[...new Set(twice)].join(", ")}`);
-      for (const s of fetched.skills) if (selected(source, s.original)) add(s.original, putInStore(paths, sid, s.original, s.dir));
       const prev = lock.sources[sid];
-      if (prev?.resolved !== fetched.resolved || prev.seen.join() !== seen.join()) {
-        lock.sources[sid] = { resolved: fetched.resolved, syncedAt: now, seen };
+      // Without `pick`, the first install takes everything; after that a
+      // skill upstream adds is only offered, never installed on its own.
+      const installed = new Set(Object.keys(lock.skills).filter((id) => id.startsWith(`${sid}/`)));
+      const takes = (o: SkillName) => (source.pick ? true : !prev || installed.has(skillId(sid, o)));
+      for (const s of fresh.skills) {
+        if (!selected(source, s.original)) continue;
+        if (takes(s.original)) add(s.original, putInStore(paths, sid, s.original, s.dir));
+        else if (!prev?.seen.includes(s.original)) offered.push(`new ${sid}/${s.original} (not installed; skl update ${sid} --pick)`);
+      }
+      if (prev?.resolved !== fresh.resolved || prev.seen.join() !== seen.join()) {
+        lock.sources[sid] = { resolved: fresh.resolved, syncedAt: now, seen };
       }
       continue;
     }
@@ -80,7 +97,7 @@ function wanted(paths: Paths, manifest: Manifest, lock: Lock, now: string): Want
     byName.set(w.name, w.id);
   }
   if (problems.length) throw new Error(`Nothing was changed:\n  ${problems.join("\n  ")}`);
-  return wants;
+  return { wants, offered };
 }
 
 /** Refuse to replace anything skl did not create, before the first move. */
@@ -99,9 +116,10 @@ function recheck(paths: Paths, lock: Lock, wants: Want[]): void {
 }
 
 /** Sync and save the lock; returns one line per change, none when up to date. */
-export function sync(paths: Paths, manifest: Manifest, lock: Lock, now = new Date().toISOString()): string[] {
+export function sync(paths: Paths, manifest: Manifest, lock: Lock, opts: SyncOptions = {}): string[] {
+  const now = opts.now ?? new Date().toISOString();
   const before = JSON.stringify(lock);
-  const wants = wanted(paths, manifest, lock, now);
+  const { wants, offered } = wanted(paths, manifest, lock, now, opts.fetched ?? new Map());
   recheck(paths, lock, wants);
 
   const staging = path.join(paths.sklDir, "staging");
@@ -155,7 +173,7 @@ export function sync(paths: Paths, manifest: Manifest, lock: Lock, now = new Dat
   }
   fs.rmSync(staging, { recursive: true, force: true });
   if (JSON.stringify(lock) !== before) writeLock(paths.lockFile, lock);
-  return lines;
+  return [...lines, ...offered];
 }
 
 const describe = (r: Rewrite) => `  ${r.file}:${r.change.line}: \`${r.change.from}\` -> \`${r.change.to}\``;

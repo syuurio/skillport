@@ -43,7 +43,12 @@ export function npmEnv(staging: string): Record<string, string> {
 export interface AcquireOptions {
   /** Hand the real terminal to the installer so you answer its questions. */
   interactive: boolean;
+  /** The token for `{secret}`; read from Keychain when omitted. */
+  secret?: string;
 }
+
+/** What an installer run needs, shared by v1 sets and v2 sources. */
+export type InstallerRun = Pick<InstallerSet, "command" | "unattended" | "secret" | "stage" | "harvest">;
 
 /**
  * Produce a directory holding one folder per skill, exactly as the vendor
@@ -62,9 +67,10 @@ export function acquire(
     : extractNpm(set, staging);
 }
 
-function runInstaller(
+/** Run an installer in a fake HOME under `staging`; returns the harvested folder. */
+export function runInstaller(
   id: string,
-  set: InstallerSet,
+  set: InstallerRun,
   staging: string,
   opts: AcquireOptions,
 ): string {
@@ -76,7 +82,7 @@ function runInstaller(
     // Running it would pass an empty token; a registry typo, not a choice.
     throw new Error(`"${id}" uses {secret} in its command but has no "secret": "keychain".`);
   }
-  const secret = set.secret === "keychain" ? readSecret(id) : "";
+  const secret = set.secret === "keychain" ? (opts.secret ?? readSecret(id)) : "";
   const redact = (s: string) => (secret ? s.replaceAll(secret, "***") : s);
   // No vendor knowledge lives here: the scope flag is part of `command`, and
   // the non-interactive switch is whatever the registry says it is.
@@ -163,7 +169,7 @@ export function npmPack(spec: string, dir: string): string {
   return realFolderPath(dir, "package");
 }
 
-function extractNpm(set: NpmSet, staging: string): string {
+export function extractNpm(set: Pick<NpmSet, "package" | "path">, staging: string): string {
   return realFolderPath(npmPack(set.package, staging), set.path);
 }
 

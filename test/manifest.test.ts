@@ -121,3 +121,12 @@ test("the lock round-trips through an atomic write", () => {
   assert.deepEqual(fs.readdirSync(path.dirname(file)), ["lock.json"]);
   fs.rmSync(dir, { recursive: true });
 });
+
+test("a lock with a name that is not a skill name is refused", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "skl-lock-"));
+  const file = path.join(dir, "lock.json");
+  const skills = { "fx/a": { name: "../../etc", base: "0".repeat(40), output: "0".repeat(40), updatedAt: "" } };
+  fs.writeFileSync(file, JSON.stringify({ version: 2, sources: {}, skills }));
+  assert.throws(() => readLock(file), /invalid installed names for fx\/a/);
+  fs.rmSync(dir, { recursive: true });
+});

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { SkillId, SourceId } from "./manifest.ts";
+import { isValidSkillName } from "./transform.ts";
 
 // What skl last installed, so it can tell upstream changes from your edits.
 // See docs/SPEC-v2.md §5.2. Hashes are git tree hashes.
@@ -35,6 +36,9 @@ export function readLock(file: string): Lock {
   if (!fs.existsSync(file)) return { version: 2, sources: {}, skills: {} };
   const lock = JSON.parse(fs.readFileSync(file, "utf8")) as Lock;
   if (lock.version !== 2) throw new Error(`${file}: unsupported lock version ${lock.version}`);
+  // Installed names are joined into paths that get moved to trash.
+  const bad = Object.entries(lock.skills).filter(([, s]) => !isValidSkillName(s.name));
+  if (bad.length) throw new Error(`${file}: invalid installed names for ${bad.map(([id]) => id).join(", ")}`);
   return lock;
 }
 

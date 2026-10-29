@@ -35,6 +35,7 @@ import { count, home, printItems, printResolveHints, report, reportCli, summariz
 import { isValidSkillName, withPrefix } from "./transform.ts";
 import { treeHash } from "./treehash.ts";
 import { select } from "./select.ts";
+import { type AddKind, addSource, buildSource } from "./add.ts";
 import { readLock } from "./lock.ts";
 import { readManifest } from "./manifest.ts";
 import { sync as syncV2 } from "./sync.ts";
@@ -57,6 +58,8 @@ const USAGE = `skillport — one place for skills that vendor installers scatter
   skl bump <set> [version]         Move a set's pinned installer or package to the latest (or given) version
   skl secret <set>                 Store a set's token in Keychain
   skl sync                         v2: make ~/.agents/skills match the manifest and lock (offline)
+  skl add <id> (--installer "<command>" [--unattended "<args>"] | --npm <pkg@ver> --path <dir> | --local <dir>)
+           [--prefix <p> | --no-prefix] [-y]   v2: add a source and install its skills
 
 Flags: --dry-run prints the plan only.  -y skips confirmations.
 Registry: ${defaultPaths().registry}`;
@@ -94,6 +97,7 @@ async function main(argv: string[]): Promise<number> {
     case "check":
       return check(ctx, args);
     case "add":
+      if (V2_KINDS.some((k) => rest.includes(`--${k}`))) return addCmd(base, rest);
       getSet(ctx.registry, args[0]);
       return sync(ctx, args[0], { ...flags, interactive: !flags.yes });
     case "update": {
@@ -126,6 +130,44 @@ async function main(argv: string[]): Promise<number> {
       console.log(USAGE);
       return cmd ? 1 : 0;
   }
+}
+
+const V2_KINDS: AddKind[] = ["installer", "npm", "local"];
+
+/** The word after `flag`, which may itself start with "-" (e.g. --unattended "-y"). */
+function option(rest: string[], flag: string): string | undefined {
+  const at = rest.indexOf(flag);
+  if (at < 0) return undefined;
+  const value = rest[at + 1];
+  if (value === undefined) throw new Error(`${flag} needs a value`);
+  return value;
+}
+
+async function addCmd(base: Paths, rest: string[]): Promise<number> {
+  const id = rest[0];
+  if (!id || id.startsWith("-")) throw new Error(USAGE);
+  const kinds = V2_KINDS.filter((k) => rest.includes(`--${k}`));
+  if (kinds.length > 1) throw new Error(`Pick one of --${kinds.join(", --")}`);
+  const kind = kinds[0];
+  const prefix = rest.includes("--no-prefix") ? false : option(rest, "--prefix");
+  const { source, token } = buildSource({
+    kind,
+    value: option(rest, `--${kind}`) as string,
+    path: option(rest, "--path"),
+    unattended: option(rest, "--unattended"),
+    prefix,
+  });
+  const manifest = readManifest(base.manifest);
+  const paths = withLinkTargets(base, manifest, base.manifest);
+  cleanups.add(acquireLock(paths.sklDir));
+  // A flag's value is not a flag: --unattended "-y" does not mean -y.
+  const valueFlags = ["--installer", "--npm", "--local", "--path", "--unattended", "--prefix"];
+  const own = rest.filter((w, i) => !valueFlags.includes(rest[i - 1]));
+  const yes = own.includes("-y") || own.includes("--yes");
+  const lines = await addSource(paths, manifest, readLock(paths.lockFile), id, source, { yes, token });
+  console.log(lines.length ? lines.join("\n") : "Nothing installed.");
+  if (lines.length) console.log(`Added sources.${id} to ${home(paths.manifest)}`);
+  return 0;
 }
 
 function syncCmd(base: Paths): number {

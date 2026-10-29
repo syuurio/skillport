@@ -17,7 +17,7 @@ function sandbox(fx: Partial<Source> = {}) {
   const manifest = (extra: Partial<Source> = fx): Manifest =>
     parseManifest({ version: 2, sources: { fx: { type: "local", path: src, ...extra } } }, "manifest.json");
   const paths = withLinkTargets(defaultPaths(home), {});
-  const run = (m = manifest()) => sync(paths, m, readLock(paths.lockFile), "2026-10-29T08:00:00.000Z");
+  const run = (m = manifest()) => sync(paths, m, readLock(paths.lockFile), { now: "2026-10-29T08:00:00.000Z" });
   const trashed = () => {
     const trash = path.join(paths.sklDir, "trash");
     return fs.existsSync(trash) ? fs.readdirSync(trash).flatMap((t) => fs.readdirSync(path.join(trash, t))) : [];
@@ -95,4 +95,16 @@ test("sync refuses to replace a folder or link skl did not create, and changes n
   assert.throws(() => run(), /fx-alpha exists and was not installed by skl/);
   assert.deepEqual(ls(paths.skillsDir), ["fx-alpha"]);
   assert.equal(fs.existsSync(paths.lockFile), false);
+});
+
+test("a skill upstream adds later is offered once, not installed, unless picked", () => {
+  const { src, paths, manifest, run } = sandbox();
+  run();
+  fs.mkdirSync(path.join(src, "gamma"));
+  fs.writeFileSync(path.join(src, "gamma", "SKILL.md"), "---\nname: gamma\ndescription: d\n---\n");
+  assert.deepEqual(run(), ["new fx/gamma (not installed; skl update fx --pick)"]);
+  assert.deepEqual(ls(paths.skillsDir), ["fx-alpha", "fx-beta"]);
+  assert.deepEqual(run(), []);
+  assert.ok(run(manifest({ pick: ["alpha", "beta", "gamma"] })).includes("fx/gamma -> fx-gamma"));
+  assert.deepEqual(ls(paths.skillsDir), ["fx-alpha", "fx-beta", "fx-gamma"]);
 });
