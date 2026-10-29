@@ -179,6 +179,26 @@ That skill is held back as a conflict. `MERGED` holds the new upstream plus
 every hunk that still applies, and `.rej` files hold the rest. Apply those by
 hand, delete the `.rej` files, and run `skl edit <source>/<skill>`.
 
+## Taking over npx skills installs
+
+`skl adopt <owner/repo>` moves the skills you installed from that repo with
+`npx skills add` under skl. It installs skl's copies first and removes the
+npx skills originals only after that worked, and after you confirm. `--as <id>`
+picks the source id, which is also the prefix: `skl adopt ayghri/i-have-adhd`
+installs `ayghri-i-have-adhd`.
+
+adopt always prefixes, since an unprefixed copy would take the very name the
+original still holds. To keep the name, remove the original yourself, then
+add the repo without a prefix:
+
+```
+npx skills remove i-have-adhd -g -y
+skl add adhd --github ayghri/i-have-adhd --no-prefix -y
+```
+
+The first command deletes the original for good, so if the second fails, the
+skill is gone until you install it again.
+
 ## Coming from skillport v1
 
 `skl migrate --dry-run` prints what the move would do. Every skill is listed
