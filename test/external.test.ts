@@ -29,7 +29,7 @@ test("prefix false colliding with an npx skills install stops before anything is
   const before = treeHash(home);
   assert.throws(
     () => sync(paths, manifest({ prefix: false }), readLock(paths.lockFile)),
-    /fx\/alpha would install as "alpha", which is taken by an external npx skills install \(someone\/skills\)\.\n {4}Fix: set sources\.fx\.prefix, or add sources\.fx\.rename\.alpha\./,
+    /fx\/alpha would install as "alpha", which is taken by an external npx skills install \(someone\/skills\)\.\n {4}Fix: skl rename fx\/alpha fx-alpha$/m,
   );
   // The store may hold the fetched copy; nothing an agent reads changed.
   fs.rmSync(paths.sklDir, { recursive: true, force: true });

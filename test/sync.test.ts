@@ -92,7 +92,7 @@ test("links: [] installs without linking", () => {
 test("sync refuses to replace a folder or link skl did not create, and changes nothing", () => {
   const { paths, run } = sandbox();
   fs.mkdirSync(path.join(paths.skillsDir, "fx-alpha"), { recursive: true });
-  assert.throws(() => run(), /fx\/alpha would install as "fx-alpha", which is taken by a folder in ~\/.agents\/skills that skl did not install\.\n {4}Fix: set sources\.fx\.prefix, or add sources\.fx\.rename\.alpha\./);
+  assert.throws(() => run(), /fx\/alpha would install as "fx-alpha", which is taken by a folder in ~\/.agents\/skills that skl did not install\.\n {4}Fix: skl rename fx\/alpha <new-name>$/m);
   assert.deepEqual(ls(paths.skillsDir), ["fx-alpha"]);
   assert.equal(fs.existsSync(paths.lockFile), false);
 });

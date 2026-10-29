@@ -275,7 +275,7 @@ store 每個身分保留目前的 `base`；有 patch 的身分另外保留 patch
 
 ### 6.3 知道 skill 清單後才能發現的撞名
 
-這些要等 adapter 交出 skill 清單（`add`、`sync`、`check`、`update`）才知道。發生時停下來，不寫入任何東西；在 `check` 裡則把來源標成 `blocked`：
+這些要等 adapter 交出 skill 清單（`add`、`sync`、`check`、`update`）才知道。發生時停下來，不寫入任何東西；在 `check` 裡則把來源標成 `blocked`（只有 `local` 來源在 check 時就知道新 skill 的名稱）。例外是已經安裝的來源在上游新增的 skill：只有它被擋下（列在 Held back），其他更新照常套用：
 
 | 情況 | 例子 |
 |---|---|
@@ -290,10 +290,10 @@ store 每個身分保留目前的 `base`；有 patch 的身分另外保留 patch
 
 ```
 motion/motion would install as "motion", which is taken by an external npx skills install.
-Fix: set sources.motion.prefix, or add sources.motion.rename.motion.
+Fix: skl rename motion/motion motion-motion
 ```
 
-不做互動式的撞名選單。前綴預設開啟，撞名很少見，清楚的錯誤訊息比選單簡單。Claude Code plugin 提供的同名 skill 有自己的命名空間，只顯示提示，不算撞名。
+訊息的 Fix 一律是可以直接執行的指令：已經在 manifest 的來源用 `skl rename <source>/<skill> <名稱>`，正在 `skl add` 的來源則是再跑一次並加上 `--rename <原名>=<名稱>`。建議的名稱是 `<來源>-<原名>`。不做互動式的撞名選單。前綴預設開啟，撞名很少見，一行指令比選單簡單，沒有終端機時（agent、每日排程）也一樣能用。Claude Code plugin 提供的同名 skill 有自己的命名空間，只顯示提示，不算撞名。
 
 ## 7. 來源類型
 
@@ -398,7 +398,7 @@ repo 的 `skills/` 有兩個 skill，由 agent 自己判斷何時使用，教它
 | 指令 | 說明 |
 |---|---|
 | `skl` | 在終端機裡打開 TUI；沒有終端機時同 `skl status` |
-| `skl add <id> --github <repo> \| --installer "<command>" \| --npm <pkg@ver> --path <dir> \| --local <dir>` | 寫入 manifest、需要時把 token 存進 Keychain、選擇 skill，然後安裝 |
+| `skl add <id> --github <repo> \| --installer "<command>" \| --npm <pkg@ver> --path <dir> \| --local <dir>` | 寫入 manifest、需要時把 token 存進 Keychain、選擇 skill，然後安裝。`--rename <原名>=<名稱>` 可以重複 |
 | `skl sync [--discard-edits]` | 讓磁碟符合 manifest 與 lock，不連網。直接改過的 skill 保留不動，除非加 `--discard-edits` |
 | `skl check [source...]` | 檢查更新，寫入 `status.json`，不改動 skill |
 | `skl status [--json]` | 讀 `status.json`，不連網；`--json` 輸出給 agent 讀（§10.1） |
@@ -407,6 +407,7 @@ repo 的 `skills/` 有兩個 skill，由 agent 自己判斷何時使用，教它
 | `skl diff <source>[/<skill>] [-i]` | 抓取來源，用 diff 顯示下一次更新會怎麼改磁碟上的 skill，包含引用改寫與 patch；不寫入任何 skill |
 | `skl edit <source>/<skill> [--from-disk \| --drop] [--note "<原因>"] [--dry-run]` | `--from-disk` 把直接改過的檔案存成 patch；`--drop` 恢復上游原版；不加旗標時完成合併（§10） |
 | `skl adopt <npx skills 來源>` | 接管外部的 GitHub 來源 |
+| `skl rename <source>/<skill> <名稱>` | 在 manifest 寫入 `rename` 並 sync；撞名訊息建議的修法 |
 | `skl remove <source> [-y] [--discard-edits]` | 確認後把來源的所有 skill 移到 trash、移除 link，並從 manifest 刪除。patch、note 與 Keychain token 保留。有直接改過的 skill 時拒絕，除非加 `--discard-edits` |
 | `skl secret <source>` | 把 token 存進 Keychain |
 | `skl doctor [--fix]` | 散落的副本、壞掉或缺少的 link、`edited` 的 skill、沒有 note 的 patch。`--fix` 只做安全的修正 |

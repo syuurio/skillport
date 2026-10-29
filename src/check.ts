@@ -130,10 +130,11 @@ function checkLocal(paths: Paths, sid: SourceId, source: Extract<Source, { type:
   const added = [...here.keys()].filter((n) => !seen.has(n)).sort();
   // A local folder's new skills are installed by the next sync, so they can collide now.
   const external = externalSkills(paths, lock);
+  const managed = new Map((Object.entries(lock.skills) as [SkillId, SkillLock][]).filter(([id]) => splitSkillId(id).source !== sid).map(([id, s]) => [s.name, id]));
   const collisions = added
-    .map((o) => ({ o, name: installedName(sid, o as SkillName, source) }))
-    .filter(({ name }) => external.has(name))
-    .map(({ name }) => ({ name, with: describeExternal(external.get(name)!) }));
+    .map((o) => installedName(sid, o as SkillName, source))
+    .filter((name) => external.has(name) || managed.has(name))
+    .map((name) => ({ name, with: external.has(name) ? describeExternal(external.get(name)!) : (managed.get(name) as string) }));
   if (collisions.length) return { checkedAt: now, state: "blocked", collisions };
   const changed = installed.filter(([o, s]) => here.has(o) && treeHash(here.get(o)!) !== s.base).map(([o]) => o);
   const removed = installed.filter(([o]) => !here.has(o)).map(([o]) => o);

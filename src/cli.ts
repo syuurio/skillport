@@ -14,6 +14,7 @@ import { migrate, v1Files } from "./migrate.ts";
 import { type Paths, defaultPaths, withLinkTargets } from "./paths.ts";
 import { Cancelled, ask, chooseMany, confirm, isInteractive } from "./prompt.ts";
 import { removeSource } from "./remove.ts";
+import { renameSkill } from "./rename.ts";
 import { describeSchedule, news, notify, parseTime, realLaunchd, schedule } from "./schedule.ts";
 import { count, home } from "./report.ts";
 import { formatStatus, readStatus, skillReports, which, writeStatus } from "./status.ts";
@@ -24,7 +25,7 @@ const USAGE = `skl: one place for the agent skills that vendor installers scatte
 
   skl                              The TUI on a terminal, the status table otherwise
   skl add <id> (--github <owner/repo> | --installer "<command>" [--unattended "<args>"] | --npm <pkg@ver> --path <dir> | --local <dir>)
-           [--prefix <p> | --no-prefix] [-y]   Add a source and install its skills
+           [--prefix <p> | --no-prefix] [--rename <skill>=<name>]... [-y]   Add a source and install its skills
   skl sync [--discard-edits]       Make ~/.agents/skills match the manifest and lock (offline)
                                    skills you changed in place are kept unless --discard-edits
   skl check [source...] [--notify]  Look for updates; changes no skill. --notify sends a
@@ -42,6 +43,7 @@ const USAGE = `skl: one place for the agent skills that vendor installers scatte
   skl edit <source>/<skill> [--note "<why>"] [--dry-run]
                                    Finish a merge once its MERGED folder is resolved
   skl edit <source>/<skill> --drop  Drop your patch and go back to upstream
+  skl rename <source>/<skill> <name>   Install one skill under a name of its own, as a name clash suggests
   skl adopt <owner/repo> [--as <id>] [-y]   Take over skills you installed with npx skills
   skl remove <source> [-y] [--discard-edits]   Remove a source's skills (to trash) and the source
   skl secret <source>              Store a source's token in Keychain
@@ -100,6 +102,12 @@ async function main(argv: string[]): Promise<number> {
       return editCmd(base, rest, flags);
     case "adopt":
       return adoptCmd(base, args[0], rest);
+    case "rename": {
+      const { manifest, paths, lock } = load(base);
+      cleanups.add(acquireLock(paths.sklDir));
+      console.log(renameSkill(paths, manifest, lock, args[0], args[1]).join("\n"));
+      return 0;
+    }
     case "remove":
       return removeCmd(base, args[0], rest, flags);
     case "secret":
@@ -210,11 +218,17 @@ async function addCmd(base: Paths, rest: string[], flags: Flags): Promise<number
     unattended: option(rest, "--unattended"),
     prefix,
   });
+  const renames = rest.flatMap((w, i) => (rest[i - 1] === "--rename" ? [w] : []));
+  for (const r of renames) {
+    const [from, to, ...more] = r.split("=");
+    if (!from || !to || more.length) throw new Error(`--rename takes <skill>=<name>, not ${r}`);
+    source.rename = { ...source.rename, [from]: to };
+  }
   const manifest = readManifest(base.manifest);
   const paths = withLinkTargets(base, manifest, base.manifest);
   cleanups.add(acquireLock(paths.sklDir));
   // A flag's value is not a flag: --unattended "-y" does not mean -y.
-  const valueFlags = ["--github", "--installer", "--npm", "--local", "--path", "--unattended", "--prefix"];
+  const valueFlags = ["--github", "--installer", "--npm", "--local", "--path", "--unattended", "--prefix", "--rename"];
   const own = rest.filter((w, i) => !valueFlags.includes(rest[i - 1]));
   const yes = own.includes("-y") || own.includes("--yes");
   const lines = await addSource(paths, manifest, readLock(paths.lockFile), id, source, { yes, token, dryRun: flags.dryRun });

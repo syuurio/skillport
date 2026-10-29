@@ -118,3 +118,40 @@ test("add --dry-run prints what it would install and writes no skill or manifest
   assert.equal(t.skl(["add", "mine", "--local", path.dirname(src)]).status, 0);
   assert.ok(fs.existsSync(path.join(t.paths.skillsDir, "mine-hello")));
 });
+
+test("a new upstream skill whose name is taken is held back with the command that fixes it", () => {
+  const t = sandbox();
+  const skill = (dir: string, name: string, body: string) => {
+    fs.mkdirSync(path.join(t.home, dir, name), { recursive: true });
+    fs.writeFileSync(path.join(t.home, dir, name, "SKILL.md"), `---\nname: ${name}\ndescription: d\n---\n${body}\n`);
+  };
+  const body = (name: string) => fs.readFileSync(path.join(t.paths.skillsDir, name, "SKILL.md"), "utf8");
+  skill("aif", "emil-color", "aif color");
+  skill("anim", "animate", "anim animate");
+  assert.equal(t.skl(["add", "aif", "--local", path.join(t.home, "aif"), "--no-prefix", "-y"]).status, 0);
+  assert.equal(t.skl(["add", "anim", "--local", path.join(t.home, "anim"), "--prefix", "emil", "-y"]).status, 0);
+
+  // aif ships emil-animate, which anim already installs; anim's own update still goes ahead.
+  skill("aif", "emil-animate", "aif animate");
+  skill("anim", "animate", "anim animate v2");
+  assert.match(t.skl(["check"]).stdout, /aif\s+local\s+blocked: name collision/);
+  const r = t.skl(["update", "-y"]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /blocked\s+emil-animate\s+its name is taken\n\s+Fix: skl rename aif\/emil-animate aif-emil-animate/);
+  assert.match(body("emil-animate"), /anim animate v2/);
+
+  const fixed = t.skl(["rename", "aif/emil-animate", "aif-emil-animate"]);
+  assert.equal(fixed.status, 0, fixed.stderr);
+  assert.match(body("aif-emil-animate"), /aif animate/);
+  assert.match(body("emil-animate"), /anim animate v2/);
+  assert.equal(readManifest(t.paths.manifest).sources["aif" as never].rename?.["emil-animate"], "aif-emil-animate");
+
+  // A source being added stops whole, and points at its own --rename.
+  skill("x", "emil-color", "x color");
+  const clash = t.skl(["add", "x", "--local", path.join(t.home, "x"), "--no-prefix", "-y"]);
+  assert.notEqual(clash.status, 0);
+  assert.match(clash.stderr, /Fix: run skl add x again with --rename emil-color=x-emil-color/);
+  assert.equal(t.skl(["add", "x", "--local", path.join(t.home, "x"), "--no-prefix", "--rename", "emil-color=x-emil-color", "-y"]).status, 0);
+  assert.match(body("x-emil-color"), /x color/);
+  assert.match(body("emil-color"), /aif color/);
+});

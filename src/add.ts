@@ -81,7 +81,7 @@ export async function addSource(paths: Paths, manifest: Manifest, lock: Lock, id
     const picked = opts.yes || !isInteractive() ? all : await pick(id, all);
     if (!picked.length) return [];
     if (picked.length < all.length) entry.pick = picked;
-    const lines = describeSync(sync(paths, next, lock, { fetched: new Map([[sid, fetched]]), offeredNow: !opts.yes && isInteractive(), dryRun: opts.dryRun }));
+    const lines = describeSync(sync(paths, next, lock, { fetched: new Map([[sid, fetched]]), offeredNow: !opts.yes && isInteractive(), dryRun: opts.dryRun, adding: sid }));
     if (!opts.dryRun) writeManifest(paths.manifest, next);
     return lines;
   } finally {

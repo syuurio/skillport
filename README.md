@@ -28,7 +28,7 @@ skl doctor
 
 ```
 skl                              the TUI on a terminal, the status table otherwise
-skl add <id> --github <owner/repo> | --installer "<command>" | --npm <pkg@ver> --path <dir> | --local <dir>
+skl add <id> --github <owner/repo> | --installer "<command>" | --npm <pkg@ver> --path <dir> | --local <dir> [--rename <skill>=<name>]
 skl sync [--discard-edits]       make ~/.agents/skills match the manifest and lock (offline)
 skl check [source...] [--notify] look for updates; changes no skill
 skl status [--json]              what check last found (offline); --json for agents
@@ -37,6 +37,7 @@ skl which <name>                 the source, original name and version of an ins
 skl diff <source>[/<skill>]      what the next update would change on disk
 skl edit <source>/<skill> [--from-disk | --drop] [--note "<why>"]   save, drop or finish a customization
 skl adopt <owner/repo>           take over skills you installed with npx skills
+skl rename <source>/<skill> <name>   install one skill under a name of its own
 skl remove <source>              remove a source's skills (to trash) and the source
 skl secret <source>              store an installer's token in macOS Keychain
 skl doctor [--fix]               stray copies, broken or missing links, edits, patches without a note
@@ -95,6 +96,11 @@ Every source can set:
 
 New skills upstream are listed by `check` and offered by `update`. They are
 never installed on their own.
+
+When two skills would get the same name, skl stops before writing and prints
+the command that fixes it: `skl rename <source>/<skill> <name>`, or
+`--rename <skill>=<name>` on the `skl add` you ran. A new upstream skill whose
+name is taken is only held back; the rest of the update goes ahead.
 
 ## Checking every day
 
