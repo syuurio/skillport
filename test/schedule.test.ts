@@ -10,7 +10,7 @@ import { type Launchd, describeSchedule, label, news, parseTime, plist, plistPat
 import type { SourceStatus, Status } from "../src/status.ts";
 
 const sandbox = () => defaultPaths(fs.mkdtempSync(path.join(os.tmpdir(), "skl-sched-")));
-const job = { node: "/opt/node/bin/node", cli: "/src/skl & co/cli.ts", pathEnv: "/opt/node/bin:/usr/bin", hour: 9, minute: 5 };
+const job = { program: "/src/skl & co/bin/skillport", pathEnv: "/opt/node/bin:/usr/bin", hour: 9, minute: 5 };
 
 function fakeLaunchd() {
   const loaded = new Set<string>();
@@ -36,13 +36,13 @@ test("a sandbox HOME gets its own job, so it never replaces your real schedule",
   assert.equal(plistPath(paths), path.join(paths.home, "Library", "LaunchAgents", `${label(paths)}.plist`));
 });
 
-test("the job runs skl check --notify with absolute paths, your PATH and the sandbox HOME", () => {
+test("the job runs skl check --notify through skl's launcher, with your PATH and the sandbox HOME", () => {
   const paths = sandbox();
   const file = path.join(paths.home, "job.plist");
   fs.writeFileSync(file, plist(paths, job));
   assert.equal(spawnSync("plutil", ["-lint", file]).status, 0);
   const parsed = JSON.parse(spawnSync("plutil", ["-convert", "json", "-o", "-", file], { encoding: "utf8" }).stdout);
-  assert.deepEqual(parsed.ProgramArguments, ["/opt/node/bin/node", "/src/skl & co/cli.ts", "check", "--notify"]);
+  assert.deepEqual(parsed.ProgramArguments, ["/src/skl & co/bin/skillport", "check", "--notify"]);
   assert.deepEqual(parsed.EnvironmentVariables, { PATH: "/opt/node/bin:/usr/bin", SKILLPORT_HOME: paths.home });
   assert.deepEqual(parsed.StartCalendarInterval, { Hour: 9, Minute: 5 });
   assert.equal(parsed.StandardOutPath, path.join(paths.sklDir, "schedule.log"));

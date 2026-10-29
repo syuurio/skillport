@@ -120,7 +120,7 @@ function scheduleCmd(base: Paths, mode: string | undefined, rest: string[]): num
     return 0;
   }
   if (mode !== "daily" && mode !== "off") throw new Error("Usage: skl schedule [daily [--at 09:00] | off]");
-  const job = { node: process.execPath, cli: import.meta.filename, pathEnv: process.env.PATH ?? "/usr/bin:/bin", ...parseTime(option(rest, "--at") ?? "09:00") };
+  const job = { program: path.join(import.meta.dirname, "..", "bin", "skillport"), pathEnv: process.env.PATH ?? "/usr/bin:/bin", ...parseTime(option(rest, "--at") ?? "09:00") };
   console.log(schedule(base, mode, job, realLaunchd).join("\n"));
   return 0;
 }

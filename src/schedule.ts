@@ -41,10 +41,13 @@ export function label(paths: Paths): string {
 export const plistPath = (paths: Paths) => path.join(paths.home, "Library", "LaunchAgents", `${label(paths)}.plist`);
 
 export interface Job {
-  /** The node binary and the CLI it runs, as absolute paths: launchd's PATH has neither. */
-  node: string;
-  cli: string;
-  /** PATH for the job, so git, gh and npm resolve as they do in your shell. */
+  /**
+   * skl's own launcher, as an absolute path: launchd's PATH does not have it.
+   * macOS lists a background job under the program it starts, so the job
+   * starts this script, not node, to show up as "skillport".
+   */
+  program: string;
+  /** PATH for the job, so node, git, gh and npm resolve as they do in your shell. */
   pathEnv: string;
   hour: number;
   minute: number;
@@ -63,7 +66,7 @@ export function plist(paths: Paths, job: Job): string {
 <dict>
   <key>Label</key>${str(label(paths))}
   <key>ProgramArguments</key>
-  <array>${[job.node, job.cli, "check", "--notify"].map(str).join("")}</array>
+  <array>${[job.program, "check", "--notify"].map(str).join("")}</array>
   <key>EnvironmentVariables</key>
   <dict>${Object.entries(env)
     .map(([k, v]) => `<key>${k}</key>${str(v)}`)
