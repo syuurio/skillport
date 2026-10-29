@@ -14,7 +14,7 @@ import { sync } from "../src/sync.ts";
 const TOKEN = "tok_9f8e7d6c5b4a3210";
 
 /** An installer that writes skills for two agents, a file at HOME, and prints its token. */
-function fakeInstaller(dir: string, exit = 0): string {
+function fakeInstaller(dir: string, exit = 0, extra: string[] = []): string {
   const script = path.join(dir, "install.mjs");
   fs.writeFileSync(
     script,
@@ -27,6 +27,7 @@ const skill = (rel, name) => {
 };
 skill(".claude/skills", "alpha");
 skill(".claude/skills", "beta");
+for (const name of ${JSON.stringify(extra)}) skill(".claude/skills", name);
 skill(".codex/skills", "codex-only");
 fs.writeFileSync(path.join(home, "skl-adapter-marker"), "x");
 console.log("token=" + process.argv.find((a) => a.startsWith("--token=")).slice(8));
@@ -110,3 +111,21 @@ test("fetched installer skills are stored, rendered and linked by sync", () => {
   fs.rmSync(staging, { recursive: true });
   assert.deepEqual(sync(paths, manifest, readLock(paths.lockFile)), []);
 });
+
+test("a skill a vendor adds later is offered once, not installed, unless picked", () => {
+  const { home, source, staging } = sandbox();
+  const paths = withLinkTargets(defaultPaths(home), {});
+  const manifest = (pick?: string[]) => parseManifest({ version: 2, sources: { vend: { ...source, ...(pick ? { pick } : {}) } } }, "manifest.json");
+  const fetchAndSync = (m = manifest()) => {
+    const fetched = fetchInstaller("vend" as SourceId, source, { staging, interactive: false, home, secret: TOKEN });
+    return sync(paths, m, readLock(paths.lockFile), { fetched: new Map([["vend" as SourceId, fetched]]) });
+  };
+  fetchAndSync();
+  fakeInstaller(home, 0, ["gamma"]);
+  assert.deepEqual(fetchAndSync(), ["new vend/gamma (not installed; skl update vend --pick)"]);
+  assert.deepEqual(ls(paths.skillsDir), ["vend-alpha", "vend-beta"]);
+  assert.deepEqual(fetchAndSync(), []);
+  assert.ok(fetchAndSync(manifest(["alpha", "beta", "gamma"])).includes("vend/gamma -> vend-gamma"));
+});
+
+const ls = (dir: string) => fs.readdirSync(dir).sort();

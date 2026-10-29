@@ -103,7 +103,7 @@ manifest ──▶ adapters ──▶ store ──▶ 輸出 ──▶ ~/.agents
 |---|---|
 | `prefix` | 省略 = 來源 id；字串 = 自訂前綴；`false` = 不加前綴 |
 | `rename` | 原名 → 安裝名稱，優先於前綴 |
-| `pick` | 要安裝的原名。省略 = 第一次安裝時全部；之後上游新增的 skill 只列出，不自動安裝 |
+| `pick` | 要安裝的原名。省略 = 第一次安裝時全部；之後上游新增的 skill 只列出，不自動安裝。`local` 例外：資料夾裡新增的 skill 下次 sync 就安裝 |
 | `exclude` | 不安裝的原名 |
 | `links` | 這個來源要連結的目標，省略 = 最上層的 `targets` |
 

@@ -97,14 +97,11 @@ test("sync refuses to replace a folder or link skl did not create, and changes n
   assert.equal(fs.existsSync(paths.lockFile), false);
 });
 
-test("a skill upstream adds later is offered once, not installed, unless picked", () => {
-  const { src, paths, manifest, run } = sandbox();
+test("a new folder in a local source is installed on the next sync", () => {
+  const { src, paths, run } = sandbox();
   run();
   fs.mkdirSync(path.join(src, "gamma"));
   fs.writeFileSync(path.join(src, "gamma", "SKILL.md"), "---\nname: gamma\ndescription: d\n---\n");
-  assert.deepEqual(run(), ["new fx/gamma (not installed; skl update fx --pick)"]);
-  assert.deepEqual(ls(paths.skillsDir), ["fx-alpha", "fx-beta"]);
-  assert.deepEqual(run(), []);
-  assert.ok(run(manifest({ pick: ["alpha", "beta", "gamma"] })).includes("fx/gamma -> fx-gamma"));
+  assert.deepEqual(run(), ["fx/gamma -> fx-gamma"]);
   assert.deepEqual(ls(paths.skillsDir), ["fx-alpha", "fx-beta", "fx-gamma"]);
 });

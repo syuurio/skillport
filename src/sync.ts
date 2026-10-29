@@ -68,9 +68,10 @@ function wanted(paths: Paths, manifest: Manifest, lock: Lock, now: string, fetch
       if (twice.length) problems.push(`sources.${sid}: more than one folder is named ${[...new Set(twice)].join(", ")}`);
       const prev = lock.sources[sid];
       // Without `pick`, the first install takes everything; after that a
-      // skill upstream adds is only offered, never installed on its own.
+      // skill a vendor adds is only offered, never installed unreviewed. A
+      // local folder is yours: a new folder there is the request to install.
       const installed = new Set(Object.keys(lock.skills).filter((id) => id.startsWith(`${sid}/`)));
-      const takes = (o: SkillName) => (source.pick ? true : !prev || installed.has(skillId(sid, o)));
+      const takes = (o: SkillName) => source.pick !== undefined || source.type === "local" || !prev || installed.has(skillId(sid, o));
       for (const s of fresh.skills) {
         if (!selected(source, s.original)) continue;
         if (takes(s.original)) add(s.original, putInStore(paths, sid, s.original, s.dir));
