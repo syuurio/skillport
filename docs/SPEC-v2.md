@@ -361,7 +361,11 @@ Fix: set sources.motion.prefix, or add sources.motion.rename.motion.
   新增與刪除的檔案另外處理：只有一邊動到就採用那一邊，兩邊都動到算衝突。
 
 - **乾淨合併**：計畫裡顯示 `patch reapplied`，套用後以新上游為基準重新產生 patch。
-- **有衝突**：這個 skill 標成 `conflict`，輸出維持舊版，其他 skill 照常更新。skl 準備 `merge/<source>/<skill>/`，放入 `BASE/`、`UPSTREAM/`、`YOURS/`、`note.md`，你自己處理，或交給 agent。v1 之後的 `skl merge` 會自動交給設定好的 agent。
+- **有衝突**：這個 skill 標成 `conflict`，列在計畫的 Held back，不在套用範圍內；輸出維持舊版，其他 skill 照常更新。skl 準備 `merge/<source>/<skill>/`，放入 `BASE/`、`UPSTREAM/`、`YOURS/`、`note.md`，你自己處理，或交給 agent。v1 之後的 `skl merge` 會自動交給設定好的 agent。
+
+- **直接改了 `~/.agents/skills` 裡的檔案**（沒有透過 `skl edit`）：磁碟的 tree hash 和 lock 的 `output` 不同，這個 skill 標成 `edited`。`sync` 與 `update` 都不覆蓋它，只列在 Held back，並保留它目前的名稱供其他 skill 的引用使用。兩個出口：
+  - `skl edit <source>/<skill> --from-disk`：把磁碟上的改動轉成 patch。先還原 skl 自己做的改寫（安裝名稱、`metadata` 的 `skl-*` 鍵、引用改寫），再和 store 裡的原名版本比對，之後就走上面的合併流程。
+  - `--discard-edits`（`sync` 或 `update`）：換回 skl 的版本，你的那份移到 trash。
 
 ## 11. 指令
 
@@ -371,13 +375,13 @@ Fix: set sources.motion.prefix, or add sources.motion.rename.motion.
 |---|---|
 | `skl` | 在終端機裡打開 TUI；沒有終端機時同 `skl status` |
 | `skl add <id> --github <repo> \| --installer "<command>" \| --npm <pkg@ver> --path <dir> \| --local <dir>` | 寫入 manifest、需要時把 token 存進 Keychain、選擇 skill，然後安裝 |
-| `skl sync` | 讓磁碟符合 manifest 與 lock，不連網 |
+| `skl sync [--discard-edits]` | 讓磁碟符合 manifest 與 lock，不連網。直接改過的 skill 保留不動，除非加 `--discard-edits` |
 | `skl check [source...]` | 檢查更新，寫入 `status.json`，不改動 skill |
 | `skl status [source]` | 讀 `status.json`，不連網 |
-| `skl update [source...] [-i] [--pick]` | 列出計畫，確認後套用 |
+| `skl update [source...] [-i] [--pick] [--discard-edits]` | 列出計畫，在終端機上勾選新 skill，確認後套用；`conflict` 與 `edited` 不套用 |
 | `skl which <安裝名稱>` | 來源、原名、版本、最後更新時間 |
 | `skl diff <source>/<skill>` | 這次更新會改什麼，包含引用改寫 |
-| `skl edit <source>/<skill> [--drop]` | 客製化 |
+| `skl edit <source>/<skill> [--drop \| --from-disk]` | 客製化；`--from-disk` 把直接改過的檔案轉成 patch |
 | `skl adopt <npx skills 來源>` | 接管外部的 GitHub 來源 |
 | `skl remove <source>` | 移除來源的所有 skill（移到 trash）並從 manifest 刪除 |
 | `skl secret <source>` | 把 token 存進 Keychain |
@@ -396,19 +400,32 @@ emil-pro        installer   token invalid: run skl secret   2h ago
 legacy          local       blocked: name collision         2h ago
 ```
 
-`skl update` 的計畫：
+`skl update` 的計畫分成兩段。第一段是要套用的變更；第二段是 skl 不會動、要你處理的 skill，它們不在套用範圍內，也不會出現在選擇清單裡：
 
 ```
 matt  4f2a91c → b81e0d3
   replace   matt-tdd
   replace   matt-code-review
-  new       implement-spec (not picked; skl update matt --pick)
+  new       implement-spec, deploy
 aiforui
   replace   aiforui-color      patch reapplied
-anidev
-  conflict  anidev-gesture     kept old version; see ~/.agents/.skl/merge/anidev/gesture
+
+Held back (not applied):
+  conflict  anidev-gesture     you and upstream changed the same lines
+            resolve in ~/.agents/.skl/merge/anidev/gesture
+  edited    matt-grilling      changed in place in ~/.agents/skills
+            keep your edits:   skl edit matt/grilling --from-disk
+            discard them:      skl update matt --discard-edits
+
+New skills in matt. Install any? (space to toggle, enter to confirm)
+  ◻ implement-spec
+  ◻ deploy
 Apply? (y/N)
 ```
+
+- `new`：vendor 來源上游新增、還沒看過的 skill。在終端機上直接勾選要不要裝；沒勾的記進 lock 的 `seen`，之後不再詢問，想裝時用 `skl update <source> --pick` 重新挑。沒有終端機或加 `-y` 時只列出，不安裝也不記成看過。`local` 來源的新 skill 不經詢問，直接列在 `new` 並安裝（§5.1）。
+- `conflict` 與 `edited` 一律只列在 Held back：輸出維持現狀，同一來源的其他 skill 照常更新。
+- `Apply?` 只涵蓋第一段與勾選的新 skill。
 
 ## 12. TUI
 

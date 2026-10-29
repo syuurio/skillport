@@ -287,7 +287,8 @@ A phase is verified only when its unit and live boxes are all checked. Tests alo
 
 **Build.**
 
-- [ ] Print the plan per source (replaced, added, removed, and skills you edited whose edits go to trash), then confirm. Support `-y`, `--dry-run` and `--pick`.
+- [ ] Print the plan per source (replaced, added, removed), then a Held back section for `conflict` and `edited` skills with their next steps (SPEC §11). Held-back skills are never applied and never offered in a selection list.
+- [ ] On a terminal, offer a vendor source's unseen new skills in a multiselect before `Apply?`. Unchecked ones go into the lock's `seen`. Without a terminal or with `-y`, only list them and leave `seen` alone. Support `-y`, `--dry-run`, `--pick` and `--discard-edits`.
 - [ ] Skip installers that only run interactively unless `-i` is given.
 - [ ] Record each source in the lock as soon as it finishes, so a failed run resumes where it stopped.
 - [ ] Check collisions again right before writing.
@@ -298,7 +299,7 @@ A phase is verified only when its unit and live boxes are all checked. Tests alo
 
 **Verify, unit.**
 
-- [ ] `test/update.test.ts` covers a changed skill, a removed skill, a dry run that writes nothing, and a second run that writes nothing. Run `npm test`.
+- [ ] `test/update.test.ts` covers a changed skill, a removed skill, an `edited` skill that stays and is held back, a new vendor skill that is offered and not installed with `-y`, a dry run that writes nothing, and a second run that writes nothing. Run `npm test`.
 
 **Verify, live.**
 
@@ -326,6 +327,7 @@ A phase is verified only when its unit and live boxes are all checked. Tests alo
 - [ ] The store keeps the base a patch was made against until a merge replaces it.
 - [ ] On update, run `git merge-file` per file with BASE as the old upstream, UPSTREAM as the new one and YOURS as the old upstream plus the patch. A clean merge regenerates the patch against the new upstream. A conflict marks the skill `conflict`, keeps the old output, and fills `~/.agents/.skl/merge/<source>/<skill>/`.
 - [ ] `skl edit --drop <source>/<skill>` removes the patch.
+- [ ] `skl edit --from-disk <source>/<skill>` turns an `edited` skill into a patch: undo skl's own rewrites (installed name, `skl-*` metadata keys, reference rewrites) on a copy of the disk folder, then diff it against the original-name version in the store.
 
 **You see.**
 
@@ -333,7 +335,7 @@ A phase is verified only when its unit and live boxes are all checked. Tests alo
 
 **Verify, unit.**
 
-- [ ] `test/patch.test.ts` covers a clean merge that keeps both changes, a conflict that keeps the old output and fills the merge folder, and a prefix change that keeps a patched skill correct. Run `npm test`.
+- [ ] `test/patch.test.ts` covers a clean merge that keeps both changes, a conflict that keeps the old output and fills the merge folder, a prefix change that keeps a patched skill correct, and `--from-disk` producing a patch that renders back to exactly the edited folder. Run `npm test`.
 
 **Verify, live.**
 
