@@ -17,6 +17,8 @@ export type SourceStatus = { checkedAt: string } & (
   | { state: "error"; reason: string }
   | { state: "blocked"; collisions: { name: string; with: string }[] }
   | { state: "needs-token" }
+  /** No version to compare without running it; update runs it. */
+  | { state: "unpinned" }
 );
 
 export interface SkillFlags {
@@ -66,6 +68,8 @@ export function describeState(s: SourceStatus, type: string): string {
       return `blocked: ${s.collisions.length === 1 ? "name collision" : `${s.collisions.length} name collisions`}`;
     case "needs-token":
       return "token missing: skl secret";
+    case "unpinned":
+      return "not pinned: update to compare";
   }
 }
 

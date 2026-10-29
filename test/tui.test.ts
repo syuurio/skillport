@@ -17,6 +17,7 @@ const manifest = parseManifest(
       motion: { type: "npm", package: "motion-ai@14.1.0", path: "content/skills" },
       legacy: { type: "local", path: "~/skills" },
       emil: { type: "installer", command: ["npx", "-y", "@emil/install@1.0.0", "--key", "{secret}"], secret: "keychain", unattended: [] },
+      ask: { type: "installer", command: ["sh", "install.sh"] },
     },
   },
   "manifest.json",
@@ -37,6 +38,7 @@ const status: Status = {
     ["motion" as SourceId]: { checkedAt: NOW, state: "up-to-date", pinned: "14.1.0" },
     ["legacy" as SourceId]: { checkedAt: NOW, state: "blocked", collisions: [{ name: "legacy-a", with: "npx skills" }] },
     ["emil" as SourceId]: { checkedAt: NOW, state: "needs-token" },
+    ["ask" as SourceId]: { checkedAt: NOW, state: "unpinned" },
   },
   skills: { ["matt/review" as SkillId]: { customized: true }, ["matt/grilling" as SkillId]: { edited: true } },
 };
@@ -44,7 +46,7 @@ const status: Status = {
 test("rows: one per source, marked by state", () => {
   assert.deepEqual(
     sourceRows(manifest, status).map((r) => `${r.mark} ${r.id} ${r.state}`),
-    ["● matt 1 update · 1 new", "✓ motion up to date (pinned 14.1.0)", "✗ legacy blocked: name collision", "✗ emil token missing: skl secret"],
+    ["● matt 1 update · 1 new", "✓ motion up to date (pinned 14.1.0)", "✗ legacy blocked: name collision", "✗ emil token missing: skl secret", "? ask not pinned: update to compare"],
   );
   assert.deepEqual(sourceRows(manifest, null)[0].state, "not checked yet");
   assert.equal(headerRight(status, Date.parse(NOW)), "checked 2h ago · r to re-check");

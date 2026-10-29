@@ -114,7 +114,7 @@ function checkGithub(sid: SourceId, source: Extract<Source, { type: "github" }>,
 
 function checkVersion(spec: string | undefined, net: Net, now: string): SourceStatus {
   const m = spec && isPinnedSpec(spec) ? /^(@?[^@]+)@(.+)$/.exec(spec) : null;
-  if (!m) return { checkedAt: now, state: "unknown", reason: "no pinned version; skl update runs it to compare" };
+  if (!m) return { checkedAt: now, state: "unpinned" };
   const latest = net.latestVersion(m[1]);
   if (!latest) return { checkedAt: now, state: "unknown", reason: "npm unreachable" };
   return latest === m[2] ? { checkedAt: now, state: "up-to-date", pinned: m[2] } : { checkedAt: now, state: "pinned-behind", current: m[2], latest };
