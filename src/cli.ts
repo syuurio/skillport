@@ -39,6 +39,7 @@ import { type AddKind, addSource, buildSource } from "./add.ts";
 import { adopt } from "./adopt.ts";
 import { type EditMode, edit, runEditor } from "./edit.ts";
 import { type UpdateIO, fetchSources, update } from "./update.ts";
+import { migrate } from "./migrate.ts";
 import { diff as diffSkill } from "./diff.ts";
 import { removeSource } from "./remove.ts";
 import { check as checkSources, realNet } from "./check.ts";
@@ -64,6 +65,7 @@ const USAGE = `skillport — one place for skills that vendor installers scatter
   skl namespace <set> (<prefix> | --off)   Prefix every skill of a set, new ones too
   skl bump <set> [version]         Move a set's pinned installer or package to the latest (or given) version
   skl secret <set>                 Store a set's token in Keychain
+  skl migrate [--dry-run] [-y] [--discard-edits]   v2: turn this v1 registry into a v2 manifest
   skl sync [--discard-edits]       v2: make ~/.agents/skills match the manifest and lock (offline)
                                    skills you changed in place are kept unless --discard-edits
   skl add <id> (--github <owner/repo> | --installer "<command>" [--unattended "<args>"] | --npm <pkg@ver> --path <dir> | --local <dir>)
@@ -109,6 +111,8 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   }
   switch (cmd) {
+    case "migrate":
+      return migrateCmd(base, rest, flags);
     case "sync":
       return syncCmd(base, rest.includes("--discard-edits"));
     case "register":
@@ -301,6 +305,20 @@ async function editCmd(base: Paths, arg: string | undefined, rest: string[]): Pr
   };
   console.log((await edit(paths, manifest, lock, arg, mode, io)).join("\n"));
   return 0;
+}
+
+async function migrateCmd(base: Paths, rest: string[], flags: Flags): Promise<number> {
+  cleanups.add(acquireLock(base.sklDir));
+  cleanups.add(() => fs.rmSync(path.join(base.sklDir, "fetch"), { recursive: true, force: true }));
+  const print = (line: string) => console.log(line);
+  return migrate(base, {
+    dryRun: flags.dryRun,
+    yes: flags.yes,
+    discardEdits: rest.includes("--discard-edits"),
+    confirm: isInteractive() ? (q) => confirm(q, false) : null,
+    print,
+    fetch: (manifest, paths) => fetchSources(paths, manifest, Object.keys(manifest.sources) as SourceId[], false, print),
+  });
 }
 
 function syncCmd(base: Paths, discardEdits: boolean): number {

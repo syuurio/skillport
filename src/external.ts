@@ -2,7 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Lock } from "./lock.ts";
 import type { Paths } from "./registry.ts";
-import { readSkillLock, readState } from "./state.ts";
+import { readSkillLock } from "./npxskills.ts";
+import { readState } from "./state.ts";
 import { isValidSkillName } from "./transform.ts";
 
 // Skills in ~/.agents/skills that skl v2 did not install. They are only read:

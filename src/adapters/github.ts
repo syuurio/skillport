@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { sandboxEnv } from "../acquire.ts";
 import type { GithubSource, SourceId } from "../manifest.ts";
-import { SKILLS_CLI } from "../skillscli.ts";
+import { SKILLS_CLI } from "../npxskills.ts";
 import { githubRepo } from "../validate.ts";
 import { type FetchOptions, type Fetched, skillsIn } from "./index.ts";
 

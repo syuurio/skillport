@@ -4,8 +4,7 @@ import type { Lock } from "./lock.ts";
 import { type GithubSource, type Manifest, type SourceId, parseManifest, writeManifest } from "./manifest.ts";
 import { confirm, isInteractive } from "./prompt.ts";
 import type { Paths } from "./registry.ts";
-import { removeCliSkills } from "./skillscli.ts";
-import { readSkillLock } from "./state.ts";
+import { readSkillLock, removeCliSkills } from "./npxskills.ts";
 import { describeSync, sync } from "./sync.ts";
 import { githubRepo } from "./validate.ts";
 
