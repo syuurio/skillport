@@ -387,7 +387,7 @@ repo 的 `skills/` 有兩個 skill，由 agent 自己判斷何時使用，教它
 | `skillport-edit` | 使用者要改某個 skill 時：用 `skl which` 找 id，用 `skl status --json` 看狀態，直接改安裝資料夾，`--from-disk --dry-run` 預覽後用 `--note` 存檔 |
 | `skillport-merge` | 有衝突時：讀 note、`your.patch`、`BASE` 與 `UPSTREAM` 的差異，在 `MERGED/` 帶入原本的意圖，`--dry-run` 預覽後完成 |
 
-安裝：`skl add skillport --local <repo>/skills`，原名是 `edit` 與 `merge`，加上前綴就是上面的名稱。
+安裝：`skl add skillport --github syuurio/skillport`，原名是 `edit` 與 `merge`，加上前綴就是上面的名稱。修改這兩個 skill 時，改用 `--local <clone>/skills`，`skl update skillport` 不用 push 就會套用。
 
 `skl status --json` 是給 agent 讀的：`sources` 是每個來源的狀態，`skills` 列出每個 skill 的 `id`、安裝名稱、資料夾、patch 與 note 的路徑、`edited`，以及衝突時的 `conflict.dir`。
 

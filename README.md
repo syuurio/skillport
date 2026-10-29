@@ -141,8 +141,11 @@ listed as a conflict. The merge folder holds `BASE`, `YOURS`, `UPSTREAM` and
 Install them like any other source:
 
 ```
-skl add skillport --local ~/dev/skillport/skills
+skl add skillport --github syuurio/skillport
 ```
+
+Working on the skills themselves? Add your clone as `--local` instead, and
+`skl update skillport` picks up each change without a push.
 
 They read `skl status --json`, which lists every skill with its folder, patch,
 note, whether it was edited in place, and its merge folder when it has a
@@ -157,8 +160,7 @@ so leave it out.
 On a new machine:
 
 1. Install skl (see Install) and restore `~/.config/skl/`. A `local` source
-   reads its folder from the same path, so put those folders back too, such as
-   `~/dev/skillport/skills` for skillport's own skills.
+   reads its folder from the same path, so put those folders back too.
 2. For each installer source that needs a token, run `skl secret <source>`.
    Keychain does not travel with your dotfiles.
 3. Run `skl update -y`. It fetches every source, applies your patches and
