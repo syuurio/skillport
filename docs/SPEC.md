@@ -24,7 +24,7 @@ v1 已經集中管理 installer 與 npm，但 `npx skills` 的 skill 名稱屬�
 
 - 不取代 `npx skills`：GitHub 來源仍由它下載，只是在 skl 私有的位置執行。
 - 不做 Claude Code plugin 的冒號命名（`/source:skill`）。
-- 這一版不做：rollback 與多版本保留、`skl release`、`skl schedule` 與通知、在 description 加來源標記、installer 的完整內容比對（`--deep`）、由 agent 協助解決合併衝突（`skl merge`）。
+- 這一版不做：rollback 與多版本保留、`skl release`、在 description 加來源標記、installer 的完整內容比對（`--deep`）、由 agent 協助解決合併衝突（`skl merge`）。
 
 ## 3. 名詞
 
@@ -395,6 +395,7 @@ Fix: set sources.motion.prefix, or add sources.motion.rename.motion.
 | `skl remove <source> [-y] [--discard-edits]` | 確認後把來源的所有 skill 移到 trash、移除 link，並從 manifest 刪除。patch、note 與 Keychain token 保留。有直接改過的 skill 時拒絕，除非加 `--discard-edits` |
 | `skl secret <source>` | 把 token 存進 Keychain |
 | `skl doctor [--fix]` | 散落的副本、壞掉或缺少的 link、`edited` 的 skill、沒有 note 的 patch。`--fix` 只做安全的修正 |
+| `skl schedule [daily [--at HH:MM] \| off]` | 用 macOS launchd 每天執行 `skl check --notify`；`skl check --notify` 只對還沒通知過的更新發系統通知 |
 | `skl migrate [--dry-run]` | 從 v1 遷移（§14） |
 
 `skl status` 的輸出：

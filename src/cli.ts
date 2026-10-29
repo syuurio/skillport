@@ -14,6 +14,7 @@ import { migrate, v1Files } from "./migrate.ts";
 import { type Paths, defaultPaths, withLinkTargets } from "./paths.ts";
 import { Cancelled, ask, chooseMany, confirm, isInteractive } from "./prompt.ts";
 import { removeSource } from "./remove.ts";
+import { describeSchedule, news, notify, parseTime, realLaunchd, schedule } from "./schedule.ts";
 import { count, home } from "./report.ts";
 import { formatStatus, readStatus, which, writeStatus } from "./status.ts";
 import { describeSync, neverFetched, sync } from "./sync.ts";
@@ -26,7 +27,8 @@ const USAGE = `skl: one place for the agent skills that vendor installers scatte
            [--prefix <p> | --no-prefix] [-y]   Add a source and install its skills
   skl sync [--discard-edits]       Make ~/.agents/skills match the manifest and lock (offline)
                                    skills you changed in place are kept unless --discard-edits
-  skl check [source...]            Look for updates; changes no skill
+  skl check [source...] [--notify]  Look for updates; changes no skill. --notify sends a
+                                   notification for updates it has not told you about yet
   skl status                       What check last found (offline)
   skl update [source...] [-i] [--pick] [--discard-edits]
                                    Show the plan, then apply it; -i runs an installer with you
@@ -40,6 +42,7 @@ const USAGE = `skl: one place for the agent skills that vendor installers scatte
   skl remove <source> [-y] [--discard-edits]   Remove a source's skills (to trash) and the source
   skl secret <source>              Store a source's token in Keychain
   skl doctor [--fix] [-y]          Stray copies, broken or missing links, edits, patches without a note
+  skl schedule [daily [--at 09:00] | off]   Run skl check --notify every day (macOS launchd)
   skl migrate [--dry-run] [-y] [--discard-edits]   Move a skillport v1 setup to this version
 
 Flags: --dry-run prints the plan only.  -y skips confirmations.
@@ -80,7 +83,7 @@ async function main(argv: string[]): Promise<number> {
     case "sync":
       return syncCmd(base, rest.includes("--discard-edits"));
     case "check":
-      return checkCmd(base, args);
+      return checkCmd(base, args, rest.includes("--notify"));
     case "status":
       return statusCmd(base);
     case "update":
@@ -101,6 +104,8 @@ async function main(argv: string[]): Promise<number> {
       return doctorCmd(base, rest.includes("--fix"), flags);
     case "migrate":
       return migrateCmd(base, rest, flags);
+    case "schedule":
+      return scheduleCmd(base, args[0], rest);
     default:
       console.log(USAGE);
       return cmd ? 1 : 0;
@@ -108,6 +113,17 @@ async function main(argv: string[]): Promise<number> {
 }
 
 const KINDS: AddKind[] = ["github", "installer", "npm", "local"];
+
+function scheduleCmd(base: Paths, mode: string | undefined, rest: string[]): number {
+  if (mode === undefined) {
+    console.log(describeSchedule(base, realLaunchd));
+    return 0;
+  }
+  if (mode !== "daily" && mode !== "off") throw new Error("Usage: skl schedule [daily [--at 09:00] | off]");
+  const job = { node: process.execPath, cli: import.meta.filename, pathEnv: process.env.PATH ?? "/usr/bin:/bin", ...parseTime(option(rest, "--at") ?? "09:00") };
+  console.log(schedule(base, mode, job, realLaunchd).join("\n"));
+  return 0;
+}
 
 function secretCmd(base: Paths, id: string | undefined): number {
   const manifest = readManifest(base.manifest);
@@ -220,7 +236,7 @@ function load(base: Paths) {
   return { manifest, paths, lock: readLock(paths.lockFile) };
 }
 
-function checkCmd(base: Paths, ids: string[]): number {
+function checkCmd(base: Paths, ids: string[], notifyNews: boolean): number {
   const { manifest, paths, lock } = load(base);
   cleanups.add(acquireLock(paths.sklDir));
   const staging = path.join(paths.sklDir, "check");
@@ -228,6 +244,11 @@ function checkCmd(base: Paths, ids: string[]): number {
   const result = checkSources(paths, manifest, lock, readStatus(paths.statusFile), ids, realNet(staging));
   writeStatus(paths.statusFile, result);
   console.log(formatStatus(manifest, lock, result));
+  if (notifyNews) {
+    const body = news(paths, manifest, result);
+    if (body) notify(body);
+    console.log(body ? `\nNotified:\n${body}` : "\nNothing new to notify.");
+  }
   for (const [id, s] of Object.entries(result.sources)) {
     if (s.state === "updates" && s.link && (!ids.length || ids.includes(id))) console.log(`\n${id}: ${s.link}`);
   }

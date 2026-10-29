@@ -18,7 +18,7 @@ Design and decisions: [docs/SPEC.md](docs/SPEC.md).
 skl                              the TUI on a terminal, the status table otherwise
 skl add <id> --github <owner/repo> | --installer "<command>" | --npm <pkg@ver> --path <dir> | --local <dir>
 skl sync [--discard-edits]       make ~/.agents/skills match the manifest and lock (offline)
-skl check [source...]            look for updates; changes no skill
+skl check [source...] [--notify] look for updates; changes no skill
 skl status                       what check last found (offline)
 skl update [source...] [-i] [--pick] [--discard-edits]   show the plan, then apply it
 skl which <name>                 the source, original name and version of an installed skill
@@ -28,6 +28,7 @@ skl adopt <owner/repo>           take over skills you installed with npx skills
 skl remove <source>              remove a source's skills (to trash) and the source
 skl secret <source>              store an installer's token in macOS Keychain
 skl doctor [--fix]               stray copies, broken or missing links, edits, patches without a note
+skl schedule [daily [--at 09:00] | off]   check every day and notify (macOS)
 skl migrate [--dry-run]          move a skillport v1 setup to this version
 ```
 
@@ -82,6 +83,17 @@ Every source can set:
 
 New skills upstream are listed by `check` and offered by `update`. They are
 never installed on their own.
+
+## Checking every day
+
+`skl schedule daily` adds a launchd agent that runs `skl check --notify` every
+day at 09:00 (`--at 21:30` picks another time). When something is new, you
+get a macOS notification such as `matt: 2 updates`. The same update is
+announced once. The check only asks git, GitHub and npm; no installer runs in
+the background, and nothing is installed until you run `skl update`. If your
+Mac is asleep at that time, the check runs when it wakes. The job's output
+goes to `~/.agents/.skl/schedule.log`. `skl schedule` shows whether it is on,
+and `skl schedule off` removes it.
 
 ## Customizing a skill
 
