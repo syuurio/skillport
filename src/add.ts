@@ -52,6 +52,8 @@ export interface AddOptions {
   /** Install every skill without asking. */
   yes: boolean;
   token?: string;
+  /** Fetch and print what would be installed; write no skill, manifest or token. */
+  dryRun?: boolean;
 }
 
 export async function addSource(paths: Paths, manifest: Manifest, lock: Lock, id: string, source: Source, opts: AddOptions): Promise<string[]> {
@@ -60,7 +62,7 @@ export async function addSource(paths: Paths, manifest: Manifest, lock: Lock, id
   const sid = id as SourceId;
   const entry = next.sources[sid];
 
-  if (entry.type === "installer" && entry.secret === "keychain") {
+  if (entry.type === "installer" && entry.secret === "keychain" && !opts.dryRun) {
     if (opts.token) storeSecretValue(id, opts.token);
     else if (!hasSecret(id)) {
       if (!isInteractive()) throw new Error(`sources.${id} needs a token. Store it first: skl secret ${id}`);
@@ -79,8 +81,8 @@ export async function addSource(paths: Paths, manifest: Manifest, lock: Lock, id
     const picked = opts.yes || !isInteractive() ? all : await pick(id, all);
     if (!picked.length) return [];
     if (picked.length < all.length) entry.pick = picked;
-    const lines = describeSync(sync(paths, next, lock, { fetched: new Map([[sid, fetched]]), offeredNow: !opts.yes && isInteractive() }));
-    writeManifest(paths.manifest, next);
+    const lines = describeSync(sync(paths, next, lock, { fetched: new Map([[sid, fetched]]), offeredNow: !opts.yes && isInteractive(), dryRun: opts.dryRun }));
+    if (!opts.dryRun) writeManifest(paths.manifest, next);
     return lines;
   } finally {
     // The installer's fake HOME may hold the token it was given.

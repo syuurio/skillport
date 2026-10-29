@@ -83,7 +83,7 @@ async function main(argv: string[]): Promise<number> {
   }
   switch (cmd) {
     case "add":
-      return addCmd(base, rest);
+      return addCmd(base, rest, flags);
     case "sync":
       return syncCmd(base, rest.includes("--discard-edits"));
     case "check":
@@ -196,7 +196,7 @@ function option(rest: string[], flag: string): string | undefined {
   return value;
 }
 
-async function addCmd(base: Paths, rest: string[]): Promise<number> {
+async function addCmd(base: Paths, rest: string[], flags: Flags): Promise<number> {
   const id = rest[0];
   if (!id || id.startsWith("-")) throw new Error(USAGE);
   const kinds = KINDS.filter((k) => rest.includes(`--${k}`));
@@ -217,9 +217,9 @@ async function addCmd(base: Paths, rest: string[]): Promise<number> {
   const valueFlags = ["--github", "--installer", "--npm", "--local", "--path", "--unattended", "--prefix"];
   const own = rest.filter((w, i) => !valueFlags.includes(rest[i - 1]));
   const yes = own.includes("-y") || own.includes("--yes");
-  const lines = await addSource(paths, manifest, readLock(paths.lockFile), id, source, { yes, token });
+  const lines = await addSource(paths, manifest, readLock(paths.lockFile), id, source, { yes, token, dryRun: flags.dryRun });
   console.log(lines.length ? lines.join("\n") : "Nothing installed.");
-  if (lines.length) console.log(`Added sources.${id} to ${home(paths.manifest)}`);
+  if (lines.length) console.log(flags.dryRun ? `Would add sources.${id} to ${home(paths.manifest)}` : `Added sources.${id} to ${home(paths.manifest)}`);
   return 0;
 }
 

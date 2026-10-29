@@ -102,3 +102,19 @@ test("a v1 setup without a manifest points at skl migrate", () => {
   const r = spawnSync(BIN, ["status"], { env: { ...process.env, SKILLPORT_HOME: home }, encoding: "utf8" });
   assert.match(r.stdout, /Found a skillport v1 setup in ~\/\.config\/skillport\/registry\.json\. See what moving it over would do: skl migrate --dry-run/);
 });
+
+test("add --dry-run prints what it would install and writes no skill or manifest", () => {
+  const t = sandbox();
+  const src = path.join(t.home, "mine", "hello");
+  fs.mkdirSync(src, { recursive: true });
+  fs.writeFileSync(path.join(src, "SKILL.md"), "---\nname: hello\ndescription: d\n---\n");
+  const before = fs.readFileSync(t.paths.manifest, "utf8");
+  const r = t.skl(["add", "mine", "--local", path.dirname(src), "--dry-run"]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /mine\/hello -> mine-hello/);
+  assert.match(r.stdout, /Would add sources\.mine/);
+  assert.equal(fs.readFileSync(t.paths.manifest, "utf8"), before);
+  assert.ok(!fs.existsSync(path.join(t.paths.skillsDir, "mine-hello")));
+  assert.equal(t.skl(["add", "mine", "--local", path.dirname(src)]).status, 0);
+  assert.ok(fs.existsSync(path.join(t.paths.skillsDir, "mine-hello")));
+});
