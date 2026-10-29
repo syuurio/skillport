@@ -198,3 +198,32 @@ test("a patch reaching outside the skill is refused", async () => {
   const link = "diff --git a/l b/l\nnew file mode 120000\n--- /dev/null\n+++ b/l\n@@ -0,0 +1 @@\n+/etc/passwd\n\\ No newline at end of file\n";
   assert.throws(() => applyPatch(dir, link), /paths or modes skl does not apply/);
 });
+
+test("on a new machine a patch that no longer applies waits in MERGED, and skl edit installs it", async () => {
+  const { paths, write, release, run, installed } = sandbox();
+  await run("edit", (dir) => {
+    replaceLine(2, "line 2, mine")(dir);
+    replaceLine(18, "line 18, mine")(dir);
+  });
+  // A new machine has only ~/.config/skl, and upstream has moved on since.
+  fs.rmSync(paths.sklDir, { recursive: true });
+  fs.rmSync(paths.skillsDir, { recursive: true });
+  write(lines(20, { 2: "line 2, upstream" }));
+  const changes = release();
+  assert.deepEqual(
+    changes.map((c) => c.kind === "conflict" && c.files),
+    [["SKILL.md.rej"]],
+  );
+  assert.ok(!fs.existsSync(path.join(paths.skillsDir, "vend-alpha")));
+  const merged = path.join(paths.sklDir, "merge", "vend", "alpha", "MERGED");
+  assert.match(fs.readFileSync(path.join(merged, "SKILL.md"), "utf8"), /line 2, upstream[\s\S]*line 18, mine/);
+
+  await assert.rejects(run("edit"), /Apply the hunks in SKILL\.md\.rej by hand/);
+  const out = await run("edit", (dir) => {
+    replaceLine(2, "line 2, upstream and mine")(dir);
+    fs.rmSync(path.join(dir, "SKILL.md.rej"));
+  });
+  assert.match(out.join("\n"), /vend\/alpha -> vend-alpha/);
+  assert.match(installed(), /line 2, upstream and mine[\s\S]*line 18, mine/);
+  assert.deepEqual(release(), []);
+});

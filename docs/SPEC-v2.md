@@ -187,6 +187,14 @@ hash 一律是 git tree hash，和 GitHub 的資料夾 hash、`npx skills` 的 `
 
 `SKILLPORT_HOME` 會把以上所有路徑搬到另一個資料夾，測試與沙盒驗證都用它。
 
+**換電腦。** 放進 dotfiles 的只有 `~/.config/skl/`（manifest、patch、note），`~/.agents/.skl/` 都能重新產生，不要放。在新電腦上：
+
+1. 放回 `~/.config/skl/`。
+2. 需要 token 的 installer 來源，先執行 `skl secret <source>`。Keychain 不會跟著 dotfiles 走。
+3. 執行 `skl update -y`：依 manifest 抓每個來源、套用 patch，再輸出。`skl sync` 不連網，所以沒抓過的 vendor 來源它裝不了，會列出來並提示改用 `skl update`。
+
+上游如果在你做 patch 之後改過，第一次安裝時 patch 可能套不上。這時這個 skill 不會安裝，會列為 conflict：`MERGED/` 是新上游加上還套得上的 hunk，套不上的放在旁邊的 `.rej` 檔。手動套用並刪掉 `.rej` 之後，執行 `skl edit <source>/<skill>` 就會完成並安裝。
+
 store 每個身分保留目前的 `base`；有 patch 的身分另外保留 patch 依據的那一份，直到合併完成。其他舊版本在替換時移到 trash。
 
 ### 5.4 status.json（skl check 寫入）

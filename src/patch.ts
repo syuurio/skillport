@@ -65,20 +65,57 @@ export function diffTrees(a: string, b: string): string {
   });
 }
 
-/** Apply a patch from diffTrees to `dir` in place; throws with git's reason when it does not apply. */
-export function applyPatch(dir: string, text: string): void {
+/**
+ * Header lines skl will not hand to git: a path that is absolute or climbs
+ * with "..", a mode other than a regular file, a rename or copy. Headers
+ * are the lines between "diff --git" and a file's first hunk.
+ */
+function unsafeHeaders(text: string): string[] {
+  const bad: string[] = [];
+  let header = false;
+  const climbs = (p: string) => p.startsWith("/") || p.split("/").includes("..");
+  for (const line of text.split("\n")) {
+    if (line.startsWith("diff --git ")) {
+      header = true;
+      const paths = line.slice("diff --git ".length);
+      if (!/^[ab]\/.* [ab]\/.*$/.test(paths) || paths.split(" ").some((part) => climbs(part.replace(/^[ab]\//, "")))) bad.push(line);
+      continue;
+    }
+    if (!header) continue;
+    if (line.startsWith("@@")) header = false;
+    else if (/^(---|\+\+\+) /.test(line)) {
+      const p = line.slice(4);
+      if (p !== "/dev/null" && (!/^[ab]\//.test(p) || climbs(p.slice(2)))) bad.push(line);
+    } else if (/^(new file|deleted file|new|old) mode /.test(line)) {
+      if (!/ 100(644|755)$/.test(line)) bad.push(line);
+    } else if (/^(rename|copy) (from|to) /.test(line)) bad.push(line);
+  }
+  return bad;
+}
+
+function gitApply(dir: string, text: string, extra: string[]) {
   // git runs from an empty folder of ours: started inside `dir`, a .git that
   // vendor content brought would be read as a repository, config included.
   // --unsafe-paths lets --directory point outside that folder, so the check
-  // it turns off (paths stay inside the target) is done here.
-  const bad = [...text.matchAll(/^(?:diff --git a\/(\S+) b\/(\S+)|(?:new|deleted) file mode (\d+)|new mode (\d+))$/gm)].filter(
-    ([, a, b, mode1, mode2]) => [a, b].some((p) => p !== undefined && (p.startsWith("/") || p.split("/").includes(".."))) || [mode1, mode2].some((m) => m !== undefined && !/^100[67][0-9]{2}$/.test(m)),
-  );
-  if (bad.length) throw new Error(`the patch has paths or modes skl does not apply: ${bad.map(([line]) => line).join("; ")}`);
-  withTemp((tmp) => {
-    const r = git(["apply", "-p1", "--whitespace=nowarn", "--unsafe-paths", `--directory=${fs.realpathSync(dir)}`, "-"], tmp, text);
-    if (r.status !== 0) throw new Error(r.stderr.trim() || "git apply failed");
-  });
+  // it turns off (paths stay inside the target) is unsafeHeaders.
+  const bad = unsafeHeaders(text);
+  if (bad.length) throw new Error(`the patch has paths or modes skl does not apply: ${bad.join("; ")}`);
+  return withTemp((tmp) => git(["apply", "-p1", "--whitespace=nowarn", "--unsafe-paths", `--directory=${fs.realpathSync(dir)}`, ...extra, "-"], tmp, text));
+}
+
+/** Apply a patch from diffTrees to `dir` in place; throws with git's reason when it does not apply. */
+export function applyPatch(dir: string, text: string): void {
+  const r = gitApply(dir, text, []);
+  if (r.status !== 0) throw new Error(r.stderr.trim() || "git apply failed");
+}
+
+/** Apply what fits; each hunk that does not lands next to its file as `<file>.rej`. Returns those files. */
+export function applyPatchPartly(dir: string, text: string): string[] {
+  gitApply(dir, text, ["--reject"]);
+  return fs
+    .readdirSync(dir, { recursive: true, encoding: "utf8" })
+    .filter((f) => f.endsWith(".rej"))
+    .sort();
 }
 
 interface Entry {

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { moveToTrash, trashDir } from "./apply.ts";
 import type { Lock, SkillLock } from "./lock.ts";
-import { type Manifest, type SkillId, type SkillName, type SourceId, splitSkillId } from "./manifest.ts";
+import { type Manifest, type SkillId, type SkillName, type SourceId, installedName, splitSkillId } from "./manifest.ts";
 import { applyPatch, diffTrees, mergeDir, mergeTrees, patchFiles, readMergeInfo } from "./patch.ts";
 import type { Paths } from "./registry.ts";
 import { markdownFiles, render } from "./render.ts";
@@ -32,14 +32,18 @@ export function runEditor(dir: string): boolean {
   return spawnSync("sh", ["-c", `${editor} "$1"`, "sh", dir], { stdio: "inherit" }).status === 0;
 }
 
-function target(manifest: Manifest, lock: Lock, arg: string | undefined): { id: SkillId; source: SourceId; original: SkillName; entry: SkillLock } {
+function target(paths: Paths, manifest: Manifest, lock: Lock, arg: string | undefined): { id: SkillId; source: SourceId; original: SkillName; entry: SkillLock } {
   if (!arg?.includes("/")) throw new Error("Usage: skl edit <source>/<skill> [--drop | --from-disk]");
   const id = arg as SkillId;
   const { source, original } = splitSkillId(id);
   if (!manifest.sources[source]) throw new Error(`Unknown source ${source}. Known: ${Object.keys(manifest.sources).join(", ")}`);
   const entry = lock.skills[id];
-  if (!entry) throw new Error(`${id} is not installed; skl edit works on installed skills`);
-  return { id, source, original, entry };
+  if (entry) return { id, source, original, entry };
+  // A patch that did not apply on a first install (a new machine): the skill
+  // waits on its merge folder, and finishing it installs it.
+  const info = readMergeInfo(mergeDir(paths, source, original));
+  if (!info) throw new Error(`${id} is not installed; skl edit works on installed skills`);
+  return { id, source, original, entry: { name: installedName(source, original, manifest.sources[source]), base: info.upstream, output: "", updatedAt: "" } };
 }
 
 /** The skill as you customized it, under its original name: base plus your patch. */
@@ -73,7 +77,7 @@ async function savePatch(paths: Paths, source: SourceId, original: SkillName, te
 const shown = (changes: SyncChange[]) => describeSync(changes.filter((c) => c.kind !== "offered"));
 
 export async function edit(paths: Paths, manifest: Manifest, lock: Lock, arg: string | undefined, mode: EditMode, io: EditIO): Promise<string[]> {
-  const { id, source, original, entry } = target(manifest, lock, arg);
+  const { id, source, original, entry } = target(paths, manifest, lock, arg);
   const files = patchFiles(paths, source, original);
   const merge = mergeDir(paths, source, original);
   const dest = path.join(paths.skillsDir, entry.name);
@@ -106,15 +110,20 @@ export async function edit(paths: Paths, manifest: Manifest, lock: Lock, arg: st
         `${entry.name} was changed in place in ~/.agents/skills.\n  keep those edits: skl edit ${id} --from-disk\n  discard them:     skl sync --discard-edits`,
       );
     }
-    // Finishing a conflict: start from the merge and diff against the new upstream.
+    // Finishing a conflict happens in MERGED itself, so work in progress
+    // survives a second try; the patch is then against the new upstream.
     const info = readMergeInfo(merge);
     const against = info?.upstream ?? entry.base;
-    if (info) fs.cpSync(path.join(merge, "MERGED"), work, { recursive: true });
-    else yoursAt(paths, source, original, entry.base, work);
-    if (!io.editor(work)) return ["editor exited with an error; nothing saved"];
-    const lines = await savePatch(paths, source, original, diffTrees(storedAt(paths, source, original, against), work), io);
+    const editing = info ? path.join(merge, "MERGED") : work;
+    if (!info) yoursAt(paths, source, original, entry.base, work);
+    if (!io.editor(editing)) return ["editor exited with an error; nothing saved"];
+    const rejects = fs.readdirSync(editing, { recursive: true, encoding: "utf8" }).filter((f) => f.endsWith(".rej"));
+    if (rejects.length) {
+      throw new Error(`Apply the hunks in ${rejects.join(", ")} by hand, then delete those files and run skl edit ${id} again. Your changes stay in ${home(editing)}.`);
+    }
+    const lines = await savePatch(paths, source, original, diffTrees(storedAt(paths, source, original, against), editing), io);
     if (info) {
-      entry.base = against;
+      lock.skills[id] = { ...entry, base: against };
       fs.rmSync(merge, { recursive: true, force: true });
     }
     return [...lines, ...shown(sync(paths, manifest, lock))];

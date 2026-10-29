@@ -6,8 +6,9 @@ import { isOursOrFree, link, moveToTrash, trashDir, unlink } from "./apply.ts";
 import { describeExternal, externalSkills, foreignInTarget } from "./external.ts";
 import { type Lock, type SkillLock, writeLock } from "./lock.ts";
 import { type Manifest, type SkillId, type SkillName, type Source, type SourceId, installedName, skillId, splitSkillId } from "./manifest.ts";
-import { type MergeInfo, applyPatch, diffTrees, mergeDir, mergeTrees, patchFiles, patchHash, readMergeInfo } from "./patch.ts";
+import { type MergeInfo, applyPatch, applyPatchPartly, diffTrees, mergeDir, mergeTrees, patchFiles, patchHash, readMergeInfo } from "./patch.ts";
 import { DEFAULT_LINKS, type Paths } from "./registry.ts";
+import { home } from "./report.ts";
 import { type Rewrite, render } from "./render.ts";
 import { putInStore, storedAt } from "./store.ts";
 import { isValidSkillName } from "./transform.ts";
@@ -71,6 +72,14 @@ export type SyncChange =
   | { kind: "conflict"; id: SkillId; name: string; reason: string; files: string[]; dir: string }
   | { kind: "offered"; id: SkillId };
 
+/**
+ * Vendor sources sync cannot install: nothing fetched yet (a new machine
+ * with only ~/.config/skl), so their content is not in the store.
+ */
+export function neverFetched(manifest: Manifest, lock: Lock): SourceId[] {
+  return (Object.entries(manifest.sources) as [SourceId, Source][]).filter(([sid, s]) => s.type !== "local" && !lock.sources[sid]).map(([sid]) => sid);
+}
+
 /** The lines `skl sync` prints for its changes. */
 export function describeSync(changes: SyncChange[]): string[] {
   return changes.flatMap((c) => {
@@ -84,7 +93,7 @@ export function describeSync(changes: SyncChange[]): string[] {
       case "edited":
         return [`edited ${c.name} (${c.id}) was changed in place; kept as is`, "  to replace it with skl's version: skl sync --discard-edits"];
       case "conflict":
-        return [`conflict ${c.name} (${c.id}): ${c.reason}; kept as is`, `  resolve in ${c.dir}, then: skl edit ${c.id}`];
+        return [`conflict ${c.name} (${c.id}): ${c.reason}; held back`, `  resolve in ${home(c.dir)}, then: skl edit ${c.id}`];
       case "offered":
         return [`new ${c.id} (not installed; skl update ${splitSkillId(c.id).source} --pick)`];
     }
@@ -206,9 +215,18 @@ function prepare(paths: Paths, lock: Lock, w: Want, staging: string): Prepared |
   fs.cpSync(base, yours, { recursive: true });
   try {
     applyPatch(yours, patch);
-  } catch (e) {
-    const reason = `your patch no longer applies (${(e as Error).message.split("\n")[0]})`;
-    return { reason, files: [], info, dirs: { BASE: base, UPSTREAM: upstream, MERGED: upstream }, patch };
+  } catch {
+    // MERGED gets every hunk that still fits; the rest wait in .rej files.
+    const merged = path.join(work, "MERGED");
+    fs.cpSync(upstream, merged, { recursive: true });
+    let rejected: string[] = [];
+    try {
+      rejected = applyPatchPartly(merged, patch);
+    } catch {
+      // A patch skl refuses to apply at all leaves MERGED as upstream.
+    }
+    const reason = "your patch no longer applies to upstream";
+    return { reason, files: rejected, info, dirs: { UPSTREAM: upstream, MERGED: merged }, patch };
   }
   if (was === w.base) return { from: yours, patch };
   const merged = path.join(work, "MERGED");

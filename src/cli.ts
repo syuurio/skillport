@@ -42,8 +42,8 @@ import { type UpdateIO, update } from "./update.ts";
 import { check as checkSources, realNet } from "./check.ts";
 import { formatStatus, readStatus, which, writeStatus } from "./status.ts";
 import { readLock } from "./lock.ts";
-import { readManifest } from "./manifest.ts";
-import { describeSync, sync as syncV2 } from "./sync.ts";
+import { type SourceId, readManifest } from "./manifest.ts";
+import { describeSync, neverFetched, sync as syncV2 } from "./sync.ts";
 import { isPinnedSpec } from "./validate.ts";
 
 const USAGE = `skillport — one place for skills that vendor installers scatter
@@ -140,6 +140,15 @@ async function main(argv: string[]): Promise<number> {
     case "bump":
       return bumpCmd(ctx, args, flags);
     case "secret":
+      if (fs.existsSync(base.manifest)) {
+        const manifest = readManifest(base.manifest);
+        const source = manifest.sources[args[0] as SourceId];
+        if (!source) throw new Error(`Unknown source ${args[0]}. Known: ${Object.keys(manifest.sources).join(", ")}`);
+        if (source.type !== "installer" || source.secret !== "keychain") throw new Error(`sources.${args[0]} does not use a token`);
+        storeSecret(args[0]);
+        console.log(`Stored the token for sources.${args[0]} in Keychain.`);
+        return 0;
+      }
       getSet(ctx.registry, args[0]);
       storeSecret(args[0]);
       console.log(`Stored secret for "${args[0]}".`);
@@ -263,7 +272,11 @@ function syncCmd(base: Paths, discardEdits: boolean): number {
   const manifest = readManifest(base.manifest);
   const paths = withLinkTargets(base, manifest, base.manifest);
   cleanups.add(acquireLock(paths.sklDir));
-  const lines = describeSync(syncV2(paths, manifest, readLock(paths.lockFile), { discardEdits }));
+  const lock = readLock(paths.lockFile);
+  const lines = describeSync(syncV2(paths, manifest, lock, { discardEdits }));
+  // sync never goes online, so a source it has never fetched stays missing.
+  const missing = neverFetched(manifest, lock);
+  if (missing.length) lines.push(`not installed yet (sync works offline): ${missing.join(", ")}. Fetch them with: skl update ${missing.join(" ")}`);
   console.log(lines.length ? lines.join("\n") : "up to date");
   return 0;
 }
