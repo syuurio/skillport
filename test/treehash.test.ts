@@ -4,7 +4,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { treeHash } from "../src/treehash.ts";
+import { copySkips } from "../src/adapters/github.ts";
+import { type GitEntry, treeHash, treeHashOfListing } from "../src/treehash.ts";
 
 function gitTreeHash(dir: string): string {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "skillport-git-"));
@@ -35,4 +36,31 @@ test("treeHash ignores .DS_Store", () => {
   const before = treeHash(dir);
   fs.writeFileSync(path.join(dir, ".DS_Store"), "junk");
   assert.equal(treeHash(dir), before);
+});
+
+test("treeHashOfListing hashes a git listing as the folder npx skills copies", () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "skillport-ls-"));
+  const skill = path.join(repo, "skills", "a");
+  fs.mkdirSync(path.join(skill, "__pycache__"), { recursive: true });
+  fs.mkdirSync(path.join(skill, "scripts", "__pycache__"), { recursive: true });
+  fs.writeFileSync(path.join(skill, "SKILL.md"), "---\nname: a\n---\n");
+  fs.writeFileSync(path.join(skill, "metadata.json"), "{}");
+  fs.writeFileSync(path.join(skill, "__pycache__", "x.pyc"), "x");
+  fs.writeFileSync(path.join(skill, "scripts", "run.py"), "print(1)");
+  fs.writeFileSync(path.join(skill, "scripts", "__pycache__", "run.pyc"), "x");
+  fs.chmodSync(path.join(skill, "scripts", "run.py"), 0o755);
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
+  git("init", "-q");
+  git("add", "-A");
+  const listing: GitEntry[] = git("ls-tree", "-r", "-t", git("write-tree"))
+    .split("\n")
+    .map((line) => {
+      const [meta, p] = line.split("\t");
+      const [mode, type, sha] = meta.split(" ");
+      return { path: p, mode, type, sha };
+    });
+  const copied = fs.mkdtempSync(path.join(os.tmpdir(), "skillport-cp-"));
+  fs.cpSync(skill, copied, { recursive: true, filter: (src) => !copySkips(path.basename(src), fs.statSync(src).isDirectory()) });
+  assert.equal(treeHashOfListing(listing, "skills/a", copySkips), treeHash(copied));
+  assert.notEqual(treeHashOfListing(listing, "skills/a", () => false), treeHash(copied));
 });

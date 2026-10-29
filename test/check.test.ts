@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { type Net, type TreeEntry, check } from "../src/check.ts";
+import { treeHashOfListing } from "../src/treehash.ts";
 import type { Lock } from "../src/lock.ts";
 import { type SkillId, type SourceId, parseManifest } from "../src/manifest.ts";
 import { defaultPaths, withLinkTargets } from "../src/registry.ts";
@@ -15,17 +16,21 @@ const OLD = "a".repeat(40);
 const NEW = "b".repeat(40);
 const NOW = "2026-10-29T10:00:00.000Z";
 
-const tree = (skills: Record<string, string>): TreeEntry[] =>
-  Object.entries(skills).flatMap(([name, sha]) => [
-    { path: `skills/${name}`, type: "tree" as const, sha },
-    { path: `skills/${name}/SKILL.md`, type: "blob" as const, sha: "f".repeat(40) },
-  ]);
+/** A recursive listing with one SKILL.md per skill; `blob` stands for its content. */
+const tree = (skills: Record<string, string>, extra: TreeEntry[] = []): TreeEntry[] => [
+  ...Object.entries(skills).flatMap(([name, blob]) => [
+    { path: `skills/${name}`, mode: "040000", type: "tree", sha: "e".repeat(40) },
+    { path: `skills/${name}/SKILL.md`, mode: "100644", type: "blob", sha: blob.repeat(40) },
+  ]),
+  ...extra,
+];
+const hashOf = (blob: string) => treeHashOfListing(tree({ x: blob }), "skills/x", () => false) as string;
 
-function fakeNet(head: string | null, skills: Record<string, string> | null = null, latest: string | null = null) {
+function fakeNet(head: string | null, skills: Record<string, string> | null = null, latest: string | null = null, extra: TreeEntry[] = []) {
   const calls = { head: 0, tree: 0, npm: 0 };
   const net: Net = {
     headCommit: () => (calls.head++, head),
-    tree: () => (calls.tree++, skills ? tree(skills) : null),
+    tree: () => (calls.tree++, skills ? tree(skills, extra) : null),
     latestVersion: () => (calls.npm++, latest),
   };
   return { net, calls };
@@ -49,8 +54,8 @@ function setup() {
     version: 2,
     sources: { ["matt" as SourceId]: { resolved: OLD, syncedAt: NOW, seen: ["tdd", "grilling", "wizard"] } },
     skills: {
-      ["matt/tdd" as SkillId]: { name: "matt-tdd", base: "1".repeat(40), output: "x", updatedAt: NOW },
-      ["matt/grilling" as SkillId]: { name: "matt-grilling", base: "2".repeat(40), output: "x", updatedAt: NOW },
+      ["matt/tdd" as SkillId]: { name: "matt-tdd", base: hashOf("1"), output: "x", updatedAt: NOW },
+      ["matt/grilling" as SkillId]: { name: "matt-grilling", base: hashOf("2"), output: "x", updatedAt: NOW },
     },
   };
   return { paths, manifest, lock };
@@ -66,7 +71,7 @@ test("an unchanged commit costs no tree call", () => {
 
 test("a moved commit costs one tree call and names changed, new and removed skills", () => {
   const { paths, manifest, lock } = setup();
-  const { net, calls } = fakeNet(NEW, { tdd: "9".repeat(40), wizard: "3".repeat(40), deploy: "4".repeat(40) });
+  const { net, calls } = fakeNet(NEW, { tdd: "9", wizard: "3", deploy: "4" });
   const s = check(paths, manifest, lock, null, ["matt"], net, NOW).sources["matt" as SourceId];
   assert.deepEqual(s, {
     checkedAt: NOW,
@@ -83,7 +88,28 @@ test("a moved commit costs one tree call and names changed, new and removed skil
 
 test("a moved commit with the same skill folders is up to date", () => {
   const { paths, manifest, lock } = setup();
-  const { net } = fakeNet(NEW, { tdd: "1".repeat(40), grilling: "2".repeat(40), wizard: "3".repeat(40) });
+  const { net } = fakeNet(NEW, { tdd: "1", grilling: "2", wizard: "3" });
+  assert.equal(check(paths, manifest, lock, null, ["matt"], net, NOW).sources["matt" as SourceId].state, "up-to-date");
+});
+
+test("files npx skills leaves out when it copies do not read as a change", () => {
+  const { paths, manifest, lock } = setup();
+  const skipped: TreeEntry[] = [
+    { path: "skills/tdd/metadata.json", mode: "100644", type: "blob", sha: "7".repeat(40) },
+    { path: "skills/tdd/__pycache__", mode: "040000", type: "tree", sha: "8".repeat(40) },
+    { path: "skills/tdd/__pycache__/x.pyc", mode: "100644", type: "blob", sha: "8".repeat(40) },
+  ];
+  const { net } = fakeNet(NEW, { tdd: "1", grilling: "2", wizard: "3" }, null, skipped);
+  assert.equal(check(paths, manifest, lock, null, ["matt"], net, NOW).sources["matt" as SourceId].state, "up-to-date");
+});
+
+test("a skill whose folder is named differently is found through the recorded path", () => {
+  const { paths, manifest, lock } = setup();
+  const matt = lock.sources["matt" as SourceId];
+  matt.seen = ["matt-tdd", "grilling", "wizard"];
+  matt.paths = { "matt-tdd": "skills/tdd", grilling: "skills/grilling", wizard: "skills/wizard" };
+  lock.skills = { ["matt/matt-tdd" as SkillId]: { name: "matt-tdd", base: hashOf("1"), output: "x", updatedAt: NOW } };
+  const { net } = fakeNet(NEW, { tdd: "1", grilling: "2", wizard: "3" });
   assert.equal(check(paths, manifest, lock, null, ["matt"], net, NOW).sources["matt" as SourceId].state, "up-to-date");
 });
 

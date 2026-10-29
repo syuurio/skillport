@@ -133,8 +133,9 @@ function wanted(paths: Paths, manifest: Manifest, lock: Lock, now: string, opts:
       // Seen means shown to you: everything when you were offered the full
       // list, otherwise what was seen before plus what is installed now.
       const seen = opts.offeredNow || !prev ? [...new Set(shipped)] : [...new Set([...prev.seen, ...taken])].sort();
-      if (prev?.resolved !== fresh.resolved || prev.seen.join() !== seen.join()) {
-        lock.sources[sid] = { resolved: fresh.resolved, syncedAt: now, seen };
+      const repoDirs = fresh.paths ?? prev?.paths;
+      if (prev?.resolved !== fresh.resolved || prev.seen.join() !== seen.join() || JSON.stringify(prev.paths) !== JSON.stringify(repoDirs)) {
+        lock.sources[sid] = { resolved: fresh.resolved, syncedAt: now, seen, ...(repoDirs ? { paths: repoDirs } : {}) };
       }
       continue;
     }

@@ -293,9 +293,9 @@ Fix: set sources.motion.prefix, or add sources.motion.rename.motion.
 
 ### 7.1 `github`
 
-- **fetch**：在 shadow HOME（`~/.agents/.skl/cli/<source>/`）執行 `npx -y skills@1.7.0 add <repo> -g -a codex -s <原名>… -y`，再從 `<shadow>/.agents/skills/*` 取出放進 store。同時用 `git ls-remote <url> HEAD` 記下 commit。
+- **fetch**：在 shadow HOME（`~/.agents/.skl/cli/<source>/`）先用 `git ls-remote <url> HEAD` 取得 commit，再執行 `npx -y skills@1.7.0 add <url>#<commit> -g -a codex -s '*' -y`，從 `<shadow>/.agents/skills/*` 取出放進 store。指定 commit 有兩個用途：裝進來的就是記下的那個 commit；npx skills 也一定走 git clone。沒有 ref 時，vercel、vercel-labs 等少數 owner 的 repo 會改從 skills.sh 下載快照。快照會保留 `metadata.json`、拿掉執行權限，內容也可能落後 HEAD。每個 skill 在 repo 裡的資料夾（shadow lock 的 `skillPath`）記在 lock 的 `sources.<id>.paths`。
 - **列出可選的 skill**：`npx skills add <repo> --list`，解析文字輸出（它不接受 `--json`）。
-- **check**：先 `git ls-remote`。commit 和 lock 一樣就代表整個來源沒變；不一樣才呼叫一次 `GET repos/<repo>/git/trees/<commit>?recursive=1`，一次比對所有 skill 的資料夾 hash。先用 `gh api`，沒有登入時用公開 API。
+- **check**：先 `git ls-remote`。commit 和 lock 一樣就代表整個來源沒變；不一樣才呼叫一次 `GET repos/<repo>/git/trees/<commit>?recursive=1`，一次比對所有 skill 的資料夾 hash。資料夾依 `paths` 找，hash 由清單重算，並扣掉 npx skills 複製時略過的檔案（`metadata.json`、`.git`、`__pycache__`、`__pypackages__`）。先用 `gh api`，沒有登入時用公開 API。
 - 環境變數只傳最小集合，不傳 `XDG_STATE_HOME`、`CLAUDE_CONFIG_DIR`、`CODEX_HOME`，否則 `npx skills` 會寫到真正的位置。
 - shadow HOME 一直保留，裡面的 lock 是一份真正的 npx skills lock，只是名稱一律原名。
 
@@ -493,6 +493,7 @@ Apply? (y/N)
 | `npx skills` 的 lock 路徑只受 `XDG_STATE_HOME` 與 `HOME` 影響 | 讀 `dist/cli.mjs` 的 `getSkillLockPath` |
 | `git ls-remote` 不消耗 GitHub REST 額度 | 連跑三次，`rate_limit` 的 core 剩餘量 58 → 58 |
 | recursive tree 的資料夾 sha 等於 `skillFolderHash` | `skills/engineering/tdd` 兩者都是 `667dbdd00c09d0e2189e082986e6a4d61a67c2a6` |
+| 沒有 ref 時，npx skills 對 `BLOB_ALLOWED_OWNERS`（vercel、vercel-labs、heygen-com、remotion-dev）改從 skills.sh 下載快照；給了 ref 就走 `cloneRepo`，commit sha 由 `cloneAtSha` 處理 | 讀 `dist/cli.mjs`（`tryBlobInstall`、`cloneRepo`）；`vercel-labs/agent-skills` 不指定 ref 時，`vercel-optimize` 的 7 個 100755 檔案都變成 100644 |
 | `name` 只能小寫英數與單一連字號、最多 64 字元、必須和資料夾相同 | agentskills.io/specification |
 | Node 無法直接執行 `.tsx` | Node 26.13.0 對 `.tsx` 報語法錯誤，所以 TUI 不用 JSX |
 

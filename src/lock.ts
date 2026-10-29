@@ -12,6 +12,8 @@ export interface SourceLock {
   syncedAt: string;
   /** Originals upstream has offered and you have seen. */
   seen: string[];
+  /** github: each skill's folder in the repo, by original name. */
+  paths?: Record<string, string>;
 }
 
 export interface SkillLock {

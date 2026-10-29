@@ -15,6 +15,8 @@ export interface Fetched {
   /** What the lock records as `resolved`. */
   resolved: string;
   skills: { original: SkillName; dir: string }[];
+  /** github: each skill's folder in the repo, by original name. */
+  paths?: Record<string, string>;
 }
 
 export interface FetchOptions {

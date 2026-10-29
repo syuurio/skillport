@@ -13,6 +13,10 @@ import { type FetchOptions, type Fetched, skillsIn } from "./index.ts";
 
 const TIMEOUT_MS = 5 * 60 * 1000;
 
+/** What npx skills@1.7.0 leaves out when it copies a skill (its copyDirectory). */
+export const copySkips = (name: string, isDir: boolean) =>
+  name === "metadata.json" || (isDir && (name === ".git" || name === "__pycache__" || name === "__pypackages__"));
+
 export function shadowHome(sklDir: string, id: SourceId): string {
   return path.join(sklDir, "cli", id);
 }
@@ -44,7 +48,11 @@ export function fetchGithub(id: SourceId, source: GithubSource, opts: FetchOptio
   // send npx skills to your real folders.
   const env = sandboxEnv(shadow, opts.staging);
   const commit = headCommit(url, env);
-  const r = spawnSync("npx", ["-y", SKILLS_CLI, "add", url, "-g", "-a", "codex", "-s", "*", "-y"], {
+  // Naming the commit installs exactly what is recorded, and keeps npx skills
+  // on its git clone: without a ref it fetches a few owners' repos (vercel,
+  // vercel-labs, ...) as skills.sh snapshots instead, which keep metadata.json,
+  // drop exec bits and may lag HEAD, so check could never match them.
+  const r = spawnSync("npx", ["-y", SKILLS_CLI, "add", `${url}#${commit}`, "-g", "-a", "codex", "-s", "*", "-y"], {
     cwd: shadow,
     encoding: "utf8",
     env,
@@ -53,5 +61,21 @@ export function fetchGithub(id: SourceId, source: GithubSource, opts: FetchOptio
   });
   if (r.status !== 0) throw new Error(`npx skills could not install ${url}.\n${`${r.stdout ?? ""}${r.stderr ?? ""}`.slice(-2000)}`);
   if (!fs.existsSync(skills)) throw new Error(`npx skills installed nothing from ${url}.`);
-  return { resolved: commit, skills: skillsIn(skills) };
+  return { resolved: commit, skills: skillsIn(skills), paths: repoPaths(shadow) };
+}
+
+/**
+ * Where each skill sits in the repo, from the shadow's npx skills lock. A
+ * folder is often named differently from its skill (composition-patterns
+ * holds vercel-composition-patterns), so check cannot go by folder names.
+ */
+function repoPaths(shadow: string): Record<string, string> {
+  const file = path.join(shadow, ".agents", ".skill-lock.json");
+  if (!fs.existsSync(file)) return {};
+  const { skills } = JSON.parse(fs.readFileSync(file, "utf8")) as { skills: Record<string, { skillPath?: string }> };
+  return Object.fromEntries(
+    Object.entries(skills)
+      .filter(([, e]) => typeof e.skillPath === "string")
+      .map(([name, e]) => [name, path.posix.dirname(e.skillPath as string)]),
+  );
 }

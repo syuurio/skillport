@@ -4,24 +4,20 @@ import os from "node:os";
 import path from "node:path";
 import { latestVersion, sandboxEnv } from "./acquire.ts";
 import { fetchLocal } from "./adapters/local.ts";
-import { headCommit } from "./adapters/github.ts";
+import { copySkips, headCommit } from "./adapters/github.ts";
 import { describeExternal, externalSkills } from "./external.ts";
 import type { Lock, SkillLock } from "./lock.ts";
 import { type Manifest, type SkillId, type SkillName, type Source, type SourceId, installedName, splitSkillId } from "./manifest.ts";
 import type { Paths } from "./registry.ts";
 import type { SkillFlags, SourceStatus, Status } from "./status.ts";
-import { treeHash } from "./treehash.ts";
+import { type GitEntry, treeHash, treeHashOfListing } from "./treehash.ts";
 import { githubRepo, isPinnedSpec } from "./validate.ts";
 
 // `skl check`: is anything new upstream? Writes status.json, never a skill.
 // GitHub costs nothing while HEAD has not moved and one tree call when it
 // has (SPEC §7.1).
 
-export interface TreeEntry {
-  path: string;
-  type: "blob" | "tree";
-  sha: string;
-}
+export type TreeEntry = GitEntry;
 
 /** Everything check asks the network; replaced in tests. */
 export interface Net {
@@ -78,21 +74,27 @@ function checkGithub(sid: SourceId, source: Extract<Source, { type: "github" }>,
   if (to === from) return { checkedAt: now, state: "up-to-date" };
   const tree = net.tree(repo, to);
   if (!tree) return { checkedAt: now, state: "unknown", reason: "GitHub did not return the tree" };
-  // Skill folders by their folder name, which npx skills uses as the name.
-  const folders = new Map<string, string>();
-  const shas = new Map(tree.filter((e) => e.type === "tree").map((e) => [e.path, e.sha]));
-  for (const e of tree) {
-    if (e.type !== "blob" || path.posix.basename(e.path) !== "SKILL.md") continue;
-    const dir = path.posix.dirname(e.path);
-    const name = dir === "." ? repo.split("/")[1] : path.posix.basename(dir);
-    const sha = shas.get(dir);
-    if (sha && !folders.has(name)) folders.set(name, sha);
-  }
+  // Skills by their folder in the repo, as the lock recorded at install;
+  // older locks without paths fall back to the folder's own name.
+  const known = lock.sources[sid]?.paths;
+  const dirs = tree.filter((e) => e.type === "blob" && path.posix.basename(e.path) === "SKILL.md").map((e) => path.posix.dirname(e.path));
+  const dirOf = (o: string) => known?.[o] ?? dirs.find((d) => path.posix.basename(d) === o);
+  // Hash each folder the way npx skills copies it, so files it leaves out
+  // do not read as a change.
+  const hashOf = (dir: string) => treeHashOfListing(tree, dir, copySkips);
   const installed = installedOf(lock, sid);
   const seen = new Set(lock.sources[sid]?.seen ?? []);
-  const changed = installed.filter(([o, s]) => folders.has(o) && folders.get(o) !== s.base).map(([o]) => o);
-  const removed = installed.filter(([o]) => !folders.has(o)).map(([o]) => o);
-  const added = [...folders.keys()].filter((n) => !seen.has(n)).sort();
+  const there = (o: string) => {
+    const d = dirOf(o);
+    return d !== undefined && dirs.includes(d);
+  };
+  const changed = installed.filter(([o, s]) => there(o) && hashOf(dirOf(o) as string) !== s.base).map(([o]) => o);
+  const removed = installed.filter(([o]) => !there(o)).map(([o]) => o);
+  const knownDirs = new Set([...seen].map(dirOf).filter((d): d is string => d !== undefined));
+  const added = dirs
+    .filter((d) => !knownDirs.has(d))
+    .map((d) => (d === "." ? repo.split("/")[1] : path.posix.basename(d)))
+    .sort();
   if (!changed.length && !removed.length && !added.length) return { checkedAt: now, state: "up-to-date" };
   return {
     checkedAt: now,

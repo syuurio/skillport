@@ -18,7 +18,7 @@ function objectHash(type: string, body: Buffer): Buffer {
 }
 
 function treeOf(dir: string): Buffer {
-  const entries = fs
+  const entries: TreeItem[] = fs
     .readdirSync(dir, { withFileTypes: true })
     .filter((e) => !IGNORED.has(e.name))
     .map((e) => {
@@ -34,6 +34,17 @@ function treeOf(dir: string): Buffer {
       const content = fs.readFileSync(full);
       return { name: e.name, mode: exec ? "100755" : "100644", hash: objectHash("blob", content), dir: false };
     });
+  return treeObject(entries);
+}
+
+interface TreeItem {
+  name: string;
+  mode: string;
+  hash: Buffer;
+  dir: boolean;
+}
+
+function treeObject(entries: TreeItem[]): Buffer {
   // Git sorts tree entries as if directory names ended with "/".
   const key = (e: { name: string; dir: boolean }) => (e.dir ? `${e.name}/` : e.name);
   entries.sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
@@ -41,6 +52,46 @@ function treeOf(dir: string): Buffer {
     entries.map((e) => Buffer.concat([Buffer.from(`${e.mode} ${e.name}\0`), e.hash])),
   );
   return objectHash("tree", body);
+}
+
+/** One row of a recursive git tree listing, as GitHub's trees API returns it. */
+export interface GitEntry {
+  path: string;
+  mode: string;
+  type: string;
+  sha: string;
+}
+
+/**
+ * The tree hash `dir` would have once copied with `skip`'s entries left out,
+ * computed from a recursive listing's blob hashes alone. npx skills drops
+ * some files when it copies (metadata.json, .git, ...), so GitHub's own sha
+ * for the folder never matches the copy when they are present. Null when
+ * `dir` is not in the listing or holds a submodule.
+ */
+export function treeHashOfListing(listing: GitEntry[], dir: string, skip: (name: string, isDir: boolean) => boolean): string | null {
+  const children = new Map<string, GitEntry[]>();
+  const prefix = dir === "." ? "" : `${dir}/`;
+  for (const e of listing) {
+    if (!e.path.startsWith(prefix)) continue;
+    const parent = path.posix.dirname(e.path.slice(prefix.length));
+    children.set(parent, [...(children.get(parent) ?? []), e]);
+  }
+  if (!children.size) return null;
+  const treeAt = (rel: string): Buffer | null => {
+    const items: TreeItem[] = [];
+    for (const e of children.get(rel) ?? []) {
+      const name = path.posix.basename(e.path);
+      const isDir = e.type === "tree";
+      if (IGNORED.has(name) || skip(name, isDir)) continue;
+      if (e.type === "commit") return null;
+      const hash = isDir ? treeAt(rel === "." ? name : `${rel}/${name}`) : Buffer.from(e.sha, "hex");
+      if (!hash) return null;
+      items.push({ name, mode: isDir ? "40000" : e.mode, hash, dir: isDir });
+    }
+    return treeObject(items);
+  };
+  return treeAt(".")?.toString("hex") ?? null;
 }
 
 export function treeHash(dir: string): string {
