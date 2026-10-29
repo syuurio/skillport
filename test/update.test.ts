@@ -9,6 +9,7 @@ import { type SourceId, parseManifest } from "../src/manifest.ts";
 import { defaultPaths, withLinkTargets } from "../src/registry.ts";
 import { sync } from "../src/sync.ts";
 import { treeHash } from "../src/treehash.ts";
+import { edit } from "../src/edit.ts";
 import { type UpdateFlags, type UpdateIO, update } from "../src/update.ts";
 
 const flags = (f: Partial<UpdateFlags> = {}): UpdateFlags => ({ yes: true, dryRun: false, pick: false, interactive: false, discardEdits: false, ...f });
@@ -45,7 +46,16 @@ function sandbox() {
     const t = path.join(paths.sklDir, "trash");
     return fs.existsSync(t) ? fs.readdirSync(t).flatMap((d) => fs.readdirSync(path.join(t, d))) : [];
   };
-  return { home, paths, vendor, skill, run, trashed };
+  const customize = (change: (text: string) => string) =>
+    edit(paths, manifest, readLock(paths.lockFile), "vend/alpha", "edit", {
+      editor: (dir) => {
+        const file = path.join(dir, "SKILL.md");
+        fs.writeFileSync(file, change(fs.readFileSync(file, "utf8")));
+        return true;
+      },
+      askNote: async () => "",
+    });
+  return { home, paths, vendor, skill, run, trashed, customize };
 }
 
 const ls = (dir: string) => fs.readdirSync(dir).sort();
@@ -107,4 +117,14 @@ test("a dry run writes nothing", async () => {
   assert.match(await run({ dryRun: true }), /replace   vend-alpha\n\ndry run: nothing changed\./);
   fs.rmSync(path.join(paths.sklDir, "store"), { recursive: true, force: true });
   assert.equal(treeHash(home), before);
+});
+
+test("the plan shows a reapplied patch, and a conflicting one under Held back", async () => {
+  const { skill, run, customize } = sandbox();
+  await customize((t) => `${t}Mine.\n`);
+  skill("alpha", "Upstream above.\n\n\n\n");
+  assert.match(await run(), /  replace   vend-alpha {9}patch reapplied/);
+  await customize((t) => t.replace("Upstream above.", "Mine above."));
+  skill("alpha", "Upstream changed.\n\n\n\n");
+  assert.match(await run(), /Held back \(not applied\):\n  conflict  vend-alpha {9}you and upstream changed the same lines: SKILL\.md\n {12}resolve in .*merge\/vend\/alpha\n {12}then: {14}skl edit vend\/alpha/);
 });

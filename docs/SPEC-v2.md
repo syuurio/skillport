@@ -361,10 +361,11 @@ Fix: set sources.motion.prefix, or add sources.motion.rename.motion.
   新增與刪除的檔案另外處理：只有一邊動到就採用那一邊，兩邊都動到算衝突。
 
 - **乾淨合併**：計畫裡顯示 `patch reapplied`，套用後以新上游為基準重新產生 patch。
-- **有衝突**：這個 skill 標成 `conflict`，列在計畫的 Held back，不在套用範圍內；輸出維持舊版，其他 skill 照常更新。skl 準備 `merge/<source>/<skill>/`，放入 `BASE/`、`UPSTREAM/`、`YOURS/`、`note.md`，你自己處理，或交給 agent。v1 之後的 `skl merge` 會自動交給設定好的 agent。
+- **有衝突**：這個 skill 標成 `conflict`，列在計畫的 Held back，不在套用範圍內；輸出維持舊版，其他 skill 照常更新。skl 準備 `merge/<source>/<skill>/`，放入 `BASE/`、`UPSTREAM/`、`YOURS/`、`MERGED/`（衝突處有 `<<<<<<< YOURS` 標記）、`note.md`、`your.patch` 與 `merge.json`（記錄 BASE 與 UPSTREAM 的 hash）。同一組版本的資料夾已經存在時不會重建，所以你在 `MERGED/` 的進度不會被下一次 sync 蓋掉。解決方式：執行 `skl edit <source>/<skill>`，它從 `MERGED/` 開始，存檔後的 patch 以新上游為基準，接著套用並刪掉 merge 資料夾。你可以自己處理，或交給 agent。v1 之後的 `skl merge` 會自動交給設定好的 agent。
+- **patch 套不上**（例如在新機器上 patch 的基準不同）：同樣算衝突，`MERGED/` 是新上游的副本。
 
 - **直接改了 `~/.agents/skills` 裡的檔案**（沒有透過 `skl edit`）：磁碟的 tree hash 和 lock 的 `output` 不同，這個 skill 標成 `edited`。`sync` 與 `update` 都不覆蓋它，只列在 Held back，並保留它目前的名稱供其他 skill 的引用使用。兩個出口：
-  - `skl edit <source>/<skill> --from-disk`：把磁碟上的改動轉成 patch。先還原 skl 自己做的改寫（安裝名稱、`metadata` 的 `skl-*` 鍵、引用改寫），再和 store 裡的原名版本比對，之後就走上面的合併流程。
+  - `skl edit <source>/<skill> --from-disk`：把磁碟上的改動轉成 patch。先還原 skl 自己做的改寫（安裝名稱、`metadata` 的 `skl-*` 鍵、引用改寫），再和 store 裡的原名版本比對，之後就走上面的合併流程。還原有兩種做法，依序嘗試：逐項反向改寫，或以 skl 寫出的版本為 BASE 做三方合併。結果必須能重新輸出成和磁碟完全相同的資料夾才採用；兩種都不行，代表你改到了 skl 也會改寫的那一行（例如 `name`），skl 會拒絕並說明怎麼做。
   - `--discard-edits`（`sync` 或 `update`）：換回 skl 的版本，你的那份移到 trash。
 
 ## 11. 指令

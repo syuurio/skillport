@@ -4,7 +4,7 @@ import { describeExternal, externalSkills } from "./external.ts";
 import type { Lock } from "./lock.ts";
 import { type Manifest, type SkillId, type SourceId, splitSkillId } from "./manifest.ts";
 import type { Paths } from "./registry.ts";
-import { count } from "./report.ts";
+import { count, home } from "./report.ts";
 
 // What `skl check` last found, so `skl status` and the TUI answer offline.
 // See docs/SPEC-v2.md §5.4.
@@ -89,8 +89,8 @@ export function formatStatus(manifest: Manifest, lock: Lock, status: Status | nu
   const flagged = Object.entries(status?.skills ?? {}).flatMap(([id, f]) => {
     const name = lock.skills[id as SkillId]?.name ?? id;
     return [
-      f.edited ? `  edited      ${name}: changed in place; skl keeps it` : "",
-      f.conflict ? `  conflict    ${name}: resolve in ${f.conflict}` : "",
+      f.edited ? `  edited      ${name}: changed in place; skl keeps it (skl edit ${id} --from-disk to keep it as a patch)` : "",
+      f.conflict ? `  conflict    ${name}: resolve in ${home(f.conflict)}, then skl edit ${id}` : "",
       f.customized ? `  customized  ${name}` : "",
     ].filter(Boolean);
   });

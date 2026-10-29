@@ -37,6 +37,7 @@ import { treeHash } from "./treehash.ts";
 import { select } from "./select.ts";
 import { type AddKind, addSource, buildSource } from "./add.ts";
 import { adopt } from "./adopt.ts";
+import { type EditMode, edit, runEditor } from "./edit.ts";
 import { type UpdateIO, update } from "./update.ts";
 import { check as checkSources, realNet } from "./check.ts";
 import { formatStatus, readStatus, which, writeStatus } from "./status.ts";
@@ -67,6 +68,9 @@ const USAGE = `skillport — one place for skills that vendor installers scatter
            [--prefix <p> | --no-prefix] [-y]   v2: add a source and install its skills
   skl adopt <owner/repo> [--as <id>] [-y]   v2: take over skills you installed with npx skills
   skl which <name>                 v2: the source, original name and version of an installed skill
+  skl edit <source>/<skill> [--drop | --from-disk]
+                                   v2: customize a skill as a patch kept across updates;
+                                   --from-disk turns edits made in ~/.agents/skills into one
 
 Flags: --dry-run prints the plan only.  -y skips confirmations.
 Registry: ${defaultPaths().registry}`;
@@ -101,6 +105,8 @@ async function main(argv: string[]): Promise<number> {
       return fs.existsSync(base.manifest) ? statusV2(base) : status(ctx);
     case "which":
       return whichCmd(base, args[0]);
+    case "edit":
+      return editCmd(base, args[0], rest);
     case "doctor":
       return doctor(ctx, rest.includes("--fix"), flags);
     case "check":
@@ -238,6 +244,18 @@ function whichCmd(base: Paths, name: string | undefined): number {
   if (!name) throw new Error("Usage: skl which <installed name>");
   const { manifest, paths, lock } = v2(base);
   console.log(which(paths, manifest, lock, name));
+  return 0;
+}
+
+async function editCmd(base: Paths, arg: string | undefined, rest: string[]): Promise<number> {
+  const { manifest, paths, lock } = v2(base);
+  cleanups.add(acquireLock(paths.sklDir));
+  const mode: EditMode = rest.includes("--drop") ? "drop" : rest.includes("--from-disk") ? "from-disk" : "edit";
+  const io = {
+    editor: runEditor,
+    askNote: () => (isInteractive() ? ask("Why this change? (saved as the note; enter to skip)") : Promise.resolve("")),
+  };
+  console.log((await edit(paths, manifest, lock, arg, mode, io)).join("\n"));
   return 0;
 }
 

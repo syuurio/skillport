@@ -315,35 +315,35 @@ A phase is verified only when its unit and live boxes are all checked. Tests alo
 
 **Files.**
 
-- [ ] Create `src/patch.ts`.
-- [ ] Create `src/edit.ts`.
-- [ ] Edit `src/render.ts` to apply patches before prefixing.
-- [ ] Edit `src/update.ts` to merge patched skills.
-- [ ] Create `test/patch.test.ts`.
+- [x] Create `src/patch.ts`.
+- [x] Create `src/edit.ts`.
+- [x] Edit `src/render.ts` to apply patches before prefixing.
+- [x] Edit `src/update.ts` to merge patched skills.
+- [x] Create `test/patch.test.ts`.
 
 **Build.**
 
-- [ ] `skl edit <source>/<skill>` copies the original-name version to `~/.agents/.skl/work/<source>/<skill>/`, opens `$EDITOR`, saves the diff as `~/.config/skl/patches/<source>/<skill>.patch` and asks for the reason in `<skill>.note.md`.
-- [ ] The store keeps the base a patch was made against until a merge replaces it.
-- [ ] On update, run `git merge-file` per file with BASE as the old upstream, UPSTREAM as the new one and YOURS as the old upstream plus the patch. A clean merge regenerates the patch against the new upstream. A conflict marks the skill `conflict`, keeps the old output, and fills `~/.agents/.skl/merge/<source>/<skill>/`.
-- [ ] `skl edit --drop <source>/<skill>` removes the patch.
-- [ ] `skl edit --from-disk <source>/<skill>` turns an `edited` skill into a patch: undo skl's own rewrites (installed name, `skl-*` metadata keys, reference rewrites) on a copy of the disk folder, then diff it against the original-name version in the store.
+- [x] `skl edit <source>/<skill>` copies the original-name version to `~/.agents/.skl/work/<source>/<skill>/`, opens `$EDITOR`, saves the diff as `~/.config/skl/patches/<source>/<skill>.patch` and asks for the reason in `<skill>.note.md`.
+- [x] The store keeps the base a patch was made against until a merge replaces it.
+- [x] On update, run `git merge-file` per file with BASE as the old upstream, UPSTREAM as the new one and YOURS as the old upstream plus the patch. A clean merge regenerates the patch against the new upstream. A conflict marks the skill `conflict`, keeps the old output, and fills `~/.agents/.skl/merge/<source>/<skill>/`.
+- [x] `skl edit --drop <source>/<skill>` removes the patch.
+- [x] `skl edit --from-disk <source>/<skill>` turns an `edited` skill into a patch: undo skl's own rewrites (installed name, `skl-*` metadata keys, reference rewrites) on a copy of the disk folder, then diff it against the original-name version in the store.
 
 **You see.**
 
-- [ ] The update plan shows `patch reapplied` for a clean merge and `conflict` with the merge folder path otherwise.
+- [x] The update plan shows `patch reapplied` for a clean merge and `conflict` with the merge folder path otherwise.
 
 **Verify, unit.**
 
-- [ ] `test/patch.test.ts` covers a clean merge that keeps both changes, a conflict that keeps the old output and fills the merge folder, a prefix change that keeps a patched skill correct, and `--from-disk` producing a patch that renders back to exactly the edited folder. Run `npm test`.
+- [x] `test/patch.test.ts` covers a clean merge that keeps both changes, a conflict that keeps the old output and fills the merge folder, a prefix change that keeps a patched skill correct, and `--from-disk` producing a patch that renders back to exactly the edited folder. Run `npm test`.
 
 **Verify, live.**
 
-- [ ] In the sandbox, run `skl edit`, change the fixture upstream in a different spot, run `skl update`. Paste the plan and the rendered `SKILL.md`. Repeat with an overlapping change and paste the conflict report.
+- [x] In the sandbox, run `skl edit`, change the fixture upstream in a different spot, run `skl update`. Paste the plan and the rendered `SKILL.md`. Repeat with an overlapping change and paste the conflict report.
 
 **Done.**
 
-- [ ] Commit `feat(edit): keep customizations as patches across updates` and close LAB-21.
+- [x] Commit `feat(edit): keep customizations as patches across updates` and close LAB-21.
 
 ## Build the TUI (P10, LAB-22)
 

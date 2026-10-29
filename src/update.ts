@@ -4,6 +4,7 @@ import { skillFlags } from "./check.ts";
 import type { Lock } from "./lock.ts";
 import { type Manifest, type SkillId, type Source, type SourceId, splitSkillId, writeManifest } from "./manifest.ts";
 import type { Paths } from "./registry.ts";
+import { home } from "./report.ts";
 import { type Status, writeStatus } from "./status.ts";
 import { type SyncChange, describeSync, sync } from "./sync.ts";
 
@@ -42,22 +43,32 @@ function planLines(sources: SourceId[], lock: Lock, fetched: Map<SourceId, Fetch
   const lines: string[] = [];
   const of = (sid: SourceId) => changes.filter((c) => splitSkillId(c.id).source === sid);
   for (const sid of sources) {
-    const mine = of(sid).filter((c) => c.kind !== "edited");
+    const mine = of(sid).filter((c) => c.kind !== "edited" && c.kind !== "conflict");
     if (!mine.length) continue;
     lines.push(header(sid, lock, fetched.get(sid)));
     for (const c of mine) {
-      if (c.kind === "install") lines.push(`  ${c.replaced ? "replace" : "install"}   ${c.name}`);
+      if (c.kind === "install") lines.push(`  ${c.replaced ? "replace" : "install"}   ${c.reapplied ? `${c.name.padEnd(18)} patch reapplied` : c.name}`);
       if (c.kind === "relink") lines.push(`  relink    ${c.name}`);
       if (c.kind === "remove") lines.push(`  remove    ${c.name}`);
     }
     const fresh = mine.filter((c) => c.kind === "offered").map((c) => splitSkillId(c.id).original);
     if (fresh.length) lines.push(`  new       ${fresh.join(", ")}`);
   }
-  const held = changes.filter((c): c is Extract<SyncChange, { kind: "edited" }> => c.kind === "edited" && sources.includes(splitSkillId(c.id).source));
+  const held = changes.filter(
+    (c): c is Extract<SyncChange, { kind: "edited" | "conflict" }> => (c.kind === "edited" || c.kind === "conflict") && sources.includes(splitSkillId(c.id).source),
+  );
   if (held.length) {
     lines.push("", "Held back (not applied):");
     for (const c of held) {
       const { source, original } = splitSkillId(c.id);
+      if (c.kind === "conflict") {
+        lines.push(
+          `  conflict  ${c.name.padEnd(18)} ${c.reason}${c.files.length ? `: ${c.files.join(", ")}` : ""}`,
+          `            resolve in ${home(c.dir)}`,
+          `            then:              skl edit ${source}/${original}`,
+        );
+        continue;
+      }
       lines.push(
         `  edited    ${c.name.padEnd(18)} changed in place in ~/.agents/skills`,
         `            keep your edits:   skl edit ${source}/${original} --from-disk`,
@@ -119,7 +130,10 @@ export async function update(
   const work = planned.filter((c) => c.kind === "install" || c.kind === "relink" || c.kind === "remove");
   const offered = planned.filter((c) => c.kind === "offered").map((c) => c.id);
   if (!work.length && !offered.length) {
-    io.print([...lines, ...(lines.length ? [""] : []), "up to date"].join("\n").trimStart());
+    const held = planned.some((c) => c.kind === "edited" || c.kind === "conflict");
+    io.print([...lines, ...(lines.length ? [""] : []), held ? "nothing else to apply" : "up to date"].join("\n").trimStart());
+    // Nothing to install, but a conflict still needs its merge folder.
+    if (!flags.dryRun && planned.some((c) => c.kind === "conflict")) sync(paths, next, lock, opts);
     return failed ? 1 : 0;
   }
   io.print(lines.join("\n"));
@@ -154,7 +168,7 @@ export async function update(
 
   const applied = sync(paths, next, lock, { ...opts, accept, offeredNow: asking }).filter((c) => updating.includes(splitSkillId(c.id).source));
   if (JSON.stringify(next) !== JSON.stringify(manifest)) writeManifest(paths.manifest, next);
-  const shown = describeSync(applied.filter((c) => c.kind !== "edited" && c.kind !== "offered"));
+  const shown = describeSync(applied.filter((c) => c.kind !== "edited" && c.kind !== "conflict" && c.kind !== "offered"));
   if (shown.length) io.print(["", ...shown].join("\n"));
 
   // What check said is now stale for the sources just updated.

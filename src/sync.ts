@@ -6,6 +6,7 @@ import { isOursOrFree, link, moveToTrash, trashDir, unlink } from "./apply.ts";
 import { describeExternal, externalSkills, foreignInTarget } from "./external.ts";
 import { type Lock, type SkillLock, writeLock } from "./lock.ts";
 import { type Manifest, type SkillId, type SkillName, type Source, type SourceId, installedName, skillId, splitSkillId } from "./manifest.ts";
+import { type MergeInfo, applyPatch, diffTrees, mergeDir, mergeTrees, patchFiles, patchHash, readMergeInfo } from "./patch.ts";
 import { DEFAULT_LINKS, type Paths } from "./registry.ts";
 import { type Rewrite, render } from "./render.ts";
 import { putInStore, storedAt } from "./store.ts";
@@ -63,10 +64,11 @@ export interface SyncOptions {
 }
 
 export type SyncChange =
-  | { kind: "install"; id: SkillId; name: string; replaced: boolean; rewrites: Rewrite[] }
+  | { kind: "install"; id: SkillId; name: string; replaced: boolean; rewrites: Rewrite[]; reapplied?: boolean }
   | { kind: "relink"; id: SkillId; name: string }
   | { kind: "remove"; id: SkillId; name: string }
   | { kind: "edited"; id: SkillId; name: string }
+  | { kind: "conflict"; id: SkillId; name: string; reason: string; files: string[]; dir: string }
   | { kind: "offered"; id: SkillId };
 
 /** The lines `skl sync` prints for its changes. */
@@ -74,13 +76,15 @@ export function describeSync(changes: SyncChange[]): string[] {
   return changes.flatMap((c) => {
     switch (c.kind) {
       case "install":
-        return [`${c.id} -> ${c.name}`, ...describe(c.rewrites)];
+        return [`${c.id} -> ${c.name}${c.reapplied ? " (patch reapplied)" : ""}`, ...describe(c.rewrites)];
       case "relink":
         return [`${c.id} -> ${c.name}`];
       case "remove":
         return [`removed ${c.name} (${c.id})`];
       case "edited":
         return [`edited ${c.name} (${c.id}) was changed in place; kept as is`, "  to replace it with skl's version: skl sync --discard-edits"];
+      case "conflict":
+        return [`conflict ${c.name} (${c.id}): ${c.reason}; kept as is`, `  resolve in ${c.dir}, then: skl edit ${c.id}`];
       case "offered":
         return [`new ${c.id} (not installed; skl update ${splitSkillId(c.id).source} --pick)`];
     }
@@ -184,6 +188,48 @@ function recheck(paths: Paths, lock: Lock, wants: Want[], held: Map<SkillId, Ski
   if (problems.length) throw new Error(`Nothing was changed:\n  ${problems.join("\n  ")}`);
 }
 
+/** The folder to render: the vendor's, or with your patch applied (merged first when upstream moved). */
+type Prepared = { from: string; patch?: string; reapplied?: boolean };
+type Conflict = { reason: string; files: string[]; info: MergeInfo; dirs: Record<string, string>; patch: string };
+
+function prepare(paths: Paths, lock: Lock, w: Want, staging: string): Prepared | Conflict {
+  const upstream = storedAt(paths, w.source, w.original, w.base);
+  const file = patchFiles(paths, w.source, w.original).patch;
+  if (!fs.existsSync(file)) return { from: upstream };
+  const patch = fs.readFileSync(file, "utf8");
+  // The patch was made against the base skl last installed.
+  const was = lock.skills[w.id]?.base ?? w.base;
+  const base = storedAt(paths, w.source, w.original, was);
+  const info = { base: was, upstream: w.base };
+  const work = path.join(staging, ".patched", w.source, w.original);
+  const yours = path.join(work, "YOURS");
+  fs.cpSync(base, yours, { recursive: true });
+  try {
+    applyPatch(yours, patch);
+  } catch (e) {
+    const reason = `your patch no longer applies (${(e as Error).message.split("\n")[0]})`;
+    return { reason, files: [], info, dirs: { BASE: base, UPSTREAM: upstream, MERGED: upstream }, patch };
+  }
+  if (was === w.base) return { from: yours, patch };
+  const merged = path.join(work, "MERGED");
+  const files = mergeTrees(base, yours, upstream, merged);
+  if (files.length) return { reason: "you and upstream changed the same lines", files, info, dirs: { BASE: base, YOURS: yours, UPSTREAM: upstream, MERGED: merged }, patch };
+  return { from: merged, patch: diffTrees(upstream, merged), reapplied: true };
+}
+
+/** Lay a conflict out for you or an agent; one already there for the same pair of versions is left alone. */
+function fillMerge(paths: Paths, w: Want, c: Conflict): void {
+  const dir = mergeDir(paths, w.source, w.original);
+  const had = readMergeInfo(dir);
+  if (had?.base === c.info.base && had.upstream === c.info.upstream) return;
+  fs.rmSync(dir, { recursive: true, force: true });
+  for (const [name, from] of Object.entries(c.dirs)) fs.cpSync(from, path.join(dir, name), { recursive: true });
+  const note = patchFiles(paths, w.source, w.original).note;
+  if (fs.existsSync(note)) fs.copyFileSync(note, path.join(dir, "note.md"));
+  fs.writeFileSync(path.join(dir, "your.patch"), c.patch);
+  fs.writeFileSync(path.join(dir, "merge.json"), `${JSON.stringify(c.info, null, 2)}\n`);
+}
+
 /** Sync and save the lock; returns one line per change, none when up to date. */
 export function sync(paths: Paths, manifest: Manifest, given: Lock, opts: SyncOptions = {}): SyncChange[] {
   const now = opts.now ?? new Date().toISOString();
@@ -193,12 +239,27 @@ export function sync(paths: Paths, manifest: Manifest, given: Lock, opts: SyncOp
   const { wants: all, offered } = wanted(paths, manifest, lock, now, opts);
   // A skill you changed in place stays as it is until you say otherwise.
   const held = opts.discardEdits ? new Map<SkillId, SkillLock>() : editedInPlace(paths, lock);
-  const wants = all.filter((w) => !held.has(w.id));
-  recheck(paths, lock, wants, held);
+  const edited = new Map(held);
 
   const staging = path.join(paths.sklDir, "staging");
   fs.rmSync(staging, { recursive: true, force: true });
   fs.mkdirSync(staging, { recursive: true, mode: 0o700 });
+  // A patch that conflicts holds its skill back like an edit does.
+  const prepared = new Map<SkillId, Prepared>();
+  const conflicts: SyncChange[] = [];
+  for (const w of all.filter((w) => !held.has(w.id))) {
+    const p = prepare(paths, lock, w, staging);
+    if ("from" in p) {
+      prepared.set(w.id, p);
+      continue;
+    }
+    if (!dry) fillMerge(paths, w, p);
+    const entry = lock.skills[w.id];
+    if (entry) held.set(w.id, entry);
+    conflicts.push({ kind: "conflict", id: w.id, name: entry?.name ?? w.name, reason: p.reason, files: p.files, dir: mergeDir(paths, w.source, w.original) });
+  }
+  const wants = all.filter((w) => prepared.has(w.id));
+  recheck(paths, lock, wants, held);
   const renames = new Map<SourceId, Map<string, string>>();
   const installedAs = [
     ...wants.map((w) => [w.id, w.name] as const),
@@ -212,7 +273,7 @@ export function sync(paths: Paths, manifest: Manifest, given: Lock, opts: SyncOp
   const rendered = wants.map((w) => {
     const to = path.join(staging, w.name);
     const { rewrites } = render({
-      from: storedAt(paths, w.source, w.original, w.base),
+      from: (prepared.get(w.id) as Prepared).from,
       to,
       source: w.source,
       original: w.original,
@@ -226,7 +287,8 @@ export function sync(paths: Paths, manifest: Manifest, given: Lock, opts: SyncOp
   const trash = trashDir(paths.sklDir, "sync");
   const keep = new Map(wants.map((w) => [w.id, w.name]));
   const wasAt = new Map((Object.entries(lock.skills) as [SkillId, SkillLock][]).map(([id, s]) => [id, s.name]));
-  for (const [id, entry] of held) changes.push({ kind: "edited", id, name: entry.name });
+  for (const [id, entry] of edited) changes.push({ kind: "edited", id, name: entry.name });
+  changes.push(...conflicts);
   for (const [id, entry] of Object.entries(lock.skills) as [SkillId, SkillLock][]) {
     if (keep.get(id) === entry.name || held.has(id)) continue;
     if (!dry) {
@@ -255,10 +317,24 @@ export function sync(paths: Paths, manifest: Manifest, given: Lock, opts: SyncOp
       }
       link(paths, r.name, r.dirs);
     }
-    if (written) changes.push({ kind: "install", id: r.id, name: r.name, replaced: wasAt.get(r.id) === r.name, rewrites: r.rewrites });
+    const p = prepared.get(r.id) as Prepared;
+    if (!dry) {
+      // A merged patch is kept against the new upstream; one upstream took in full is done.
+      const file = patchFiles(paths, r.source, r.original).patch;
+      if (p.reapplied && p.patch) fs.writeFileSync(file, p.patch);
+      if (p.reapplied && !p.patch) fs.rmSync(file);
+      fs.rmSync(mergeDir(paths, r.source, r.original), { recursive: true, force: true });
+    }
+    if (written) changes.push({ kind: "install", id: r.id, name: r.name, replaced: wasAt.get(r.id) === r.name, rewrites: r.rewrites, ...(p.reapplied ? { reapplied: true } : {}) });
     else if (relinked) changes.push({ kind: "relink", id: r.id, name: r.name });
     const prev = lock.skills[r.id];
-    lock.skills[r.id] = { name: r.name, base: r.base, output: r.output, updatedAt: written || !prev ? now : prev.updatedAt };
+    lock.skills[r.id] = {
+      name: r.name,
+      base: r.base,
+      output: r.output,
+      ...(p.patch ? { patch: patchHash(p.patch) } : {}),
+      updatedAt: written || !prev ? now : prev.updatedAt,
+    };
   }
   fs.rmSync(staging, { recursive: true, force: true });
   if (!dry && JSON.stringify(lock) !== before) writeLock(paths.lockFile, lock);
