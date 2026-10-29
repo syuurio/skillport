@@ -143,7 +143,7 @@ test("a skills-cli set gets links in registry link targets, which npx skills doe
   const { cliLinkChanges } = await import("../src/skillscli.ts");
   const { withLinkTargets } = await import("../src/registry.ts");
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "skillport-clitarget-"));
-  const paths = withLinkTargets(defaultPaths(home), { version: 1, linkTargets: { work: { dir: "~/.claude-work/skills" } }, sets: {} });
+  const paths = withLinkTargets(defaultPaths(home), { linkTargets: { work: { dir: "~/.claude-work/skills" } } });
   const work = path.join(home, ".claude-work", "skills");
   assert.equal(paths.linkTargets.work, work);
   assert.ok(paths.agentDirs.includes(work));

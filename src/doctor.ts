@@ -84,7 +84,7 @@ function ownedSkills(
 export function diagnose(paths: Paths, reg: Registry, state: State, lock: Record<string, LockEntry>): Finding[] {
   const findings: Finding[] = [];
   const owned = ownedSkills(paths, reg, state, lock, findings);
-  const trash = trashDir(paths, "doctor");
+  const trash = trashDir(paths.stateDir, "doctor");
   const toTrash = (from: string) => () => moveToTrash(trash, from, path.relative(paths.home, from));
 
   // Two owners for one name.

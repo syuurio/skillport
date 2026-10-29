@@ -8,9 +8,14 @@ import { isValidSkillName } from "./transform.ts";
 // Moving things into place. Every replaced or removed folder goes to the
 // trash, never `rm`, so any apply can be undone by hand.
 
-export function trashDir(paths: Paths, label: string): string {
+export function trashDir(stateDir: string, label: string): string {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  return path.join(paths.stateDir, "trash", `${stamp}-${label}`);
+  const at = path.join(stateDir, "trash", `${stamp}-${label}`);
+  // Two runs in the same millisecond must not share a folder: a second
+  // move of the same name would land on the first.
+  let n = 1;
+  while (fs.existsSync(n === 1 ? at : `${at}-${n}`)) n++;
+  return n === 1 ? at : `${at}-${n}`;
 }
 
 /**
@@ -88,7 +93,7 @@ export function apply(
 ): string {
   if (p.errors.length || p.collisions.length) throw new Error("Refusing to apply a plan with unresolved problems.");
   const prev = state.sets[p.setId]?.skills ?? {};
-  const trash = trashDir(paths, p.setId);
+  const trash = trashDir(paths.stateDir, p.setId);
   recheck(paths, p, new Set([...Object.keys(prev), ...p.adopted]));
   // Adopting: identical copies scattered in agent folders go to the trash
   // first, so the links can take their place.
@@ -133,7 +138,7 @@ export function apply(
 /** Remove every skill a managed set installed. */
 export function removeManaged(paths: Paths, setId: string, state: State): string[] {
   const names = Object.keys(state.sets[setId]?.skills ?? {}).filter(isValidSkillName);
-  const trash = trashDir(paths, `removed-${setId}`);
+  const trash = trashDir(paths.stateDir, `removed-${setId}`);
   for (const name of names) {
     moveToTrash(trash, path.join(paths.skillsDir, name));
     unlink(paths, name);
@@ -152,15 +157,15 @@ export function removeManaged(paths: Paths, setId: string, state: State): string
  * The state folder is made private (0700): staging holds the installer's fake
  * HOME, where an installer may write your token.
  */
-export function acquireLock(paths: Paths): () => void {
-  fs.mkdirSync(paths.stateDir, { recursive: true, mode: 0o700 });
-  fs.chmodSync(paths.stateDir, 0o700);
-  const dir = path.join(paths.stateDir, "lock.d");
+export function acquireLock(stateDir: string): () => void {
+  fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(stateDir, 0o700);
+  const dir = path.join(stateDir, "lock.d");
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
       fs.mkdirSync(dir);
       fs.writeFileSync(path.join(dir, "pid"), String(process.pid));
-      removeDeadLocks(paths.stateDir);
+      removeDeadLocks(stateDir);
       return () => fs.rmSync(dir, { recursive: true, force: true });
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
@@ -213,7 +218,7 @@ export function acquireLock(paths: Paths): () => void {
     }
     fs.rmSync(aside, { recursive: true, force: true });
   }
-  throw new Error(`Could not take the lock in ${paths.stateDir}.`);
+  throw new Error(`Could not take the lock in ${stateDir}.`);
 }
 
 /** Locks a takeover set aside (lock.d.stale-*) whose owner is gone. */

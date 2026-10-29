@@ -57,6 +57,34 @@ export function setFrontmatterName(text: string, name: string): string {
   return `---\nname: ${name}\n---\n${text}`;
 }
 
+/**
+ * Set keys under the frontmatter `metadata` map, keeping its other keys.
+ * Only block style is read (`metadata:` then indented `key: value` lines),
+ * which is what the Agent Skills spec shows; a flow map other than `{}` is
+ * refused rather than guessed at.
+ */
+export function setFrontmatterMetadata(text: string, entries: Record<string, string>): string {
+  const lines = text.split("\n");
+  if (lines[0]?.trim() !== "---") throw new Error("SKILL.md has no frontmatter");
+  const end = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
+  if (end < 0) throw new Error("SKILL.md frontmatter is not closed");
+  const at = lines.findIndex((l, i) => i > 0 && i < end && /^metadata:/.test(l));
+  const fresh = (indent: string) => Object.entries(entries).map(([k, v]) => `${indent}${k}: ${v}`);
+  if (at < 0) {
+    lines.splice(end, 0, "metadata:", ...fresh("  "));
+    return lines.join("\n");
+  }
+  const inline = lines[at].slice("metadata:".length).trim();
+  if (inline && inline !== "{}") throw new Error("SKILL.md metadata is not a block map; skl cannot add its keys");
+  let stop = at + 1;
+  while (stop < end && /^\s+\S/.test(lines[stop])) stop++;
+  const children = lines.slice(at + 1, stop);
+  const indent = /^\s+/.exec(children[0] ?? "")?.[0] ?? "  ";
+  const kept = children.filter((l) => !Object.hasOwn(entries, /^\s+([^:]+):/.exec(l)?.[1]?.trim() ?? ""));
+  lines.splice(at, stop - at, "metadata:", ...kept, ...fresh(indent));
+  return lines.join("\n");
+}
+
 export interface Change {
   line: number;
   from: string;

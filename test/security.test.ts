@@ -62,7 +62,7 @@ test("N1: a lock taken over by another run in between is put back, not stolen", 
     return realRename(from, to);
   };
   try {
-    assert.throws(() => acquireLock(paths), new RegExp(`pid ${process.ppid}`));
+    assert.throws(() => acquireLock(paths.stateDir), new RegExp(`pid ${process.ppid}`));
   } finally {
     (fs as { renameSync: typeof fs.renameSync }).renameSync = realRename;
   }
@@ -163,7 +163,7 @@ test("taking the lock clears lock folders set aside by runs that are gone", () =
   const paths = defaultPaths(tmp("stale"));
   fs.mkdirSync(path.join(paths.stateDir, "lock.d.stale-1-0"), { recursive: true });
   fs.writeFileSync(path.join(paths.stateDir, "lock.d.stale-1-0", "pid"), "999999");
-  acquireLock(paths)();
+  acquireLock(paths.stateDir)();
   assert.ok(!fs.existsSync(path.join(paths.stateDir, "lock.d.stale-1-0")));
 });
 
@@ -187,7 +187,7 @@ test("round 5: a lock folder without a pid that is not fresh is taken over", () 
   fs.mkdirSync(dir, { recursive: true });
   const old = new Date(Date.now() - 60_000);
   fs.utimesSync(dir, old, old);
-  acquireLock(paths)();
+  acquireLock(paths.stateDir)();
 });
 
 test("round 6: credentials anywhere in a word are caught, and validation covers unattended and source", () => {
@@ -234,7 +234,7 @@ test("round 6: a takeover that would move a fresh pid-less lock puts it back", (
   };
   try {
     // The fresh one gets put back; on retry it is fresh and pid-less, so we wait and finally give up.
-    assert.throws(() => acquireLock(paths), /Could not take the lock/);
+    assert.throws(() => acquireLock(paths.stateDir), /Could not take the lock/);
   } finally {
     (fs as { renameSync: typeof fs.renameSync }).renameSync = realRename;
   }

@@ -12,6 +12,7 @@ import {
   rewriteReferences,
   setFrontmatterName,
 } from "./transform.ts";
+import { irregularEntries, markdownFiles } from "./render.ts";
 import { sameSkill, treeHash } from "./treehash.ts";
 
 export type Upstream = "new" | "changed" | "unchanged";
@@ -323,20 +324,4 @@ function findCollisions(
     }
   }
   return found;
-}
-
-/** Entries that are not regular files or folders, the skill folder included. */
-function irregularEntries(dir: string): string[] {
-  if (!fs.lstatSync(dir).isDirectory()) return ["."];
-  return fs
-    .readdirSync(dir, { withFileTypes: true, recursive: true })
-    .filter((e) => !e.isFile() && !e.isDirectory())
-    .map((e) => path.relative(dir, path.join(e.parentPath, e.name)));
-}
-
-function markdownFiles(dir: string): string[] {
-  return fs
-    .readdirSync(dir, { withFileTypes: true, recursive: true })
-    .filter((e) => e.isFile() && e.name.endsWith(".md"))
-    .map((e) => path.join(e.parentPath, e.name));
 }

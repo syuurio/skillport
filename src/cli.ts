@@ -12,6 +12,7 @@ import { askForSet, validateSet } from "./register.ts";
 import { Cancelled, ask, askSecret, confirm, intro, isInteractive, log, note, outro } from "./prompt.ts";
 import {
   type ManagedSet,
+  type Paths,
   type Registry,
   type Resolution,
   type SkillSet,
@@ -34,6 +35,9 @@ import { count, home, printItems, printResolveHints, report, reportCli, summariz
 import { isValidSkillName, withPrefix } from "./transform.ts";
 import { treeHash } from "./treehash.ts";
 import { select } from "./select.ts";
+import { readLock } from "./lock.ts";
+import { readManifest } from "./manifest.ts";
+import { sync as syncV2 } from "./sync.ts";
 import { isPinnedSpec } from "./validate.ts";
 
 const USAGE = `skillport — one place for skills that vendor installers scatter
@@ -52,6 +56,7 @@ const USAGE = `skillport — one place for skills that vendor installers scatter
   skl namespace <set> (<prefix> | --off)   Prefix every skill of a set, new ones too
   skl bump <set> [version]         Move a set's pinned installer or package to the latest (or given) version
   skl secret <set>                 Store a set's token in Keychain
+  skl sync                         v2: make ~/.agents/skills match the manifest and lock (offline)
 
 Flags: --dry-run prints the plan only.  -y skips confirmations.
 Registry: ${defaultPaths().registry}`;
@@ -76,8 +81,10 @@ async function main(argv: string[]): Promise<number> {
   // Every command that writes state, staging, the registry or the Keychain
   // takes the lock; status, plain doctor and help do not.
   const writes = ["add", "update", "check", "diff", "remove", "adopt", "register", "resolve", "namespace", "bump", "secret"];
-  if (writes.includes(cmd) || (cmd === "doctor" && rest.includes("--fix"))) cleanups.add(acquireLock(paths));
+  if (writes.includes(cmd) || (cmd === "doctor" && rest.includes("--fix"))) cleanups.add(acquireLock(paths.stateDir));
   switch (cmd) {
+    case "sync":
+      return syncCmd(base);
     case "register":
       return register(ctx, args[0], rest, flags);
     case "status":
@@ -119,6 +126,15 @@ async function main(argv: string[]): Promise<number> {
       console.log(USAGE);
       return cmd ? 1 : 0;
   }
+}
+
+function syncCmd(base: Paths): number {
+  const manifest = readManifest(base.manifest);
+  const paths = withLinkTargets(base, manifest, base.manifest);
+  cleanups.add(acquireLock(paths.sklDir));
+  const lines = syncV2(paths, manifest, readLock(paths.lockFile));
+  console.log(lines.length ? lines.join("\n") : "up to date");
+  return 0;
 }
 
 async function register(ctx: Ctx, id: string | undefined, rest: string[], flags: Flags): Promise<number> {

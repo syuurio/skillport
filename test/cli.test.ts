@@ -68,12 +68,12 @@ test("set ids must be safe folder names", () => {
 test("the run lock refuses a second live run and takes over a stale one", () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "skillport-lock-"));
   const paths = defaultPaths(home);
-  const release = acquireLock(paths);
-  assert.throws(() => acquireLock(paths), /in progress/);
+  const release = acquireLock(paths.stateDir);
+  assert.throws(() => acquireLock(paths.stateDir), /in progress/);
   release();
   fs.mkdirSync(path.join(paths.stateDir, "lock.d"));
   fs.writeFileSync(path.join(paths.stateDir, "lock.d", "pid"), "999999");
-  acquireLock(paths)();
+  acquireLock(paths.stateDir)();
   assert.equal((fs.statSync(paths.stateDir).mode & 0o777).toString(8), "700");
 });
 

@@ -166,19 +166,19 @@ export function linkTargetLabels(reg: Registry): Record<string, string> {
  * Paths with the registry's link targets added. Their folders are also
  * scanned by doctor, like the built-in agent folders.
  */
-export function withLinkTargets(paths: Paths, reg: Registry): Paths {
+export function withLinkTargets(paths: Paths, reg: Pick<Registry, "linkTargets">, file = paths.registry): Paths {
   const extra = Object.entries(reg.linkTargets ?? {}).map(([id, t]) => {
     const dir = path.resolve(t.dir.startsWith("~/") ? path.join(paths.home, t.dir.slice(2)) : t.dir);
     return [id, dir] as const;
   });
   if (!extra.length) return paths;
-  const taken = [paths.skillsDir, paths.stateDir];
+  const taken = [paths.skillsDir, paths.stateDir, paths.sklDir];
   const seen = new Set(paths.links);
   for (const [id, dir] of extra) {
     if (taken.some((t) => dir === t || dir.startsWith(`${t}${path.sep}`) || t.startsWith(`${dir}${path.sep}`))) {
-      throw new Error(`${paths.registry}: link target "${id}" (${dir}) overlaps skillport's own folders; pick an agent's skills folder.`);
+      throw new Error(`${file}: link target "${id}" (${dir}) overlaps skillport's own folders; pick an agent's skills folder.`);
     }
-    if (seen.has(dir)) throw new Error(`${paths.registry}: link target "${id}" uses ${dir}, which another target already uses.`);
+    if (seen.has(dir)) throw new Error(`${file}: link target "${id}" uses ${dir}, which another target already uses.`);
     seen.add(dir);
   }
   const dirs = extra.map(([, dir]) => dir);
