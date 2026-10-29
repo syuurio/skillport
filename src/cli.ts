@@ -38,7 +38,9 @@ import { select } from "./select.ts";
 import { type AddKind, addSource, buildSource } from "./add.ts";
 import { adopt } from "./adopt.ts";
 import { type EditMode, edit, runEditor } from "./edit.ts";
-import { type UpdateIO, update } from "./update.ts";
+import { type UpdateIO, fetchSources, update } from "./update.ts";
+import { diff as diffSkill } from "./diff.ts";
+import { removeSource } from "./remove.ts";
 import { check as checkSources, realNet } from "./check.ts";
 import { formatStatus, readStatus, which, writeStatus } from "./status.ts";
 import { readLock } from "./lock.ts";
@@ -68,6 +70,8 @@ const USAGE = `skillport — one place for skills that vendor installers scatter
            [--prefix <p> | --no-prefix] [-y]   v2: add a source and install its skills
   skl adopt <owner/repo> [--as <id>] [-y]   v2: take over skills you installed with npx skills
   skl which <name>                 v2: the source, original name and version of an installed skill
+  skl diff <source>[/<skill>] [-i]  v2: what the next update would change, rewrites and patches included
+  skl remove <source> [-y] [--discard-edits]   v2: remove a source's skills (to trash) and the source
   skl edit <source>/<skill> [--drop | --from-disk]
                                    v2: customize a skill as a patch kept across updates;
                                    --from-disk turns edits made in ~/.agents/skills into one
@@ -130,9 +134,9 @@ async function main(argv: string[]): Promise<number> {
       return sync(ctx, args[0], { ...flags, adopt: true });
     }
     case "diff":
-      return diff(ctx, args[0], args[1]);
+      return fs.existsSync(base.manifest) ? diffV2(base, args[0], flags) : diff(ctx, args[0], args[1]);
     case "remove":
-      return remove(ctx, args[0], flags);
+      return fs.existsSync(base.manifest) ? removeV2(base, args[0], rest, flags) : remove(ctx, args[0], flags);
     case "resolve":
       return resolveCmd(ctx, args, rest, flags);
     case "namespace":
@@ -253,6 +257,29 @@ function whichCmd(base: Paths, name: string | undefined): number {
   if (!name) throw new Error("Usage: skl which <installed name>");
   const { manifest, paths, lock } = v2(base);
   console.log(which(paths, manifest, lock, name));
+  return 0;
+}
+
+function diffV2(base: Paths, target: string | undefined, flags: Flags): number {
+  const { manifest, paths, lock } = v2(base);
+  cleanups.add(acquireLock(paths.sklDir));
+  cleanups.add(() => fs.rmSync(path.join(paths.sklDir, "fetch"), { recursive: true, force: true }));
+  const sid = target?.split("/")[0] as SourceId;
+  if (!manifest.sources[sid]) throw new Error(`Usage: skl diff <source>[/<skill>]. Known sources: ${Object.keys(manifest.sources).join(", ")}`);
+  const { fetched } = fetchSources(paths, manifest, [sid], flags.interactive, (line) => console.log(line));
+  console.log(diffSkill(paths, manifest, lock, target, fetched).join("\n"));
+  return 0;
+}
+
+async function removeV2(base: Paths, id: string | undefined, rest: string[], flags: Flags): Promise<number> {
+  const { manifest, paths, lock } = v2(base);
+  cleanups.add(acquireLock(paths.sklDir));
+  const lines = await removeSource(paths, manifest, lock, id, {
+    yes: flags.yes,
+    discardEdits: rest.includes("--discard-edits"),
+    confirm: isInteractive() ? (q) => confirm(q, false) : null,
+  });
+  console.log(lines.join("\n"));
   return 0;
 }
 

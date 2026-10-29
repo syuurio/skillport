@@ -62,6 +62,8 @@ export interface SyncOptions {
   accept?: ReadonlySet<SkillId>;
   /** You were shown every skill of the fetched sources, so all of them count as seen. */
   offeredNow?: boolean;
+  /** Dry runs only: leave each folder sync would write here, by installed name. */
+  keep?: string;
 }
 
 export type SyncChange =
@@ -353,6 +355,10 @@ export function sync(paths: Paths, manifest: Manifest, given: Lock, opts: SyncOp
       ...(p.patch ? { patch: patchHash(p.patch) } : {}),
       updatedAt: written || !prev ? now : prev.updatedAt,
     };
+  }
+  if (dry && opts.keep) {
+    fs.mkdirSync(opts.keep, { recursive: true });
+    for (const r of rendered) fs.renameSync(r.staged, path.join(opts.keep, r.name));
   }
   fs.rmSync(staging, { recursive: true, force: true });
   if (!dry && JSON.stringify(lock) !== before) writeLock(paths.lockFile, lock);

@@ -345,6 +345,14 @@ A phase is verified only when its unit and live boxes are all checked. Tests alo
 
 - [x] Commit `feat(edit): keep customizations as patches across updates` and close LAB-21.
 
+## Add v2 skl diff and skl remove (P9.5, LAB-26)
+
+**Depends on.** P9. SPEC §11 lists both, but no phase built them, and P11 deletes the v1 versions.
+
+- [x] `skl diff <source>[/<skill>]` fetches, renders through a dry-run sync, and diffs each folder it would write against the installed one. It writes no skill.
+- [x] `skl remove <source>` confirms, trashes the source's skills and links, and drops it from the manifest. Patches, notes and a Keychain token stay. Skills edited in place block it unless `--discard-edits`.
+- [x] `test/diff-remove.test.ts`, and live runs on a local source and on `vercel-labs/agent-skills`.
+
 ## Build the TUI (P10, LAB-22)
 
 **Depends on.** P9.
@@ -389,7 +397,7 @@ A phase is verified only when its unit and live boxes are all checked. Tests alo
 - [ ] Create `src/migrate.ts`.
 - [ ] Delete `src/state.ts`, `src/collide.ts`, `src/register.ts`, `src/plan.ts`, the v1 parts of `src/registry.ts` and `src/skillscli.ts`, and their tests.
 - [ ] Delete `docs/SPEC.md` and rename `docs/SPEC-v2.md` to `docs/SPEC.md`.
-- [ ] Edit `README.md`.
+- [ ] Edit `README.md` for v2, including what goes into dotfiles (`~/.config/skl/` only) and the steps on a new machine (SPEC §5.3).
 
 **Build.**
 

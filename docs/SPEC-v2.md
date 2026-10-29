@@ -389,10 +389,10 @@ Fix: set sources.motion.prefix, or add sources.motion.rename.motion.
 | `skl status [source]` | 讀 `status.json`，不連網 |
 | `skl update [source...] [-i] [--pick] [--discard-edits]` | 列出計畫，在終端機上勾選新 skill，確認後套用；`conflict` 與 `edited` 不套用 |
 | `skl which <安裝名稱>` | 來源、原名、版本、最後更新時間 |
-| `skl diff <source>/<skill>` | 這次更新會改什麼，包含引用改寫 |
+| `skl diff <source>[/<skill>] [-i]` | 抓取來源，用 diff 顯示下一次更新會怎麼改磁碟上的 skill，包含引用改寫與 patch；不寫入任何 skill |
 | `skl edit <source>/<skill> [--drop \| --from-disk]` | 客製化；`--from-disk` 把直接改過的檔案轉成 patch |
 | `skl adopt <npx skills 來源>` | 接管外部的 GitHub 來源 |
-| `skl remove <source>` | 移除來源的所有 skill（移到 trash）並從 manifest 刪除 |
+| `skl remove <source> [-y] [--discard-edits]` | 確認後把來源的所有 skill 移到 trash、移除 link，並從 manifest 刪除。patch、note 與 Keychain token 保留。有直接改過的 skill 時拒絕，除非加 `--discard-edits` |
 | `skl secret <source>` | 把 token 存進 Keychain |
 | `skl doctor [--fix]` | 散落的副本、壞掉或缺少的 link、`edited` 的 skill、沒有 note 的 patch。`--fix` 只做安全的修正 |
 | `skl migrate [--dry-run]` | 從 v1 遷移（§14） |

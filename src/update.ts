@@ -29,7 +29,7 @@ export interface UpdateIO {
   print(line: string): void;
 }
 
-type Fetch = (id: SourceId, source: Source, opts: FetchOptions) => Fetched;
+export type Fetch = (id: SourceId, source: Source, opts: FetchOptions) => Fetched;
 
 const short = (v: string) => (/^[0-9a-f]{40}$/.test(v) ? v.slice(0, 7) : v);
 
@@ -79,6 +79,33 @@ function planLines(sources: SourceId[], lock: Lock, fetched: Map<SourceId, Fetch
   return lines;
 }
 
+/**
+ * The network part of update and diff, per source; one failing does not stop
+ * the others. `updating` is what was fetched, plus local sources, which sync
+ * reads itself.
+ */
+export function fetchSources(paths: Paths, manifest: Manifest, sources: SourceId[], interactive: boolean, print: (line: string) => void, fetch: Fetch = fetchSource) {
+  const fetched = new Map<SourceId, Fetched>();
+  let failed = 0;
+  for (const sid of sources) {
+    const source = manifest.sources[sid];
+    if (source.type === "local") continue;
+    if (source.type === "installer" && source.unattended === undefined && !interactive) {
+      print(`${sid}  skipped: its installer only runs with you at the terminal; add -i`);
+      continue;
+    }
+    try {
+      const staging = path.join(paths.sklDir, "fetch", sid);
+      fetched.set(sid, fetch(sid, source, { staging, interactive: source.type === "installer" && interactive, home: paths.home, sklDir: paths.sklDir }));
+    } catch (e) {
+      failed++;
+      print(`${sid}  failed: ${(e as Error).message.split("\n")[0]}`);
+    }
+  }
+  const updating = sources.filter((sid) => fetched.has(sid) || manifest.sources[sid].type === "local");
+  return { fetched, failed, updating };
+}
+
 export async function update(
   paths: Paths,
   manifest: Manifest,
@@ -94,25 +121,7 @@ export async function update(
   const sources = (ids.length ? ids : Object.keys(manifest.sources)) as SourceId[];
   const next: Manifest = structuredClone(manifest);
 
-  // The network part, per source; one failing does not stop the others.
-  const fetched = new Map<SourceId, Fetched>();
-  let failed = 0;
-  for (const sid of sources) {
-    const source = manifest.sources[sid];
-    if (source.type === "local") continue; // sync reads it itself
-    if (source.type === "installer" && source.unattended === undefined && !flags.interactive) {
-      io.print(`${sid}  skipped: its installer only runs with you at the terminal; skl update ${sid} -i`);
-      continue;
-    }
-    const interactive = source.type === "installer" && flags.interactive;
-    try {
-      fetched.set(sid, fetch(sid, source, { staging: path.join(paths.sklDir, "fetch", sid), interactive, home: paths.home, sklDir: paths.sklDir }));
-    } catch (e) {
-      failed++;
-      io.print(`${sid}  failed: ${(e as Error).message.split("\n")[0]}`);
-    }
-  }
-  const updating = sources.filter((sid) => fetched.has(sid) || manifest.sources[sid].type === "local");
+  const { fetched, failed, updating } = fetchSources(paths, manifest, sources, flags.interactive, io.print, fetch);
 
   if (flags.pick) {
     if (!io.canAsk) throw new Error("--pick asks which skills to keep; run it at a terminal");
