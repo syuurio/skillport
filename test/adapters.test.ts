@@ -52,7 +52,7 @@ function sandbox() {
 
 test("the installer adapter takes only .claude/skills from a fake HOME", () => {
   const { home, source, staging } = sandbox();
-  const fetched = fetchInstaller("vend" as SourceId, source, { staging, interactive: false, home, secret: TOKEN });
+  const fetched = fetchInstaller("vend" as SourceId, source, { staging, interactive: false, home, sklDir: path.join(home, "skl"), secret: TOKEN });
   assert.deepEqual(fetched.skills.map((s) => s.original), ["alpha", "beta"]);
   assert.ok(fetched.skills.every((s) => s.dir.startsWith(path.join(staging, "home", ".claude", "skills"))));
   assert.ok(fs.existsSync(path.join(staging, "home", "skl-adapter-marker")), "HOME was the fake one");
@@ -63,7 +63,7 @@ test("an installer's output is redacted when it fails", () => {
   const { home, source, staging } = sandbox();
   fakeInstaller(home, 3);
   assert.throws(
-    () => fetchInstaller("vend" as SourceId, source, { staging, interactive: false, home, secret: TOKEN }),
+    () => fetchInstaller("vend" as SourceId, source, { staging, interactive: false, home, sklDir: path.join(home, "skl"), secret: TOKEN }),
     (e: Error) => /exited 3/.test(e.message) && e.message.includes("token=***") && !e.message.includes(TOKEN),
   );
 });
@@ -102,7 +102,7 @@ test("fetched installer skills are stored, rendered and linked by sync", () => {
   const { home, source, staging } = sandbox();
   const paths = withLinkTargets(defaultPaths(home), {});
   const manifest = parseManifest({ version: 2, sources: { vend: source } }, "manifest.json");
-  const fetched = fetchInstaller("vend" as SourceId, source, { staging, interactive: false, home, secret: TOKEN });
+  const fetched = fetchInstaller("vend" as SourceId, source, { staging, interactive: false, home, sklDir: path.join(home, "skl"), secret: TOKEN });
   const lines = sync(paths, manifest, readLock(paths.lockFile), { fetched: new Map([["vend" as SourceId, fetched]]) });
   assert.deepEqual(lines.filter((l) => !l.startsWith(" ")), ["vend/alpha -> vend-alpha", "vend/beta -> vend-beta"]);
   assert.match(fs.readFileSync(path.join(paths.skillsDir, "vend-alpha", "SKILL.md"), "utf8"), /`vend-beta` skill/);
@@ -117,7 +117,7 @@ test("a skill a vendor adds later is offered once, not installed, unless picked"
   const paths = withLinkTargets(defaultPaths(home), {});
   const manifest = (pick?: string[]) => parseManifest({ version: 2, sources: { vend: { ...source, ...(pick ? { pick } : {}) } } }, "manifest.json");
   const fetchAndSync = (m = manifest()) => {
-    const fetched = fetchInstaller("vend" as SourceId, source, { staging, interactive: false, home, secret: TOKEN });
+    const fetched = fetchInstaller("vend" as SourceId, source, { staging, interactive: false, home, sklDir: path.join(home, "skl"), secret: TOKEN });
     return sync(paths, m, readLock(paths.lockFile), { fetched: new Map([["vend" as SourceId, fetched]]) });
   };
   fetchAndSync();
@@ -129,3 +129,16 @@ test("a skill a vendor adds later is offered once, not installed, unless picked"
 });
 
 const ls = (dir: string) => fs.readdirSync(dir).sort();
+
+test("the shadow HOME environment leaves out every variable that would point npx skills at real folders", async () => {
+  const { sandboxEnv } = await import("../src/acquire.ts");
+  const saved = { ...process.env };
+  Object.assign(process.env, { XDG_STATE_HOME: "/real/state", CLAUDE_CONFIG_DIR: "/real/claude", CODEX_HOME: "/real/codex", GITHUB_TOKEN: "ghp_x" });
+  try {
+    const env = sandboxEnv("/shadow", "/staging");
+    assert.equal(env.HOME, "/shadow");
+    for (const name of ["XDG_STATE_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "GITHUB_TOKEN"]) assert.equal(env[name], undefined, name);
+  } finally {
+    process.env = saved;
+  }
+});

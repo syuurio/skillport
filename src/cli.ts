@@ -59,7 +59,7 @@ const USAGE = `skillport — one place for skills that vendor installers scatter
   skl secret <set>                 Store a set's token in Keychain
   skl sync [--discard-edits]       v2: make ~/.agents/skills match the manifest and lock (offline)
                                    skills you changed in place are kept unless --discard-edits
-  skl add <id> (--installer "<command>" [--unattended "<args>"] | --npm <pkg@ver> --path <dir> | --local <dir>)
+  skl add <id> (--github <owner/repo> | --installer "<command>" [--unattended "<args>"] | --npm <pkg@ver> --path <dir> | --local <dir>)
            [--prefix <p> | --no-prefix] [-y]   v2: add a source and install its skills
 
 Flags: --dry-run prints the plan only.  -y skips confirmations.
@@ -133,7 +133,7 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-const V2_KINDS: AddKind[] = ["installer", "npm", "local"];
+const V2_KINDS: AddKind[] = ["github", "installer", "npm", "local"];
 
 /** The word after `flag`, which may itself start with "-" (e.g. --unattended "-y"). */
 function option(rest: string[], flag: string): string | undefined {
@@ -162,7 +162,7 @@ async function addCmd(base: Paths, rest: string[]): Promise<number> {
   const paths = withLinkTargets(base, manifest, base.manifest);
   cleanups.add(acquireLock(paths.sklDir));
   // A flag's value is not a flag: --unattended "-y" does not mean -y.
-  const valueFlags = ["--installer", "--npm", "--local", "--path", "--unattended", "--prefix"];
+  const valueFlags = ["--github", "--installer", "--npm", "--local", "--path", "--unattended", "--prefix"];
   const own = rest.filter((w, i) => !valueFlags.includes(rest[i - 1]));
   const yes = own.includes("-y") || own.includes("--yes");
   const lines = await addSource(paths, manifest, readLock(paths.lockFile), id, source, { yes, token });

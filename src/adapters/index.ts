@@ -3,6 +3,7 @@ import path from "node:path";
 import { listSkillDirs } from "../acquire.ts";
 import type { SkillName, Source, SourceId } from "../manifest.ts";
 import { isValidSkillName, readFrontmatterName } from "../transform.ts";
+import { fetchGithub } from "./github.ts";
 import { fetchInstaller } from "./installer.ts";
 import { fetchLocal } from "./local.ts";
 import { fetchNpm } from "./npm.ts";
@@ -22,6 +23,8 @@ export interface FetchOptions {
   /** Hand the terminal to an installer so you answer its questions. */
   interactive: boolean;
   home: string;
+  /** ~/.agents/.skl, where github sources keep their shadow HOME. */
+  sklDir: string;
   /** The token for `{secret}`; read from Keychain when omitted. */
   secret?: string;
 }
@@ -35,7 +38,7 @@ export function fetchSource(id: SourceId, source: Source, opts: FetchOptions): F
     case "npm":
       return fetchNpm(source, opts);
     case "github":
-      throw new Error(`sources.${id}: github sources arrive in a later phase`);
+      return fetchGithub(id, source, opts);
   }
 }
 

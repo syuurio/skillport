@@ -193,7 +193,7 @@ export function sync(paths: Paths, manifest: Manifest, lock: Lock, opts: SyncOpt
     }
     const relinked = !linksMatch(paths, r.name, r.dirs);
     link(paths, r.name, r.dirs);
-    if (written || relinked) lines.push(`${r.id} -> ${r.name}`, ...(written ? r.rewrites.map(describe) : []));
+    if (written || relinked) lines.push(`${r.id} -> ${r.name}`, ...(written ? describe(r.rewrites) : []));
     const prev = lock.skills[r.id];
     lock.skills[r.id] = { name: r.name, base: r.base, output: r.output, updatedAt: written || !prev ? now : prev.updatedAt };
   }
@@ -202,4 +202,12 @@ export function sync(paths: Paths, manifest: Manifest, lock: Lock, opts: SyncOpt
   return [...lines, ...offered];
 }
 
-const describe = (r: Rewrite) => `  ${r.file}:${r.change.line}: \`${r.change.from}\` -> \`${r.change.to}\``;
+/** One line per rewritten reference; repeats on the same line are counted, not listed. */
+function describe(rewrites: Rewrite[]): string[] {
+  const counts = new Map<string, number>();
+  for (const r of rewrites) {
+    const line = `  ${r.file}:${r.change.line}: \`${r.change.from}\` -> \`${r.change.to}\``;
+    counts.set(line, (counts.get(line) ?? 0) + 1);
+  }
+  return [...counts].map(([line, n]) => (n > 1 ? `${line} (×${n})` : line));
+}

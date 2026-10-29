@@ -13,11 +13,11 @@ import { extractSecret, usesSecret } from "./validate.ts";
 // `skl add`: one new source, from flags to installed skills. The manifest is
 // written last, so a failed fetch or a collision leaves it as it was.
 
-export type AddKind = "installer" | "npm" | "local";
+export type AddKind = "github" | "installer" | "npm" | "local";
 
 export interface AddFlags {
   kind: AddKind;
-  /** The command line, package spec or folder. */
+  /** The repo, command line, package spec or folder. */
   value: string;
   /** npm: the skill folder inside the package. */
   path?: string;
@@ -33,6 +33,8 @@ export interface AddFlags {
 export function buildSource(flags: AddFlags, cwd = process.cwd()): { source: Source; token?: string } {
   const prefix = flags.prefix === undefined ? {} : { prefix: flags.prefix };
   switch (flags.kind) {
+    case "github":
+      return { source: { type: "github", repo: flags.value, ...prefix } };
     case "npm":
       return { source: { type: "npm", package: flags.value, path: flags.path ?? "", ...prefix } };
     case "local":
@@ -72,7 +74,7 @@ export async function addSource(paths: Paths, manifest: Manifest, lock: Lock, id
 
   const staging = path.join(paths.sklDir, "fetch", id);
   try {
-    const fetched = fetchSource(sid, entry, { staging, interactive, home: paths.home });
+    const fetched = fetchSource(sid, entry, { staging, interactive, home: paths.home, sklDir: paths.sklDir });
     if (!fetched.skills.length) throw new Error(`sources.${id} has no skills (no folder with a SKILL.md)`);
     const all = fetched.skills.map((s) => s.original);
     const picked = opts.yes || !isInteractive() ? all : await pick(id, all);
