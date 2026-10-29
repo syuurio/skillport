@@ -126,3 +126,21 @@ test("a skill you changed in place is kept, reported, and replaced only with dis
   assert.deepEqual(ls(paths.skillsDir), ["f-alpha", "f-beta"]);
   assert.ok(trashed().includes("fx-alpha"));
 });
+
+test("a new skill whose name is taken is held back alone; the rest still syncs", () => {
+  const { src, paths, run } = sandbox();
+  run();
+  fs.mkdirSync(path.join(src, "gamma"));
+  fs.writeFileSync(path.join(src, "gamma", "SKILL.md"), "---\nname: gamma\ndescription: g\n---\nG.\n");
+  fs.appendFileSync(path.join(src, "alpha", "SKILL.md"), "\nUpstream.\n");
+  fs.mkdirSync(path.join(paths.skillsDir, "fx-gamma"));
+  fs.writeFileSync(path.join(paths.skillsDir, "fx-gamma", "SKILL.md"), "not skl's\n");
+  const out = run();
+  assert.match(out.join("\n"), /^blocked fx\/gamma would install as "fx-gamma", which is taken by a folder/);
+  assert.ok(out.includes("fx/alpha -> fx-alpha"));
+  assert.match(fs.readFileSync(path.join(paths.skillsDir, "fx-alpha", "SKILL.md"), "utf8"), /Upstream\./);
+  assert.equal(fs.readFileSync(path.join(paths.skillsDir, "fx-gamma", "SKILL.md"), "utf8"), "not skl's\n");
+  // Not installed, so not seen: it is reported again until the name is fixed.
+  assert.ok(!readLock(paths.lockFile).sources["fx" as SourceId].seen.includes("gamma"));
+  assert.match(run().join("\n"), /^blocked fx\/gamma/);
+});

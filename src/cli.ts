@@ -69,6 +69,7 @@ const USAGE = `skillport — one place for skills that vendor installers scatter
   skl add <id> (--github <owner/repo> | --installer "<command>" [--unattended "<args>"] | --npm <pkg@ver> --path <dir> | --local <dir>)
            [--prefix <p> | --no-prefix] [-y]   v2: add a source and install its skills
   skl adopt <owner/repo> [--as <id>] [-y]   v2: take over skills you installed with npx skills
+  skl                              v2: the TUI on a terminal, the status table otherwise
   skl which <name>                 v2: the source, original name and version of an installed skill
   skl diff <source>[/<skill>] [-i]  v2: what the next update would change, rewrites and patches included
   skl remove <source> [-y] [--discard-edits]   v2: remove a source's skills (to trash) and the source
@@ -100,6 +101,13 @@ async function main(argv: string[]): Promise<number> {
   // takes the lock; status, plain doctor and help do not.
   const writes = ["add", "update", "check", "diff", "remove", "adopt", "register", "resolve", "namespace", "bump", "secret"];
   if (writes.includes(cmd) || (cmd === "doctor" && rest.includes("--fix"))) cleanups.add(acquireLock(paths.stateDir));
+  if (!cmd && fs.existsSync(base.manifest)) {
+    if (!isInteractive()) return statusV2(base);
+    // Loaded on demand: React and Ink cost every other command startup time.
+    const { runTui } = await import("./tui/app.ts");
+    await runTui(base);
+    return 0;
+  }
   switch (cmd) {
     case "sync":
       return syncCmd(base, rest.includes("--discard-edits"));

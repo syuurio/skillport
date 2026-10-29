@@ -32,6 +32,7 @@ function fakeNet(head: string | null, skills: Record<string, string> | null = nu
     headCommit: () => (calls.head++, head),
     tree: () => (calls.tree++, skills ? tree(skills, extra) : null),
     latestVersion: () => (calls.npm++, latest),
+    hasToken: () => true,
   };
   return { net, calls };
 }
@@ -160,4 +161,18 @@ test("a local source reports a changed skill and an edited one", () => {
   assert.equal(s.sources["fx" as SourceId].state, "updates");
   assert.deepEqual((s.sources["fx" as SourceId] as { changed: string[] }).changed, ["alpha"]);
   assert.deepEqual(s.skills, { ["fx/beta" as SkillId]: { edited: true } });
+});
+
+test("a local skill held back for its name stays blocked after another sync", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "skl-check-held-"));
+  const src = path.join(home, "src");
+  fs.cpSync(path.join(import.meta.dirname, "fixtures", "v2", "local"), src, { recursive: true });
+  const paths = withLinkTargets(defaultPaths(home), {});
+  const manifest = parseManifest({ version: 2, sources: { fx: { type: "local", path: src } } }, "manifest.json");
+  sync(paths, manifest, readLock(paths.lockFile));
+  fs.mkdirSync(path.join(src, "gamma"));
+  fs.writeFileSync(path.join(src, "gamma", "SKILL.md"), "---\nname: gamma\ndescription: g\n---\n");
+  fs.mkdirSync(path.join(paths.skillsDir, "fx-gamma"));
+  sync(paths, manifest, readLock(paths.lockFile));
+  assert.equal(check(paths, manifest, readLock(paths.lockFile), null, [], fakeNet(null).net, NOW).sources["fx" as SourceId].state, "blocked");
 });

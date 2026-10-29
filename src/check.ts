@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { latestVersion, sandboxEnv } from "./acquire.ts";
+import { hasSecret } from "./keychain.ts";
 import { fetchLocal } from "./adapters/local.ts";
 import { copySkips, headCommit } from "./adapters/github.ts";
 import { describeExternal, externalSkills } from "./external.ts";
@@ -27,6 +28,8 @@ export interface Net {
   tree(repo: string, commit: string): TreeEntry[] | null;
   /** The latest published version, or null without an answer. */
   latestVersion(name: string): string | null;
+  /** Whether Keychain holds the source's token. Not the network, but outside skl all the same. */
+  hasToken(source: string): boolean;
 }
 
 export function realNet(staging: string): Net {
@@ -54,6 +57,7 @@ export function realNet(staging: string): Net {
       }
     },
     latestVersion: (name) => latestVersion(name, staging),
+    hasToken: (source) => hasSecret(source),
   };
 }
 
@@ -117,8 +121,9 @@ function checkVersion(spec: string | undefined, net: Net, now: string): SourceSt
 }
 
 function checkLocal(paths: Paths, sid: SourceId, source: Extract<Source, { type: "local" }>, lock: Lock, now: string): SourceStatus {
+  // No shortcut on an unchanged folder: a new skill held back for its name
+  // leaves the folder recorded but the skill missing.
   const fetched = fetchLocal(source, paths.home);
-  if (fetched.resolved === lock.sources[sid]?.resolved) return { checkedAt: now, state: "up-to-date" };
   const here = new Map(fetched.skills.map((s) => [s.original as string, s.dir]));
   const installed = installedOf(lock, sid);
   const seen = new Set(lock.sources[sid]?.seen ?? []);
@@ -145,6 +150,8 @@ export function checkSource(paths: Paths, sid: SourceId, source: Source, lock: L
       case "npm":
         return checkVersion(source.package, net, now);
       case "installer":
+        // Without its token the installer cannot run, so that comes first.
+        if (source.secret === "keychain" && !net.hasToken(sid)) return { checkedAt: now, state: "needs-token" };
         return checkVersion(source.command.find(isPinnedSpec), net, now);
       case "local":
         return checkLocal(paths, sid, source, lock, now);

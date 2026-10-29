@@ -359,34 +359,34 @@ A phase is verified only when its unit and live boxes are all checked. Tests alo
 
 **Files.**
 
-- [ ] Edit `package.json` to add Ink and React at the versions Context7 confirms.
-- [ ] Create `src/tui/app.ts` and the panels it needs.
-- [ ] Edit `src/cli.ts` so `skl` with no arguments opens the TUI on a TTY and prints the status table otherwise.
+- [x] Edit `package.json` to add Ink and React at the versions Context7 confirms.
+- [x] Create `src/tui/app.ts` and the panels it needs.
+- [x] Edit `src/cli.ts` so `skl` with no arguments opens the TUI on a TTY and prints the status table otherwise.
 
 **Build.**
 
-- [ ] Check Ink's current version and API with Context7 before writing code.
-- [ ] Write the components with `React.createElement`, not JSX, because Node runs `.ts` files directly but refuses `.tsx` (verified on Node 26.13.0).
-- [ ] The TUI reads `status.json` and calls the same check, plan and update functions as the CLI. Keys are `u`, `U`, `d`, `o`, `space`, `r` and `q`, all labels in English.
-- [ ] `u` on a blocked source shows the collision, on a source with a bad token sets the token, and an interactive installer gets the terminal while the TUI pauses.
+- [x] Check Ink's current version and API with Context7 before writing code.
+- [x] Write the components with `React.createElement`, not JSX, because Node runs `.ts` files directly but refuses `.tsx` (verified on Node 26.13.0).
+- [x] The TUI reads `status.json` and calls the same check, plan and update functions as the CLI. Keys are `u`, `U`, `d`, `o`, `space`, `r` and `q`, all labels in English.
+- [x] `u` on a blocked source shows the collision, on a source with a bad token sets the token, and an interactive installer gets the terminal while the TUI pauses.
 
 **You see.**
 
-- [ ] The source list with the detail panel as drawn in LAB-22, and an update that ends with the source marked up to date.
+- [x] The source list with the detail panel as drawn in LAB-22, and an update that ends with the source marked up to date.
 
 **Verify, unit.**
 
-- [ ] Test the pure parts (rows built from `status.json`, key to action) in `test/tui.test.ts`. Run `npm test`.
+- [x] Test the pure parts (rows built from `status.json`, key to action) in `test/tui.test.ts`. Run `npm test`.
 
 **Verify, live.**
 
-- [ ] In the sandbox, set up four sources (updates, up to date, blocked, bad token), open `skl`, and save a screenshot of each state to the scratchpad.
-- [ ] Press `u` on the source with updates. Save screenshots of the plan and the result. The lock matches what `skl update <source>` produces.
-- [ ] Run `skl | cat` and paste the table.
+- [x] In the sandbox, set up four sources (updates, up to date, blocked, bad token), open `skl`, and save a screenshot of each state to the scratchpad.
+- [x] Press `u` on the source with updates. Save screenshots of the plan and the result. The lock matches what `skl update <source>` produces.
+- [x] Run `skl | cat` and paste the table.
 
 **Done.**
 
-- [ ] Commit `feat(tui): add the status and update TUI` and close LAB-22.
+- [x] Commit `feat(tui): add the status and update TUI` and close LAB-22.
 
 ## Migrate from v1 and delete it (P11, LAB-23)
 
@@ -436,7 +436,7 @@ A phase is verified only when its unit and live boxes are all checked. Tests alo
 - `git/trees/59db609...?recursive=1` returned `skills/engineering/tdd` with sha `667dbdd00c09d0e2189e082986e6a4d61a67c2a6`, equal to the lock's `skillFolderHash`. The response was not truncated.
 - `npx skills@1.7.0` updates by running `add <source> --skill <lock key>`, and the installed folder name comes from the frontmatter, read in `dist/cli.mjs`. So a renamed skill cannot stay under the real `npx skills`.
 - Node 26.13.0 refuses a `.tsx` file, so the TUI uses `React.createElement`.
-- Unproven. Whether Ink renders and handles input correctly when the TUI hands the terminal to an interactive installer and takes it back. P10 proves it.
+- Ink 8.0.0's `useApp().suspendTerminal()` hands the terminal to an interactive installer and repaints after. P10 drove it in a pseudo-terminal: the installer's prompt read the answer from `/dev/tty`, and the TUI came back with the plan. The emulator used (pyte) has no alternate screen, so a real terminal still needs a look.
 
 ## Appendix B. Alternatives rejected
 

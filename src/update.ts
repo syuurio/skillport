@@ -25,7 +25,8 @@ export interface UpdateFlags {
 export interface UpdateIO {
   canAsk: boolean;
   confirm(question: string): Promise<boolean>;
-  chooseMany(question: string, options: string[], initial: string[]): Promise<string[]>;
+  /** `source` says whose new skills these are, for a prompt that remembers picks per source. */
+  chooseMany(question: string, options: string[], initial: string[], source?: SourceId): Promise<string[]>;
   print(line: string): void;
 }
 
@@ -43,7 +44,7 @@ function planLines(sources: SourceId[], lock: Lock, fetched: Map<SourceId, Fetch
   const lines: string[] = [];
   const of = (sid: SourceId) => changes.filter((c) => splitSkillId(c.id).source === sid);
   for (const sid of sources) {
-    const mine = of(sid).filter((c) => c.kind !== "edited" && c.kind !== "conflict");
+    const mine = of(sid).filter((c) => c.kind !== "edited" && c.kind !== "conflict" && c.kind !== "blocked");
     if (!mine.length) continue;
     lines.push(header(sid, lock, fetched.get(sid)));
     for (const c of mine) {
@@ -55,12 +56,17 @@ function planLines(sources: SourceId[], lock: Lock, fetched: Map<SourceId, Fetch
     if (fresh.length) lines.push(`  new       ${fresh.join(", ")}`);
   }
   const held = changes.filter(
-    (c): c is Extract<SyncChange, { kind: "edited" | "conflict" }> => (c.kind === "edited" || c.kind === "conflict") && sources.includes(splitSkillId(c.id).source),
+    (c): c is Extract<SyncChange, { kind: "edited" | "conflict" | "blocked" }> =>
+      (c.kind === "edited" || c.kind === "conflict" || c.kind === "blocked") && sources.includes(splitSkillId(c.id).source),
   );
   if (held.length) {
     lines.push("", "Held back (not applied):");
     for (const c of held) {
       const { source, original } = splitSkillId(c.id);
+      if (c.kind === "blocked") {
+        lines.push(`  blocked   ${c.name.padEnd(18)} its name is taken`, ...c.reason.split("\n").slice(1).map((l) => `            ${l.trim()}`));
+        continue;
+      }
       if (c.kind === "conflict") {
         lines.push(
           `  conflict  ${c.name.padEnd(18)} ${c.reason}${c.files.length ? `: ${c.files.join(", ")}` : ""}`,
@@ -139,7 +145,7 @@ export async function update(
   const work = planned.filter((c) => c.kind === "install" || c.kind === "relink" || c.kind === "remove");
   const offered = planned.filter((c) => c.kind === "offered").map((c) => c.id);
   if (!work.length && !offered.length) {
-    const held = planned.some((c) => c.kind === "edited" || c.kind === "conflict");
+    const held = planned.some((c) => c.kind === "edited" || c.kind === "conflict" || c.kind === "blocked");
     io.print([...lines, ...(lines.length ? [""] : []), held ? "nothing else to apply" : "up to date"].join("\n").trimStart());
     // Nothing to install, but a conflict still needs its merge folder.
     if (!flags.dryRun && planned.some((c) => c.kind === "conflict")) sync(paths, next, lock, opts);
@@ -158,7 +164,7 @@ export async function update(
     for (const sid of updating) {
       const fresh = offered.filter((id) => splitSkillId(id).source === sid).map((id) => splitSkillId(id).original as string);
       if (!fresh.length) continue;
-      for (const o of await io.chooseMany(`New skills in ${sid}. Install any?`, fresh, [])) {
+      for (const o of await io.chooseMany(`New skills in ${sid}. Install any?`, fresh, [], sid)) {
         accept.add(`${sid}/${o}` as SkillId);
         const source = next.sources[sid];
         if (source.pick) source.pick = [...source.pick, o];
@@ -177,7 +183,7 @@ export async function update(
 
   const applied = sync(paths, next, lock, { ...opts, accept, offeredNow: asking }).filter((c) => updating.includes(splitSkillId(c.id).source));
   if (JSON.stringify(next) !== JSON.stringify(manifest)) writeManifest(paths.manifest, next);
-  const shown = describeSync(applied.filter((c) => c.kind !== "edited" && c.kind !== "conflict" && c.kind !== "offered"));
+  const shown = describeSync(applied.filter((c) => c.kind === "install" || c.kind === "relink" || c.kind === "remove"));
   if (shown.length) io.print(["", ...shown].join("\n"));
 
   // What check said is now stale for the sources just updated.

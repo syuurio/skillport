@@ -16,6 +16,7 @@ export type SourceStatus = { checkedAt: string } & (
   | { state: "unknown"; reason: string }
   | { state: "error"; reason: string }
   | { state: "blocked"; collisions: { name: string; with: string }[] }
+  | { state: "needs-token" }
 );
 
 export interface SkillFlags {
@@ -63,6 +64,8 @@ export function describeState(s: SourceStatus, type: string): string {
       return s.reason;
     case "blocked":
       return `blocked: ${s.collisions.length === 1 ? "name collision" : `${s.collisions.length} name collisions`}`;
+    case "needs-token":
+      return "token missing: skl secret";
   }
 }
 

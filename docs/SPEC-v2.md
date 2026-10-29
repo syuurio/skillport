@@ -434,6 +434,7 @@ Apply? (y/N)
 
 - `new`：vendor 來源上游新增、還沒看過的 skill。在終端機上直接勾選要不要裝；沒勾的記進 lock 的 `seen`，之後不再詢問，想裝時用 `skl update <source> --pick` 重新挑。沒有終端機或加 `-y` 時只列出，不安裝也不記成看過。`local` 來源的新 skill 不經詢問，直接列在 `new` 並安裝（§5.1）。
 - `conflict` 與 `edited` 一律只列在 Held back：輸出維持現狀，同一來源的其他 skill 照常更新。
+- `blocked`：已安裝來源的新 skill，安裝名稱被外部 skill、無主資料夾或 target 裡的東西占用。只有它不安裝、不記成看過，其他來源與 skill 照常更新；`skl check` 會持續把來源標成 blocked，直到你改 prefix 或 rename。新加入的來源（`skl add`）則整個來源一起成功或失敗。
 - `Apply?` 只涵蓋第一段與勾選的新 skill。
 
 ## 12. TUI
@@ -451,7 +452,8 @@ Apply? (y/N)
 
 | 按鍵 | 動作 |
 |---|---|
-| `↑` `↓` | 選擇來源 |
+| `↑` `↓` | 選擇來源；右側有焦點時選擇 skill |
+| `←` `→` | 在來源與 skill 兩側之間切換 |
 | `u` | 右側換成這個來源的更新計畫，`y` 套用、`Esc` 返回 |
 | `U` | 所有來源的計畫一起列出、確認一次；只能互動執行的 installer 跳過並標出 |
 | `d` | 顯示選中 skill 的 diff |
@@ -461,8 +463,9 @@ Apply? (y/N)
 | `q` | 離開 |
 
 - `blocked` 的來源按 `u` 只顯示撞名細節與要改的 manifest 欄位。
-- token 失效的來源按 `u` 改成輸入 token。
-- 只能互動執行的 installer：TUI 暫停，把終端機交給 installer，結束後回來。
+- 缺 token 的來源（`skl check` 回報 `token missing`：installer 用了 `{secret}`，Keychain 裡卻沒有）按 `u` 改成輸入 token，畫面只顯示 `•`，存進 Keychain 後重新檢查。
+- 只能互動執行的 installer：TUI 暫停，把終端機交給 installer（Ink 的 `suspendTerminal`），結束後回來顯示計畫。
+- `skl` 不在終端機上執行時（例如 `skl | cat`）只印 `skl status` 的表格。
 - TUI 呼叫的 check、plan、update 和 CLI 是同一套，沒有自己的更新邏輯。
 
 ## 13. 安全與可還原性

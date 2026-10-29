@@ -72,7 +72,8 @@ export type SyncChange =
   | { kind: "remove"; id: SkillId; name: string }
   | { kind: "edited"; id: SkillId; name: string }
   | { kind: "conflict"; id: SkillId; name: string; reason: string; files: string[]; dir: string }
-  | { kind: "offered"; id: SkillId };
+  | { kind: "offered"; id: SkillId }
+  | { kind: "blocked"; id: SkillId; name: string; reason: string };
 
 /**
  * Vendor sources sync cannot install: nothing fetched yet (a new machine
@@ -96,6 +97,8 @@ export function describeSync(changes: SyncChange[]): string[] {
         return [`edited ${c.name} (${c.id}) was changed in place; kept as is`, "  to replace it with skl's version: skl sync --discard-edits"];
       case "conflict":
         return [`conflict ${c.name} (${c.id}): ${c.reason}; held back`, `  resolve in ${home(c.dir)}, then: skl edit ${c.id}`];
+      case "blocked":
+        return [`blocked ${c.reason}`];
       case "offered":
         return [`new ${c.id} (not installed; skl update ${splitSkillId(c.id).source} --pick)`];
     }
@@ -181,22 +184,32 @@ function fixFor(w: Want): string {
 /**
  * Every installed name against everything skl does not own, before the first
  * move: external skills, folders and links in targets, and skills you edited.
+ * A new skill of a source already installed is only held back, so one new
+ * upstream skill cannot stop every other update; returns those with the
+ * reason. Anything else stops all: a clash for an installed skill comes from
+ * a manifest change you made, and a source you are adding installs whole.
  */
-function recheck(paths: Paths, lock: Lock, wants: Want[], held: Map<SkillId, SkillLock>): void {
+function recheck(paths: Paths, lock: Lock, wants: Want[], held: Map<SkillId, SkillLock>, established: ReadonlySet<string>): Map<SkillId, string> {
   const external = externalSkills(paths, lock);
   const kept = new Map([...held].map(([id, s]) => [s.name, id]));
   const problems: string[] = [];
+  const blocked = new Map<SkillId, string>();
   for (const w of wants) {
+    const mine: string[] = [];
     const taken = external.get(w.name);
-    if (taken) problems.push(`${w.id} would install as "${w.name}", which is taken by ${describeExternal(taken)}.\n    Fix: ${fixFor(w)}`);
-    if (kept.has(w.name)) problems.push(`${w.id} would replace ${w.name}, which you edited (${kept.get(w.name)}).\n    Fix: ${fixFor(w)}`);
+    if (taken) mine.push(`${w.id} would install as "${w.name}", which is taken by ${describeExternal(taken)}.\n    Fix: ${fixFor(w)}`);
+    if (kept.has(w.name)) mine.push(`${w.id} would replace ${w.name}, which you edited (${kept.get(w.name)}).\n    Fix: ${fixFor(w)}`);
     for (const dir of w.dirs) {
       if (foreignInTarget(paths, dir, w.name)) {
-        problems.push(`${w.id} would link ${path.join(dir, w.name)}, which skl did not create.\n    Fix: move it away, or ${fixFor(w)}`);
+        mine.push(`${w.id} would link ${path.join(dir, w.name)}, which skl did not create.\n    Fix: move it away, or ${fixFor(w)}`);
       }
     }
+    if (!mine.length) continue;
+    if (lock.skills[w.id] || !established.has(w.source)) problems.push(...mine);
+    else blocked.set(w.id, mine.join("\n  "));
   }
   if (problems.length) throw new Error(`Nothing was changed:\n  ${problems.join("\n  ")}`);
+  return blocked;
 }
 
 /** The folder to render: the vendor's, or with your patch applied (merged first when upstream moved). */
@@ -256,6 +269,7 @@ export function sync(paths: Paths, manifest: Manifest, given: Lock, opts: SyncOp
   const dry = Boolean(opts.dryRun);
   const lock = dry ? structuredClone(given) : given;
   const before = JSON.stringify(lock);
+  const established = new Set(Object.keys(lock.sources));
   const { wants: all, offered } = wanted(paths, manifest, lock, now, opts);
   // A skill you changed in place stays as it is until you say otherwise.
   const held = opts.discardEdits ? new Map<SkillId, SkillLock>() : editedInPlace(paths, lock);
@@ -278,8 +292,14 @@ export function sync(paths: Paths, manifest: Manifest, given: Lock, opts: SyncOp
     if (entry) held.set(w.id, entry);
     conflicts.push({ kind: "conflict", id: w.id, name: entry?.name ?? w.name, reason: p.reason, files: p.files, dir: mergeDir(paths, w.source, w.original) });
   }
-  const wants = all.filter((w) => prepared.has(w.id));
-  recheck(paths, lock, wants, held);
+  const blocked = recheck(paths, lock, all.filter((w) => prepared.has(w.id)), held, established);
+  const wants = all.filter((w) => prepared.has(w.id) && !blocked.has(w.id));
+  // A blocked skill was not installed, so it is not seen yet: it shows up again until you fix the name.
+  for (const id of blocked.keys()) {
+    const { source, original } = splitSkillId(id);
+    const entry = lock.sources[source];
+    if (entry) entry.seen = entry.seen.filter((o) => o !== original);
+  }
   const renames = new Map<SourceId, Map<string, string>>();
   const installedAs = [
     ...wants.map((w) => [w.id, w.name] as const),
@@ -309,6 +329,7 @@ export function sync(paths: Paths, manifest: Manifest, given: Lock, opts: SyncOp
   const wasAt = new Map((Object.entries(lock.skills) as [SkillId, SkillLock][]).map(([id, s]) => [id, s.name]));
   for (const [id, entry] of edited) changes.push({ kind: "edited", id, name: entry.name });
   changes.push(...conflicts);
+  for (const [id, reason] of blocked) changes.push({ kind: "blocked", id, name: (all.find((w) => w.id === id) as Want).name, reason });
   for (const [id, entry] of Object.entries(lock.skills) as [SkillId, SkillLock][]) {
     if (keep.get(id) === entry.name || held.has(id)) continue;
     if (!dry) {
