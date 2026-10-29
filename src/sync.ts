@@ -3,6 +3,7 @@ import path from "node:path";
 import type { Fetched } from "./adapters/index.ts";
 import { fetchLocal } from "./adapters/local.ts";
 import { isOursOrFree, link, moveToTrash, trashDir, unlink } from "./apply.ts";
+import { describeExternal, externalSkills, foreignInTarget } from "./external.ts";
 import { type Lock, type SkillLock, writeLock } from "./lock.ts";
 import { type Manifest, type SkillId, type SkillName, type Source, type SourceId, installedName, skillId, splitSkillId } from "./manifest.ts";
 import { DEFAULT_LINKS, type Paths } from "./registry.ts";
@@ -28,7 +29,8 @@ interface Want {
 const selected = (source: Source, original: string) =>
   (!source.pick || source.pick.includes(original)) && !source.exclude?.includes(original);
 
-function linkDirs(paths: Paths, manifest: Manifest, source: Source): string[] {
+/** The link target folders a source's skills go into. */
+export function linkDirs(paths: Paths, manifest: Manifest, source: Source): string[] {
   return (source.links ?? manifest.targets ?? DEFAULT_LINKS).map((id) => {
     const dir = paths.linkTargets[id];
     if (!dir) throw new Error(`Unknown link target "${id}". Known: ${Object.keys(paths.linkTargets).join(", ")}`);
@@ -102,29 +104,38 @@ function wanted(paths: Paths, manifest: Manifest, lock: Lock, now: string, fetch
       else add(original, entry.base);
     }
   }
-  const byName = new Map<string, SkillId>();
+  const byName = new Map<string, Want>();
   for (const w of wants) {
-    if (!isValidSkillName(w.name)) problems.push(`${w.id}: "${w.name}" is not a valid skill name`);
+    if (!isValidSkillName(w.name)) problems.push(`${w.id} would install as "${w.name}", which is not a valid skill name (a-z, 0-9, single hyphens, at most 64).\n    Fix: ${fixFor(w)}`);
     const other = byName.get(w.name);
-    if (other) problems.push(`${other} and ${w.id} would both be installed as "${w.name}"`);
-    byName.set(w.name, w.id);
+    if (other) problems.push(`${other.id} and ${w.id} would both install as "${w.name}".\n    Fix: ${fixFor(w)}`);
+    byName.set(w.name, w);
   }
   if (problems.length) throw new Error(`Nothing was changed:\n  ${problems.join("\n  ")}`);
   return { wants, offered };
 }
 
-/** Refuse to replace anything skl did not create, or that you edited, before the first move. */
+/** The manifest line that would avoid a name clash for `w`. */
+function fixFor(w: Want): string {
+  return `set sources.${w.source}.prefix, or add sources.${w.source}.rename.${w.original}.`;
+}
+
+/**
+ * Every installed name against everything skl does not own, before the first
+ * move: external skills, folders and links in targets, and skills you edited.
+ */
 function recheck(paths: Paths, lock: Lock, wants: Want[], held: Map<SkillId, SkillLock>): void {
-  const owned = new Set(Object.values(lock.skills).map((s) => s.name));
+  const external = externalSkills(paths, lock);
   const kept = new Map([...held].map(([id, s]) => [s.name, id]));
   const problems: string[] = [];
   for (const w of wants) {
-    const dest = path.join(paths.skillsDir, w.name);
-    if (fs.lstatSync(dest, { throwIfNoEntry: false }) && !owned.has(w.name)) problems.push(`${dest} exists and was not installed by skl`);
-    if (kept.has(w.name)) problems.push(`${w.id} would replace ${w.name}, which you edited (${kept.get(w.name)})`);
+    const taken = external.get(w.name);
+    if (taken) problems.push(`${w.id} would install as "${w.name}", which is taken by ${describeExternal(taken)}.\n    Fix: ${fixFor(w)}`);
+    if (kept.has(w.name)) problems.push(`${w.id} would replace ${w.name}, which you edited (${kept.get(w.name)}).\n    Fix: ${fixFor(w)}`);
     for (const dir of w.dirs) {
-      const at = path.join(dir, w.name);
-      if (!isOursOrFree(at, dest)) problems.push(`${at} exists and is not skl's link`);
+      if (foreignInTarget(paths, dir, w.name)) {
+        problems.push(`${w.id} would link ${path.join(dir, w.name)}, which skl did not create.\n    Fix: move it away, or ${fixFor(w)}`);
+      }
     }
   }
   if (problems.length) throw new Error(`Nothing was changed:\n  ${problems.join("\n  ")}`);

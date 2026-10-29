@@ -4,7 +4,7 @@ import path from "node:path";
 import { NeedsInteraction, acquire, compareVersions, latestVersion, pinnedPackage, publishTimes } from "./acquire.ts";
 import { acquireLock, apply, removeManaged } from "./apply.ts";
 import { hasSecret, storeSecret, storeSecretValue } from "./keychain.ts";
-import { type Kind, diagnose } from "./doctor.ts";
+import { type Finding, type Kind, diagnose, diagnoseV2 } from "./doctor.ts";
 import { type CliPlan, applyCli, applyCliLinks, cliLinkChanges, removeCliSkills, listSource, lockedFor, planCli, upstreamChanges } from "./skillscli.ts";
 import { type Plan, plan } from "./plan.ts";
 import { pluginSkillNames } from "./plugins.ts";
@@ -36,6 +36,7 @@ import { isValidSkillName, withPrefix } from "./transform.ts";
 import { treeHash } from "./treehash.ts";
 import { select } from "./select.ts";
 import { type AddKind, addSource, buildSource } from "./add.ts";
+import { adopt } from "./adopt.ts";
 import { readLock } from "./lock.ts";
 import { readManifest } from "./manifest.ts";
 import { sync as syncV2 } from "./sync.ts";
@@ -61,6 +62,7 @@ const USAGE = `skillport — one place for skills that vendor installers scatter
                                    skills you changed in place are kept unless --discard-edits
   skl add <id> (--github <owner/repo> | --installer "<command>" [--unattended "<args>"] | --npm <pkg@ver> --path <dir> | --local <dir>)
            [--prefix <p> | --no-prefix] [-y]   v2: add a source and install its skills
+  skl adopt <owner/repo> [--as <id>] [-y]   v2: take over skills you installed with npx skills
 
 Flags: --dry-run prints the plan only.  -y skips confirmations.
 Registry: ${defaultPaths().registry}`;
@@ -108,6 +110,8 @@ async function main(argv: string[]): Promise<number> {
       return failed ? 1 : 0;
     }
     case "adopt": {
+      // v2 takes an npx skills source (owner/repo or URL); v1 a set id.
+      if (args[0]?.includes("/")) return adoptCmd(base, args[0], rest);
       const set = getSet(ctx.registry, args[0]);
       if (!isManaged(set)) throw new Error(`"${args[0]}" is installed by npx skills, which already took over what it found; nothing to adopt.`);
       return sync(ctx, args[0], { ...flags, adopt: true });
@@ -168,6 +172,16 @@ async function addCmd(base: Paths, rest: string[]): Promise<number> {
   const lines = await addSource(paths, manifest, readLock(paths.lockFile), id, source, { yes, token });
   console.log(lines.length ? lines.join("\n") : "Nothing installed.");
   if (lines.length) console.log(`Added sources.${id} to ${home(paths.manifest)}`);
+  return 0;
+}
+
+async function adoptCmd(base: Paths, from: string, rest: string[]): Promise<number> {
+  const manifest = readManifest(base.manifest);
+  const paths = withLinkTargets(base, manifest, base.manifest);
+  cleanups.add(acquireLock(paths.sklDir));
+  const yes = rest.includes("-y") || rest.includes("--yes");
+  const lines = await adopt(paths, manifest, readLock(paths.lockFile), from, { id: option(rest, "--as"), yes });
+  console.log(lines.join("\n"));
   return 0;
 }
 
@@ -753,12 +767,24 @@ function status(ctx: Ctx): number {
  * without one, --dry-run to stop at the plan.
  */
 async function doctor(ctx: Ctx, fix: boolean, flags: Flags): Promise<number> {
-  const findings = diagnose(ctx.paths, ctx.registry, readState(ctx.paths.stateDir), readSkillLock(ctx.paths.skillLock));
+  // v2 once a manifest exists; v1 until then.
+  const v2 = fs.existsSync(ctx.paths.manifest);
+  let trashAt = path.join(ctx.paths.stateDir, "trash");
+  let findings: Finding[];
+  if (v2) {
+    const manifest = readManifest(ctx.paths.manifest);
+    const paths = withLinkTargets(ctx.paths, manifest, ctx.paths.manifest);
+    if (fix) cleanups.add(acquireLock(paths.sklDir));
+    findings = diagnoseV2(paths, manifest, readLock(paths.lockFile));
+    trashAt = path.join(paths.sklDir, "trash");
+  } else {
+    findings = diagnose(ctx.paths, ctx.registry, readState(ctx.paths.stateDir), readSkillLock(ctx.paths.skillLock));
+  }
   if (!findings.length) {
     console.log("No problems found.");
     return 0;
   }
-  const order: Kind[] = ["collision", "invalid", "stray-copy", "broken-link", "missing-link", "edited", "unowned", "stale-rule"];
+  const order: Kind[] = ["collision", "invalid", "missing", "stray-copy", "broken-link", "missing-link", "edited", "no-note", "unowned", "stale-rule"];
   for (const kind of order) {
     const ofKind = findings.filter((f) => f.kind === kind);
     if (!ofKind.length) continue;
@@ -771,7 +797,7 @@ async function doctor(ctx: Ctx, fix: boolean, flags: Flags): Promise<number> {
     return findings.some((f) => !f.fix) ? 1 : 0;
   }
   if (!fixable.length) return 1;
-  console.log(`\nPlan: fix the ${count(fixable.length, "problem")} marked •; moved copies go to ${path.join(ctx.paths.stateDir, "trash")}.`);
+  console.log(`\nPlan: fix the ${count(fixable.length, "problem")} marked •; moved copies go to ${trashAt}.`);
   if (!(await confirmChange(flags, "Fix them?", "dry run: nothing changed."))) return 0;
   for (const f of fixable) {
     f.fix!();
