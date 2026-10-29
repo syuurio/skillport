@@ -292,7 +292,7 @@ function App({ base }: { base: Paths }): ReactNode {
         const st = data.status?.sources[id];
         if (st?.state === "needs-token") return setView({ kind: "token", id, value: "" });
         if (st?.state === "blocked") {
-          const lines = st.collisions.flatMap((c) => [`${c.name} is taken by ${c.with}`, `  Fix: set sources.${id}.prefix, or add sources.${id}.rename.<skill> in the manifest`]);
+          const lines = st.collisions.flatMap((c) => [`${c.name} is taken by ${c.with}`, `  rename it: ${c.fix ?? `skl rename ${id}/<skill> <new-name>`}`]);
           return setView({ kind: "lines", title: `${id} is blocked`, lines, scroll: 0 });
         }
         return void act(() => runUpdate([id], `Update ${id}`));

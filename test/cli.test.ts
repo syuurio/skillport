@@ -137,7 +137,7 @@ test("a new upstream skill whose name is taken is held back with the command tha
   assert.match(t.skl(["check"]).stdout, /aif\s+local\s+blocked: name collision/);
   const r = t.skl(["update", "-y"]);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /blocked\s+emil-animate\s+its name is taken\n\s+Fix: skl rename aif\/emil-animate aif-emil-animate/);
+  assert.match(r.stdout, /blocked   emil-animate       taken by anim\/animate\n {12}rename it: {9}skl rename aif\/emil-animate aif-emil-animate/);
   assert.match(body("emil-animate"), /anim animate v2/);
 
   const fixed = t.skl(["rename", "aif/emil-animate", "aif-emil-animate"]);
@@ -150,7 +150,7 @@ test("a new upstream skill whose name is taken is held back with the command tha
   skill("x", "emil-color", "x color");
   const clash = t.skl(["add", "x", "--local", path.join(t.home, "x"), "--no-prefix", "-y"]);
   assert.notEqual(clash.status, 0);
-  assert.match(clash.stderr, /Fix: run skl add x again with --rename emil-color=x-emil-color/);
+  assert.match(clash.stderr, /x\/emil-color would install as "emil-color", taken by aif\/emil-color\.\n {4}rename it: skl add x --local \S+ --no-prefix -y --rename emil-color=x-emil-color$/m);
   assert.equal(t.skl(["add", "x", "--local", path.join(t.home, "x"), "--no-prefix", "--rename", "emil-color=x-emil-color", "-y"]).status, 0);
   assert.match(body("x-emil-color"), /x color/);
   assert.match(body("emil-color"), /aif color/);

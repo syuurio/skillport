@@ -54,6 +54,23 @@ export interface AddOptions {
   token?: string;
   /** Fetch and print what would be installed; write no skill, manifest or token. */
   dryRun?: boolean;
+  /** The command line you ran, repeated in the fix for a name clash. */
+  command?: string;
+}
+
+/** `w` as you would type it in a shell. */
+const shellWord = (w: string) => (/^[\w@%+=:,./~-]+$/.test(w) ? w : `'${w.replaceAll("'", `'\\''`)}'`);
+
+/** `w` as splitCommand reads it back: quoted only when it has a space or a quote. */
+const commandWord = (w: string) => (!/[\s'"]/.test(w) ? w : w.includes('"') ? `'${w}'` : `"${w}"`);
+
+/**
+ * The `skl add` you ran, to repeat in a fix. An installer command shows as
+ * stored, with `{secret}` where its token was, so the token is never printed.
+ */
+export function addCommandLine(args: readonly string[], source: Source): string {
+  const shown = args.map((w, i) => (args[i - 1] === "--installer" && source.type === "installer" ? source.command.map(commandWord).join(" ") : w));
+  return ["skl", "add", ...shown].map(shellWord).join(" ");
 }
 
 export async function addSource(paths: Paths, manifest: Manifest, lock: Lock, id: string, source: Source, opts: AddOptions): Promise<string[]> {
@@ -81,7 +98,7 @@ export async function addSource(paths: Paths, manifest: Manifest, lock: Lock, id
     const picked = opts.yes || !isInteractive() ? all : await pick(id, all);
     if (!picked.length) return [];
     if (picked.length < all.length) entry.pick = picked;
-    const lines = describeSync(sync(paths, next, lock, { fetched: new Map([[sid, fetched]]), offeredNow: !opts.yes && isInteractive(), dryRun: opts.dryRun, adding: sid }));
+    const lines = describeSync(sync(paths, next, lock, { fetched: new Map([[sid, fetched]]), offeredNow: !opts.yes && isInteractive(), dryRun: opts.dryRun, adding: { id: sid, command: opts.command } }));
     if (!opts.dryRun) writeManifest(paths.manifest, next);
     return lines;
   } finally {

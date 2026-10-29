@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { npmPack, realFolderPath, runInstaller } from "../src/acquire.ts";
+import { addCommandLine, buildSource } from "../src/add.ts";
 import { acquireLock } from "../src/apply.ts";
 import { diagnose } from "../src/doctor.ts";
 import { readManifest } from "../src/manifest.ts";
@@ -277,3 +278,12 @@ test("round 8c: a name-like sk- match earlier in a word does not hide a key", ()
   assert.equal(extractSecret(["npx", "x@1.0.0", `--from=sk-design-system-skills-pack,${k}`]).secret, k);
 });
 
+
+test("the skl add repeated in a name-clash fix never shows the installer's token", () => {
+  const args = ["vend", "--installer", "npx -y @v/install@0.1.4 --token=s3cr3t-value-123 --global", "--no-prefix", "-y"];
+  const { source, token } = buildSource({ kind: "installer", value: args[2], prefix: false });
+  assert.equal(token, "s3cr3t-value-123");
+  const line = addCommandLine(args, source);
+  assert.ok(!line.includes("s3cr3t"), line);
+  assert.equal(line, "skl add vend --installer 'npx -y @v/install@0.1.4 --token={secret} --global' --no-prefix -y");
+});

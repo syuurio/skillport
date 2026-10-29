@@ -29,7 +29,7 @@ test("prefix false colliding with an npx skills install stops before anything is
   const before = treeHash(home);
   assert.throws(
     () => sync(paths, manifest({ prefix: false }), readLock(paths.lockFile)),
-    /fx\/alpha would install as "alpha", which is taken by an external npx skills install \(someone\/skills\)\.\n {4}Fix: skl rename fx\/alpha fx-alpha$/m,
+    /fx\/alpha would install as "alpha", taken by an external npx skills install \(someone\/skills\)\.\n {4}rename it: skl rename fx\/alpha fx-alpha$/m,
   );
   // The store may hold the fetched copy; nothing an agent reads changed.
   fs.rmSync(paths.sklDir, { recursive: true, force: true });
@@ -48,7 +48,7 @@ test("the default prefix avoids the npx skills install, which stays untouched", 
 test("a real folder in a link target stops the run", () => {
   const { paths, manifest } = sandbox();
   fs.mkdirSync(path.join(paths.linkTargets["claude-code"], "fx-beta"), { recursive: true });
-  assert.throws(() => sync(paths, manifest(), readLock(paths.lockFile)), /fx\/beta would link .*\.claude\/skills\/fx-beta, which skl did not create\./);
+  assert.throws(() => sync(paths, manifest(), readLock(paths.lockFile)), /fx\/beta would install as "fx-beta", but .*\.claude\/skills\/fx-beta is in the way and skl did not create it/);
   assert.equal(fs.existsSync(path.join(paths.skillsDir, "fx-alpha")), false);
 });
 

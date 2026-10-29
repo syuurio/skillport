@@ -8,9 +8,10 @@ import { fetchLocal } from "./adapters/local.ts";
 import { copySkips, headCommit, npxSkillDirs } from "./adapters/github.ts";
 import { describeExternal, externalSkills } from "./external.ts";
 import type { Lock, SkillLock } from "./lock.ts";
-import { type Manifest, type SkillId, type SkillName, type Source, type SourceId, installedName, splitSkillId } from "./manifest.ts";
+import { type Manifest, type SkillId, type SkillName, type Source, type SourceId, installedName, skillId, splitSkillId } from "./manifest.ts";
 import type { Paths } from "./paths.ts";
 import type { SkillFlags, SourceStatus, Status } from "./status.ts";
+import { renameCommand } from "./sync.ts";
 import { type GitEntry, treeHash, treeHashOfListing } from "./treehash.ts";
 import { githubRepo, isPinnedSpec } from "./validate.ts";
 
@@ -132,9 +133,9 @@ function checkLocal(paths: Paths, sid: SourceId, source: Extract<Source, { type:
   const external = externalSkills(paths, lock);
   const managed = new Map((Object.entries(lock.skills) as [SkillId, SkillLock][]).filter(([id]) => splitSkillId(id).source !== sid).map(([id, s]) => [s.name, id]));
   const collisions = added
-    .map((o) => installedName(sid, o as SkillName, source))
-    .filter((name) => external.has(name) || managed.has(name))
-    .map((name) => ({ name, with: external.has(name) ? describeExternal(external.get(name)!) : (managed.get(name) as string) }));
+    .map((o) => ({ id: skillId(sid, o as SkillName), name: installedName(sid, o as SkillName, source) }))
+    .filter(({ name }) => external.has(name) || managed.has(name))
+    .map(({ id, name }) => ({ name, with: external.has(name) ? describeExternal(external.get(name)!) : (managed.get(name) as string), fix: renameCommand(id, name) }));
   if (collisions.length) return { checkedAt: now, state: "blocked", collisions };
   const changed = installed.filter(([o, s]) => here.has(o) && treeHash(here.get(o)!) !== s.base).map(([o]) => o);
   const removed = installed.filter(([o]) => !here.has(o)).map(([o]) => o);

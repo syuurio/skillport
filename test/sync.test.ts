@@ -92,7 +92,7 @@ test("links: [] installs without linking", () => {
 test("sync refuses to replace a folder or link skl did not create, and changes nothing", () => {
   const { paths, run } = sandbox();
   fs.mkdirSync(path.join(paths.skillsDir, "fx-alpha"), { recursive: true });
-  assert.throws(() => run(), /fx\/alpha would install as "fx-alpha", which is taken by a folder in ~\/.agents\/skills that skl did not install\.\n {4}Fix: skl rename fx\/alpha <new-name>$/m);
+  assert.throws(() => run(), /fx\/alpha would install as "fx-alpha", taken by a folder in ~\/.agents\/skills that skl did not install\.\n {4}rename it: skl rename fx\/alpha <new-name>$/m);
   assert.deepEqual(ls(paths.skillsDir), ["fx-alpha"]);
   assert.equal(fs.existsSync(paths.lockFile), false);
 });
@@ -136,11 +136,11 @@ test("a new skill whose name is taken is held back alone; the rest still syncs",
   fs.mkdirSync(path.join(paths.skillsDir, "fx-gamma"));
   fs.writeFileSync(path.join(paths.skillsDir, "fx-gamma", "SKILL.md"), "not skl's\n");
   const out = run();
-  assert.match(out.join("\n"), /^blocked fx\/gamma would install as "fx-gamma", which is taken by a folder/);
+  assert.match(out.join("\n"), /^blocked fx-gamma \(fx\/gamma\): taken by a folder in ~\/.agents\/skills that skl did not install\n  rename it: skl rename fx\/gamma <new-name>$/m);
   assert.ok(out.includes("fx/alpha -> fx-alpha"));
   assert.match(fs.readFileSync(path.join(paths.skillsDir, "fx-alpha", "SKILL.md"), "utf8"), /Upstream\./);
   assert.equal(fs.readFileSync(path.join(paths.skillsDir, "fx-gamma", "SKILL.md"), "utf8"), "not skl's\n");
   // Not installed, so not seen: it is reported again until the name is fixed.
   assert.ok(!readLock(paths.lockFile).sources["fx" as SourceId].seen.includes("gamma"));
-  assert.match(run().join("\n"), /^blocked fx\/gamma/);
+  assert.match(run().join("\n"), /^blocked fx-gamma \(fx\/gamma\)/);
 });

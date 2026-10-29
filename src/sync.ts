@@ -50,9 +50,15 @@ function linksMatch(paths: Paths, name: string, dirs: string[]): boolean {
   });
 }
 
+/** A source `skl add` is adding, and the command line you ran, to repeat in a fix. */
+export interface Adding {
+  id: SourceId;
+  command?: string;
+}
+
 export interface SyncOptions {
-  /** The source `skl add` is adding, so a name clash points at its own flags. */
-  adding?: SourceId;
+  /** The source `skl add` is adding, so a name clash points at that command. */
+  adding?: Adding;
   now?: string;
   /** Sources fetched just now, by id. */
   fetched?: ReadonlyMap<SourceId, Fetched>;
@@ -75,7 +81,15 @@ export type SyncChange =
   | { kind: "edited"; id: SkillId; name: string }
   | { kind: "conflict"; id: SkillId; name: string; reason: string; files: string[]; dir: string }
   | { kind: "offered"; id: SkillId }
-  | { kind: "blocked"; id: SkillId; name: string; reason: string };
+  | { kind: "blocked"; id: SkillId; name: string; why: string; fix: string };
+
+/** Why a skill cannot have its name, and the command that gives it another. */
+export interface Clash {
+  why: string;
+  fix: string;
+}
+
+const clashLine = (w: Want, c: Clash) => `${w.id} would install as "${w.name}", ${c.why}.\n    rename it: ${c.fix}`;
 
 /**
  * Vendor sources sync cannot install: nothing fetched yet (a new machine
@@ -100,7 +114,7 @@ export function describeSync(changes: SyncChange[]): string[] {
       case "conflict":
         return [`conflict ${c.name} (${c.id}): ${c.reason}; held back`, `  resolve in ${home(c.dir)}, then: skl edit ${c.id}`];
       case "blocked":
-        return [`blocked ${c.reason}`];
+        return [`blocked ${c.name} (${c.id}): ${c.why}`, `  rename it: ${c.fix}`];
       case "offered":
         return [`new ${c.id} (not installed; skl update ${splitSkillId(c.id).source} --pick)`];
     }
@@ -125,7 +139,7 @@ function wanted(
   now: string,
   opts: SyncOptions,
   established: ReadonlySet<string>,
-): { wants: Want[]; offered: SkillId[]; clashes: Map<SkillId, string> } {
+): { wants: Want[]; offered: SkillId[]; clashes: Map<SkillId, Clash> } {
   const fetched = opts.fetched ?? new Map<SourceId, Fetched>();
   const wants: Want[] = [];
   const offered: SkillId[] = [];
@@ -179,29 +193,38 @@ function wanted(
   // the manifest or a source being added, and stops all.
   const newcomer = (w: Want) => !lock.skills[w.id] && established.has(w.source);
   const byName = new Map<string, Want>();
-  const clashes = new Map<SkillId, string>();
+  const clashes = new Map<SkillId, Clash>();
   for (const w of wants) {
-    if (!isValidSkillName(w.name)) problems.push(`${w.id} would install as "${w.name}", which is not a valid skill name (a-z, 0-9, single hyphens, at most 64).\n    Fix: ${fixFor(w, opts.adding)}`);
+    if (!isValidSkillName(w.name)) problems.push(clashLine(w, { why: "which is not a valid skill name (a-z, 0-9, single hyphens, at most 64)", fix: fixFor(w, opts.adding) }));
     const other = byName.get(w.name);
     if (!other) {
       byName.set(w.name, w);
       continue;
     }
     const held = [other, w].filter(newcomer);
-    if (!held.length) problems.push(`${other.id} and ${w.id} would both install as "${w.name}".\n    Fix: ${fixFor(w, opts.adding)}`);
-    for (const n of held) clashes.set(n.id, `${n.id} would install as "${n.name}", which ${n === w ? other.id : w.id} installs as too.\n    Fix: ${fixFor(n, opts.adding)}`);
+    if (!held.length) problems.push(clashLine(w, { why: `taken by ${other.id}`, fix: fixFor(w, opts.adding) }));
+    for (const n of held) clashes.set(n.id, { why: `taken by ${(n === w ? other : w).id}`, fix: fixFor(n, opts.adding) });
     if (held.includes(other) && !held.includes(w)) byName.set(w.name, w);
   }
   if (problems.length) throw new Error(`Nothing was changed:\n  ${problems.join("\n  ")}`);
   return { wants, offered, clashes };
 }
 
-/** The command that gives `w` a name of its own: `skl rename`, or for the source `skl add` is adding, that command again. */
-function fixFor(w: Want, adding: SourceId | undefined): string {
-  const own = `${w.source}-${w.original}`;
-  const name = own !== w.name && isValidSkillName(own) ? own : "<new-name>";
-  return w.source === adding ? `run skl add ${w.source} again with --rename ${w.original}=${name}` : `skl rename ${w.id} ${name}`;
+/** The command that gives `w` a name of its own: `skl rename`, or for the source being added, its `skl add` again. */
+function fixFor(w: Want, adding: Adding | undefined): string {
+  if (w.source !== adding?.id) return renameCommand(w.id, w.name);
+  return `${adding.command ?? `skl add ${w.source} …`} --rename ${w.original}=${newName(w.id, w.name)}`;
 }
+
+/** `<source>-<skill>` when that is a different, valid name. */
+function newName(id: SkillId, name: string): string {
+  const { source, original } = splitSkillId(id);
+  const own = `${source}-${original}`;
+  return own !== name && isValidSkillName(own) ? own : "<new-name>";
+}
+
+/** The `skl rename` that moves `id` off `name`, a name taken elsewhere. */
+export const renameCommand = (id: SkillId, name: string) => `skl rename ${id} ${newName(id, name)}`;
 
 /**
  * Every installed name against everything skl does not own, before the first
@@ -217,25 +240,24 @@ function recheck(
   wants: Want[],
   held: Map<SkillId, SkillLock>,
   established: ReadonlySet<string>,
-  adding: SourceId | undefined,
-): Map<SkillId, string> {
+  adding: Adding | undefined,
+): Map<SkillId, Clash> {
   const external = externalSkills(paths, lock);
   const kept = new Map([...held].map(([id, s]) => [s.name, id]));
   const problems: string[] = [];
-  const blocked = new Map<SkillId, string>();
+  const blocked = new Map<SkillId, Clash>();
   for (const w of wants) {
-    const mine: string[] = [];
+    const why: string[] = [];
     const taken = external.get(w.name);
-    if (taken) mine.push(`${w.id} would install as "${w.name}", which is taken by ${describeExternal(taken)}.\n    Fix: ${fixFor(w, adding)}`);
-    if (kept.has(w.name)) mine.push(`${w.id} would replace ${w.name}, which you edited (${kept.get(w.name)}).\n    Fix: ${fixFor(w, adding)}`);
+    if (taken) why.push(`taken by ${describeExternal(taken)}`);
+    if (kept.has(w.name)) why.push(`taken by ${kept.get(w.name)}, which you changed in place`);
     for (const dir of w.dirs) {
-      if (foreignInTarget(paths, dir, w.name)) {
-        mine.push(`${w.id} would link ${path.join(dir, w.name)}, which skl did not create.\n    Fix: move it away, or ${fixFor(w, adding)}`);
-      }
+      if (foreignInTarget(paths, dir, w.name)) why.push(`but ${home(path.join(dir, w.name))} is in the way and skl did not create it (move it away, or rename this skill)`);
     }
-    if (!mine.length) continue;
-    if (lock.skills[w.id] || !established.has(w.source)) problems.push(...mine);
-    else blocked.set(w.id, mine.join("\n  "));
+    if (!why.length) continue;
+    const clash = { why: why.join("; "), fix: fixFor(w, adding) };
+    if (lock.skills[w.id] || !established.has(w.source)) problems.push(clashLine(w, clash));
+    else blocked.set(w.id, clash);
   }
   if (problems.length) throw new Error(`Nothing was changed:\n  ${problems.join("\n  ")}`);
   return blocked;
@@ -358,7 +380,7 @@ export function sync(paths: Paths, manifest: Manifest, given: Lock, opts: SyncOp
   const wasAt = new Map((Object.entries(lock.skills) as [SkillId, SkillLock][]).map(([id, s]) => [id, s.name]));
   for (const [id, entry] of edited) changes.push({ kind: "edited", id, name: entry.name });
   changes.push(...conflicts);
-  for (const [id, reason] of blocked) changes.push({ kind: "blocked", id, name: (all.find((w) => w.id === id) as Want).name, reason });
+  for (const [id, clash] of blocked) changes.push({ kind: "blocked", id, name: (all.find((w) => w.id === id) as Want).name, ...clash });
   for (const [id, entry] of Object.entries(lock.skills) as [SkillId, SkillLock][]) {
     if (keep.get(id) === entry.name || held.has(id)) continue;
     if (!dry) {

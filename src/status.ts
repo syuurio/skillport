@@ -17,7 +17,7 @@ export type SourceStatus = { checkedAt: string } & (
   | { state: "pinned-behind"; current: string; latest: string }
   | { state: "unknown"; reason: string }
   | { state: "error"; reason: string }
-  | { state: "blocked"; collisions: { name: string; with: string }[] }
+  | { state: "blocked"; collisions: { name: string; with: string; fix?: string }[] }
   | { state: "needs-token" }
   /** No version to compare without running it; update runs it. */
   | { state: "unpinned" }

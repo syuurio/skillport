@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { type AddKind, addSource, buildSource } from "./add.ts";
+import { type AddKind, addCommandLine, addSource, buildSource } from "./add.ts";
 import { adopt } from "./adopt.ts";
 import { acquireLock } from "./apply.ts";
 import { check as checkSources, realNet } from "./check.ts";
@@ -231,7 +231,7 @@ async function addCmd(base: Paths, rest: string[], flags: Flags): Promise<number
   const valueFlags = ["--github", "--installer", "--npm", "--local", "--path", "--unattended", "--prefix", "--rename"];
   const own = rest.filter((w, i) => !valueFlags.includes(rest[i - 1]));
   const yes = own.includes("-y") || own.includes("--yes");
-  const lines = await addSource(paths, manifest, readLock(paths.lockFile), id, source, { yes, token, dryRun: flags.dryRun });
+  const lines = await addSource(paths, manifest, readLock(paths.lockFile), id, source, { yes, token, dryRun: flags.dryRun, command: addCommandLine(rest, source) });
   console.log(lines.length ? lines.join("\n") : "Nothing installed.");
   if (lines.length) console.log(flags.dryRun ? `Would add sources.${id} to ${home(paths.manifest)}` : `Added sources.${id} to ${home(paths.manifest)}`);
   return 0;

@@ -64,7 +64,7 @@ function planLines(sources: SourceId[], lock: Lock, fetched: Map<SourceId, Fetch
     for (const c of held) {
       const { source, original } = splitSkillId(c.id);
       if (c.kind === "blocked") {
-        lines.push(`  blocked   ${c.name.padEnd(18)} its name is taken`, ...c.reason.split("\n").slice(1).map((l) => `            ${l.trim()}`));
+        lines.push(`  blocked   ${c.name.padEnd(18)} ${c.why}`, `            ${"rename it:".padEnd(19)}${c.fix}`);
         continue;
       }
       if (c.kind === "conflict") {
