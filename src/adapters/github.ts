@@ -13,7 +13,7 @@ import { type FetchOptions, type Fetched, skillsIn } from "./index.ts";
 
 const TIMEOUT_MS = 5 * 60 * 1000;
 
-/** What npx skills@1.7.0 leaves out when it copies a skill (its copyDirectory). */
+/** What npx skills@1.7.4 leaves out when it copies a skill (its copyDirectory). */
 export const copySkips = (name: string, isDir: boolean) =>
   name === "metadata.json" || (isDir && (name === ".git" || name === "__pycache__" || name === "__pypackages__"));
 
@@ -21,7 +21,7 @@ const SKIP_DIRS = ["node_modules", ".git", "dist", "build", "__pycache__"];
 const AGENT_SKILL_DIRS = [".agents", ".claude", ".cline", ".codebuddy", ".codex", ".commandcode", ".continue", ".factory", ".github", ".goose", ".grok", ".iflow", ".junie", ".kilo", ".kilocode", ".kimchi", ".kiro", ".minimax", ".mux", ".neovate", ".opencode", ".openhands"].map((d) => `${d}/skills`);
 
 /**
- * Which of a repo's SKILL.md folders npx skills@1.7.0 installs (its
+ * Which of a repo's SKILL.md folders npx skills@1.7.4 installs (its
  * discoverSkills), from the repo's file listing: a SKILL.md at the root is
  * the only skill; otherwise the root's own folders and the usual skill
  * folders, and only when those hold none, every folder five levels down.

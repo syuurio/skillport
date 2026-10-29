@@ -74,7 +74,7 @@ can edit it by hand. It is checked in full every time it is read.
 }
 ```
 
-- `github` is downloaded by `npx skills@1.7.0`. It runs in a private HOME,
+- `github` is downloaded by `npx skills@1.7.4`. It runs in a private HOME,
   so your own `npx skills` setup and its lock are never touched.
 - `installer` runs `command` exactly as written, in a sandbox HOME with a
   minimal environment. skl takes only what the installer left in

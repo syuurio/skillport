@@ -7,7 +7,7 @@ import type { Paths } from "./paths.ts";
 // Your own `npx skills` setup: skl reads its lock, and removes skills through
 // it only when you adopt them (SPEC §9).
 
-export const SKILLS_CLI = "skills@1.7.0";
+export const SKILLS_CLI = "skills@1.7.4";
 
 /** `npx skills` lock entries, read-only. Refuses formats it does not know. */
 export interface LockEntry {

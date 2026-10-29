@@ -301,7 +301,7 @@ Fix: skl rename motion/motion motion-motion
 
 ### 7.1 `github`
 
-- **fetch**：在 shadow HOME（`~/.agents/.skl/cli/<source>/`）先用 `git ls-remote <url> HEAD` 取得 commit，再執行 `npx -y skills@1.7.0 add <url>#<commit> -g -a codex -s '*' -y`，從 `<shadow>/.agents/skills/*` 取出放進 store。指定 commit 有兩個用途：裝進來的就是記下的那個 commit；npx skills 也一定走 git clone。沒有 ref 時，vercel、vercel-labs 等少數 owner 的 repo 會改從 skills.sh 下載快照。快照會保留 `metadata.json`、拿掉執行權限，內容也可能落後 HEAD。每個 skill 在 repo 裡的資料夾（shadow lock 的 `skillPath`）記在 lock 的 `sources.<id>.paths`。
+- **fetch**：在 shadow HOME（`~/.agents/.skl/cli/<source>/`）先用 `git ls-remote <url> HEAD` 取得 commit，再執行 `npx -y skills@1.7.4 add <url>#<commit> -g -a codex -s '*' -y`，從 `<shadow>/.agents/skills/*` 取出放進 store。指定 commit 有兩個用途：裝進來的就是記下的那個 commit；npx skills 也一定走 git clone。沒有 ref 時，vercel、vercel-labs 等少數 owner 的 repo 會改從 skills.sh 下載快照。快照會保留 `metadata.json`、拿掉執行權限，內容也可能落後 HEAD。每個 skill 在 repo 裡的資料夾（shadow lock 的 `skillPath`）記在 lock 的 `sources.<id>.paths`。
 - **列出可選的 skill**：`npx skills add <repo> --list`，解析文字輸出（它不接受 `--json`）。
 - **check**：先 `git ls-remote`。commit 和 lock 一樣就代表整個來源沒變；不一樣才呼叫一次 `GET repos/<repo>/git/trees/<commit>?recursive=1`，一次比對所有 skill 的資料夾 hash。資料夾依 `paths` 找，hash 由清單重算，並扣掉 npx skills 複製時略過的檔案（`metadata.json`、`.git`、`__pycache__`、`__pypackages__`）。先用 `gh api`，沒有登入時用公開 API。
 - 環境變數只傳最小集合，不傳 `XDG_STATE_HOME`、`CLAUDE_CONFIG_DIR`、`CODEX_HOME`，否則 `npx skills` 會寫到真正的位置。
@@ -525,7 +525,7 @@ installer 與 npm 的 skill 保留 v1 的安裝名稱，所以 agent 裡的指�
 
 | 事實 | 證據 |
 |---|---|
-| `npx skills@1.7.0` 的 `update` 用 lock 的 key 當 `--skill` 重新執行 `add`；資料夾名稱取自 frontmatter 的 `name`。所以改過名的 skill 不能留在真正的 npx skills 底下 | 讀 `dist/cli.mjs`（`updateGlobalSkills`、`sanitizeName`）；你的 lock 裡 `vercel-react-best-practices` 的 `skillPath` 是 `skills/react-best-practices` |
+| `npx skills@1.7.4` 的 `update` 用 lock 的 key 當 `--skill` 重新執行 `add`；資料夾名稱取自 frontmatter 的 `name`。所以改過名的 skill 不能留在真正的 npx skills 底下 | 讀 `dist/cli.mjs`（`updateGlobalSkills`、`sanitizeName`）；你的 lock 裡 `vercel-react-best-practices` 的 `skillPath` 是 `skills/react-best-practices` |
 | shadow HOME 能隔離 `npx skills` | 2026-10-29：`HOME=<shadow>` 執行 `npx skills add mattpocock/skills -g -a codex -s tdd -y`，lock 寫進 `<shadow>/.agents/.skill-lock.json`，真正的 lock shasum 前後相同 |
 | `npx skills` 的 lock 路徑只受 `XDG_STATE_HOME` 與 `HOME` 影響 | 讀 `dist/cli.mjs` 的 `getSkillLockPath` |
 | `git ls-remote` 不消耗 GitHub REST 額度 | 連跑三次，`rate_limit` 的 core 剩餘量 58 → 58 |
