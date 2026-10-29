@@ -261,6 +261,18 @@ test("--dry-run shows the patch it would save and writes nothing", async () => {
   assert.equal(treeHash(home), before);
 });
 
+test("--dry-run shows the note a new --note would replace", async () => {
+  const { paths } = sandbox();
+  const manifest = parseManifest({ version: 2, sources: { vend: { type: "github", repo: "v/skills" } } }, "m");
+  const fromDisk = (opts: { note?: string; dryRun?: boolean }) =>
+    edit(paths, manifest, readLock(paths.lockFile), "vend/alpha", "from-disk", { ...opts, askNote: async () => "" });
+  replaceLine(2, "line 2, mine")(path.join(paths.skillsDir, "vend-alpha"));
+  assert.match((await fromDisk({ dryRun: true })).join("\n"), /no note yet; add one with --note/);
+  await fromDisk({ note: "Use our tone." });
+  replaceLine(3, "line 3, mine")(path.join(paths.skillsDir, "vend-alpha"));
+  assert.match((await fromDisk({ dryRun: true, note: "Use our terms." })).join("\n"), /current note, which --note replaces \(.*alpha\.note\.md\):\nUse our tone\.$/);
+});
+
 test("a merge with conflict markers left in MERGED is not finished", async () => {
   const { paths, write, release, run } = sandbox();
   await run("edit", replaceLine(2, "line 2, mine"));

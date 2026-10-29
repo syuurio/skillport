@@ -18,9 +18,9 @@ Skills in `~/.agents/skills` are installed by skillport (`skl`). A file changed 
 
 3. **Make the change** in the folder at `dir`. Leave two kinds of lines exactly as they are: the frontmatter `name`, and any mention of another skill by its installed name. skl writes those itself, so a patch cannot contain them.
 
-4. **Preview the patch.** Run `skl edit <id> --from-disk --dry-run`. It prints the patch against the upstream original and writes nothing. Show it to the user. The patch is against upstream's original names, so it reads `tdd` where the folder says `mattpocock-tdd`.
+4. **Preview the patch.** Run `skl edit <id> --from-disk --dry-run`. It prints the patch against the upstream original, and the current note when there is one, and writes nothing. Show it to the user. The patch is against upstream's original names, so it reads `tdd` where the folder says `mattpocock-tdd`.
 
-5. **Save it.** Run `skl edit <id> --from-disk --note "<why>"`. The note is the intent behind the change: what the user wants the skill to do differently, and why. A future merge reads it to decide how the change applies to a new upstream version, so write it for that reader, in a sentence or two. A list of the lines you changed is not a note. `--note` replaces the whole note, and the note speaks for the whole patch: when the skill already had a note, write one that carries the earlier intent forward together with the new one.
+5. **Save it.** Run `skl edit <id> --from-disk --note "<why>"`. The note is the intent behind the change: what the user wants the skill to do differently, and why. A future merge reads it to decide how the change applies to a new upstream version, so write it for that reader, in a sentence or two. A list of the lines you changed is not a note. `--note` replaces the whole note, and the note speaks for the whole patch: when step 4 printed a current note, write one that carries its intent forward together with the new one.
 
 Done when `skl status --json` shows the skill with `patch` and `note` present and `edited: false`.
 

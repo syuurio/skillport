@@ -53,7 +53,14 @@ function yoursAt(paths: Paths, source: SourceId, original: SkillName, base: stri
 /** Writes the patch, or removes it when there is no difference; writes the note given, or asks for one the first time. */
 async function savePatch(paths: Paths, source: SourceId, original: SkillName, text: string, opts: EditOptions): Promise<string[]> {
   const { patch, note } = patchFiles(paths, source, original);
-  if (opts.dryRun) return text ? [`would save ${home(patch)}:`, text.trimEnd()] : ["no changes; nothing would be saved"];
+  if (opts.dryRun) {
+    if (!text) return ["no changes; nothing would be saved"];
+    const lines = [`would save ${home(patch)}:`, text.trimEnd()];
+    // Shown so a new --note can carry the earlier intent forward instead of losing it.
+    if (fs.existsSync(note)) lines.push(`current note, which --note replaces (${home(note)}):`, fs.readFileSync(note, "utf8").trimEnd());
+    else if (!opts.note?.trim()) lines.push(`no note yet; add one with --note "<why>"`);
+    return lines;
+  }
   if (!text) {
     if (!fs.existsSync(patch)) return ["no changes; nothing saved"];
     fs.rmSync(patch);

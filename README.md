@@ -12,6 +12,18 @@ that is reapplied on every update.
 
 Design and decisions: [docs/SPEC.md](docs/SPEC.md).
 
+## Install
+
+skl needs macOS (Keychain and the daily check), Node 23.6 or later (it runs
+its TypeScript directly), and git and npm on your PATH.
+
+```
+git clone <skillport repo> ~/dev/skillport
+cd ~/dev/skillport && npm install
+ln -s ~/dev/skillport/bin/skillport ~/.local/bin/skl   # any folder on your PATH
+skl doctor
+```
+
 ## Commands
 
 ```
@@ -144,12 +156,15 @@ so leave it out.
 
 On a new machine:
 
-1. Restore `~/.config/skl/`.
+1. Install skl (see Install) and restore `~/.config/skl/`. A `local` source
+   reads its folder from the same path, so put those folders back too, such as
+   `~/dev/skillport/skills` for skillport's own skills.
 2. For each installer source that needs a token, run `skl secret <source>`.
    Keychain does not travel with your dotfiles.
 3. Run `skl update -y`. It fetches every source, applies your patches and
    installs. `skl sync` works offline, so it cannot install a source it has
-   never fetched. It lists those sources and points you to `skl update`.
+. Run `skl schedule daily` if you want the daily check. The launchd job
+   lives in `~/Library/LaunchAgents`, outside your dotfiles.
 
 A patch made against an older upstream may not apply on the first install.
 That skill is held back as a conflict. `MERGED` holds the new upstream plus
