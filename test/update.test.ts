@@ -5,7 +5,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { skillsIn } from "../src/adapters/index.ts";
 import { readLock } from "../src/lock.ts";
-import { type SourceId, parseManifest } from "../src/manifest.ts";
+import { type SkillId, type SourceId, parseManifest } from "../src/manifest.ts";
 import { defaultPaths, withLinkTargets } from "../src/paths.ts";
 import { sync } from "../src/sync.ts";
 import { treeHash } from "../src/treehash.ts";
@@ -46,15 +46,12 @@ function sandbox() {
     const t = path.join(paths.sklDir, "trash");
     return fs.existsSync(t) ? fs.readdirSync(t).flatMap((d) => fs.readdirSync(path.join(t, d))) : [];
   };
-  const customize = (change: (text: string) => string) =>
-    edit(paths, manifest, readLock(paths.lockFile), "vend/alpha", "edit", {
-      editor: (dir) => {
-        const file = path.join(dir, "SKILL.md");
-        fs.writeFileSync(file, change(fs.readFileSync(file, "utf8")));
-        return true;
-      },
-      askNote: async () => "",
-    });
+  const customize = (change: (text: string) => string) => {
+    const lock = readLock(paths.lockFile);
+    const file = path.join(paths.skillsDir, lock.skills["vend/alpha" as SkillId].name, "SKILL.md");
+    fs.writeFileSync(file, change(fs.readFileSync(file, "utf8")));
+    return edit(paths, manifest, lock, "vend/alpha", "from-disk", { askNote: async () => "" });
+  };
   return { home, paths, vendor, skill, run, trashed, customize };
 }
 

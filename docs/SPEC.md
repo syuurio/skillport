@@ -24,7 +24,7 @@ v1 已經集中管理 installer 與 npm，但 `npx skills` 的 skill 名稱屬�
 
 - 不取代 `npx skills`：GitHub 來源仍由它下載，只是在 skl 私有的位置執行。
 - 不做 Claude Code plugin 的冒號命名（`/source:skill`）。
-- 這一版不做：rollback 與多版本保留、`skl release`、在 description 加來源標記、installer 的完整內容比對（`--deep`）、由 agent 協助解決合併衝突（`skl merge`）。
+- 這一版不做：rollback 與多版本保留、`skl release`、在 description 加來源標記、installer 的完整內容比對（`--deep`）。skl 本身不呼叫 agent：要 agent 幫忙改 skill 或解衝突，靠的是 §10.1 的兩個 skill。
 
 ## 3. 名詞
 
@@ -356,8 +356,10 @@ Fix: set sources.motion.prefix, or add sources.motion.rename.motion.
 
 ## 10. 客製化與合併
 
-- `skl edit <source>/<skill>`：從 store 複製原名版本到 `work/`，用 `$EDITOR` 開啟。結束後計算和原版的差異，存成 patch，並請你寫 note（可以跳過）。
-- `skl edit --drop <source>/<skill>`：移除 patch，恢復上游原版。
+- 客製化的方式是直接改 `~/.agents/skills/<安裝名稱>` 裡的檔案，再執行 `skl edit <source>/<skill> --from-disk --note "<原因>"` 把改動存成 patch（做法見下面「直接改了」）。沒有 `--note` 時，在終端機上會問一次原因（可以跳過）；`--note` 會取代原本的 note。
+- `skl edit <source>/<skill> --drop`：把 patch 與 note 移到 trash，恢復上游原版。
+- 加 `--dry-run` 時只印出會存的 patch（或會移除的 patch），不寫入任何東西。
+- 不加旗標的 `skl edit <source>/<skill>` 只用來完成合併；沒有合併等著時會提示改用 `--from-disk`。
 - 更新時，有 patch 的 skill 逐檔執行 `git merge-file`：
 
   | 角色 | 內容 |
@@ -369,12 +371,25 @@ Fix: set sources.motion.prefix, or add sources.motion.rename.motion.
   新增與刪除的檔案另外處理：只有一邊動到就採用那一邊，兩邊都動到算衝突。
 
 - **乾淨合併**：計畫裡顯示 `patch reapplied`，套用後以新上游為基準重新產生 patch。
-- **有衝突**：這個 skill 標成 `conflict`，列在計畫的 Held back，不在套用範圍內；輸出維持舊版，其他 skill 照常更新。skl 準備 `merge/<source>/<skill>/`，放入 `BASE/`、`UPSTREAM/`、`YOURS/`、`MERGED/`（衝突處有 `<<<<<<< YOURS` 標記）、`note.md`、`your.patch` 與 `merge.json`（記錄 BASE 與 UPSTREAM 的 hash）。同一組版本的資料夾已經存在時不會重建，所以你在 `MERGED/` 的進度不會被下一次 sync 蓋掉。解決方式：執行 `skl edit <source>/<skill>`，它從 `MERGED/` 開始，存檔後的 patch 以新上游為基準，接著套用並刪掉 merge 資料夾。你可以自己處理，或交給 agent。v1 之後的 `skl merge` 會自動交給設定好的 agent。
+- **有衝突**：這個 skill 標成 `conflict`，列在計畫的 Held back，不在套用範圍內；輸出維持舊版，其他 skill 照常更新。skl 準備 `merge/<source>/<skill>/`，放入 `BASE/`、`UPSTREAM/`、`YOURS/`、`MERGED/`（衝突處有 `<<<<<<< YOURS` 標記）、`note.md`、`your.patch` 與 `merge.json`（記錄 BASE 與 UPSTREAM 的 hash）。同一組版本的資料夾已經存在時不會重建，所以你在 `MERGED/` 的進度不會被下一次 sync 蓋掉。解決方式：改好 `MERGED/`（解掉所有衝突標記、手動套用 `.rej` 並刪掉），再執行 `skl edit <source>/<skill>`。它以 `MERGED/` 和新上游的差異作為新的 patch，接著安裝並刪掉 merge 資料夾。`MERGED/` 還有 `.rej` 或衝突標記時會拒絕。你可以自己處理，或交給 agent（§10.1 的 `skillport-merge`）。
 - **patch 套不上**（例如在新機器上 patch 的基準不同）：同樣算衝突，`MERGED/` 是新上游的副本。
 
 - **直接改了 `~/.agents/skills` 裡的檔案**（沒有透過 `skl edit`）：磁碟的 tree hash 和 lock 的 `output` 不同，這個 skill 標成 `edited`。`sync` 與 `update` 都不覆蓋它，只列在 Held back，並保留它目前的名稱供其他 skill 的引用使用。兩個出口：
   - `skl edit <source>/<skill> --from-disk`：把磁碟上的改動轉成 patch。先還原 skl 自己做的改寫（安裝名稱、`metadata` 的 `skl-*` 鍵、引用改寫），再和 store 裡的原名版本比對，之後就走上面的合併流程。還原有兩種做法，依序嘗試：逐項反向改寫，或以 skl 寫出的版本為 BASE 做三方合併。結果必須能重新輸出成和磁碟完全相同的資料夾才採用；兩種都不行，代表你改到了 skl 也會改寫的那一行（例如 `name`），skl 會拒絕並說明怎麼做。
   - `--discard-edits`（`sync` 或 `update`）：換回 skl 的版本，你的那份移到 trash。
+
+### 10.1 給 agent 用的 skill
+
+repo 的 `skills/` 有兩個 skill，由 agent 自己判斷何時使用，教它用上面的指令操作。skl 不呼叫 agent。
+
+| skill | 用途 |
+|---|---|
+| `skillport-edit` | 使用者要改某個 skill 時：用 `skl which` 找 id，用 `skl status --json` 看狀態，直接改安裝資料夾，`--from-disk --dry-run` 預覽後用 `--note` 存檔 |
+| `skillport-merge` | 有衝突時：讀 note、`your.patch`、`BASE` 與 `UPSTREAM` 的差異，在 `MERGED/` 帶入原本的意圖，`--dry-run` 預覽後完成 |
+
+安裝：`skl add skillport --local <repo>/skills`，原名是 `edit` 與 `merge`，加上前綴就是上面的名稱。
+
+`skl status --json` 是給 agent 讀的：`sources` 是每個來源的狀態，`skills` 列出每個 skill 的 `id`、安裝名稱、資料夾、patch 與 note 的路徑、`edited`，以及衝突時的 `conflict.dir`。
 
 ## 11. 指令
 
@@ -386,11 +401,11 @@ Fix: set sources.motion.prefix, or add sources.motion.rename.motion.
 | `skl add <id> --github <repo> \| --installer "<command>" \| --npm <pkg@ver> --path <dir> \| --local <dir>` | 寫入 manifest、需要時把 token 存進 Keychain、選擇 skill，然後安裝 |
 | `skl sync [--discard-edits]` | 讓磁碟符合 manifest 與 lock，不連網。直接改過的 skill 保留不動，除非加 `--discard-edits` |
 | `skl check [source...]` | 檢查更新，寫入 `status.json`，不改動 skill |
-| `skl status [source]` | 讀 `status.json`，不連網 |
+| `skl status [--json]` | 讀 `status.json`，不連網；`--json` 輸出給 agent 讀（§10.1） |
 | `skl update [source...] [-i] [--pick] [--discard-edits]` | 列出計畫，在終端機上勾選新 skill，確認後套用；`conflict` 與 `edited` 不套用 |
 | `skl which <安裝名稱>` | 來源、原名、版本、最後更新時間 |
 | `skl diff <source>[/<skill>] [-i]` | 抓取來源，用 diff 顯示下一次更新會怎麼改磁碟上的 skill，包含引用改寫與 patch；不寫入任何 skill |
-| `skl edit <source>/<skill> [--drop \| --from-disk]` | 客製化；`--from-disk` 把直接改過的檔案轉成 patch |
+| `skl edit <source>/<skill> [--from-disk \| --drop] [--note "<原因>"] [--dry-run]` | `--from-disk` 把直接改過的檔案存成 patch；`--drop` 恢復上游原版；不加旗標時完成合併（§10） |
 | `skl adopt <npx skills 來源>` | 接管外部的 GitHub 來源 |
 | `skl remove <source> [-y] [--discard-edits]` | 確認後把來源的所有 skill 移到 trash、移除 link，並從 manifest 刪除。patch、note 與 Keychain token 保留。有直接改過的 skill 時拒絕，除非加 `--discard-edits` |
 | `skl secret <source>` | 把 token 存進 Keychain |

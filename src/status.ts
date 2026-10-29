@@ -2,9 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { describeExternal, externalSkills } from "./external.ts";
 import type { Lock } from "./lock.ts";
-import { type Manifest, type SkillId, type SourceId, splitSkillId } from "./manifest.ts";
+import { type Manifest, type SkillId, type SourceId, installedName, splitSkillId } from "./manifest.ts";
+import { mergeDir, patchFiles, readMergeInfo } from "./patch.ts";
 import type { Paths } from "./paths.ts";
 import { count, home } from "./report.ts";
+import { treeHash } from "./treehash.ts";
 
 // What `skl check` last found, so `skl status` and the TUI answer offline.
 // See docs/SPEC.md §5.4.
@@ -134,4 +136,52 @@ export function which(paths: Paths, manifest: Manifest, lock: Lock, name: string
     `  updated   ${s.updatedAt.slice(0, 16).replace("T", " ")} UTC (${ago(s.updatedAt, now)})`,
     ...(s.patch ? ["  customized: yes (skl edit)"] : []),
   ].join("\n");
+}
+
+/** One skill as `skl status --json` reports it; paths are absolute so an agent can open them. */
+export interface SkillReport {
+  id: SkillId;
+  name: string;
+  /** The folder agents read; absent while a first install waits on a merge. */
+  dir?: string;
+  /** Your patch and its note, when the skill is customized. */
+  patch?: string;
+  note?: string;
+  /** Changed in ~/.agents/skills since skl wrote it: `skl edit <id> --from-disk` keeps it. */
+  edited: boolean;
+  /** A merge to resolve in `merged`, then finish with `skl edit <id>`. */
+  conflict?: { dir: string; merged: string };
+}
+
+/**
+ * Every installed skill and every merge waiting, read from disk now rather
+ * than from the last check: a merge folder appears during an update, and on
+ * a new machine its skill is not installed yet.
+ */
+export function skillReports(paths: Paths, manifest: Manifest, lock: Lock): SkillReport[] {
+  const ids = new Set(Object.keys(lock.skills) as SkillId[]);
+  const mergeRoot = path.join(paths.sklDir, "merge");
+  for (const source of fs.existsSync(mergeRoot) ? fs.readdirSync(mergeRoot) : []) {
+    for (const original of fs.readdirSync(path.join(mergeRoot, source))) ids.add(`${source}/${original}` as SkillId);
+  }
+  return [...ids].sort().flatMap((id): SkillReport[] => {
+    const { source, original } = splitSkillId(id);
+    if (!manifest.sources[source]) return [];
+    const entry = lock.skills[id];
+    const name = entry?.name ?? installedName(source, original, manifest.sources[source]);
+    const dir = path.join(paths.skillsDir, name);
+    const files = patchFiles(paths, source, original);
+    const merge = mergeDir(paths, source, original);
+    return [
+      {
+        id,
+        name,
+        ...(entry && fs.existsSync(dir) ? { dir } : {}),
+        ...(fs.existsSync(files.patch) ? { patch: files.patch } : {}),
+        ...(fs.existsSync(files.note) ? { note: files.note } : {}),
+        edited: Boolean(entry && fs.existsSync(dir) && treeHash(dir) !== entry.output),
+        ...(readMergeInfo(merge) ? { conflict: { dir: merge, merged: path.join(merge, "MERGED") } } : {}),
+      },
+    ];
+  });
 }

@@ -19,6 +19,16 @@ export function mergeDir(paths: Paths, source: SourceId, original: SkillName): s
   return path.join(paths.sklDir, "merge", source, original);
 }
 
+/** Removes a finished merge, and the source and merge folders once they are empty. */
+export function removeMerge(paths: Paths, source: SourceId, original: SkillName): void {
+  const dir = mergeDir(paths, source, original);
+  fs.rmSync(dir, { recursive: true, force: true });
+  for (const up of [path.dirname(dir), path.dirname(path.dirname(dir))]) {
+    if (!fs.existsSync(up) || fs.readdirSync(up).length) return;
+    fs.rmdirSync(up);
+  }
+}
+
 /** What a conflict was between, so `skl edit` can finish it against the right upstream. */
 export interface MergeInfo {
   /** The store hash the patch was made against. */

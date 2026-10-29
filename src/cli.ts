@@ -6,7 +6,7 @@ import { acquireLock } from "./apply.ts";
 import { check as checkSources, realNet } from "./check.ts";
 import { diff as diffSkill } from "./diff.ts";
 import { type Kind, diagnose } from "./doctor.ts";
-import { type EditMode, edit, runEditor } from "./edit.ts";
+import { type EditMode, edit } from "./edit.ts";
 import { storeSecret } from "./keychain.ts";
 import { readLock } from "./lock.ts";
 import { type SourceId, readManifest } from "./manifest.ts";
@@ -16,7 +16,7 @@ import { Cancelled, ask, chooseMany, confirm, isInteractive } from "./prompt.ts"
 import { removeSource } from "./remove.ts";
 import { describeSchedule, news, notify, parseTime, realLaunchd, schedule } from "./schedule.ts";
 import { count, home } from "./report.ts";
-import { formatStatus, readStatus, which, writeStatus } from "./status.ts";
+import { formatStatus, readStatus, skillReports, which, writeStatus } from "./status.ts";
 import { describeSync, neverFetched, sync } from "./sync.ts";
 import { type UpdateIO, fetchSources, update } from "./update.ts";
 
@@ -29,15 +29,19 @@ const USAGE = `skl: one place for the agent skills that vendor installers scatte
                                    skills you changed in place are kept unless --discard-edits
   skl check [source...] [--notify]  Look for updates; changes no skill. --notify sends a
                                    notification for updates it has not told you about yet
-  skl status                       What check last found (offline)
+  skl status [--json]              What check last found (offline); --json adds every skill
+                                   with its patch, edits and merge folder, for agents
   skl update [source...] [-i] [--pick] [--discard-edits]
                                    Show the plan, then apply it; -i runs an installer with you
                                    at the terminal, --pick chooses skills again
   skl which <name>                 The source, original name and version of an installed skill
   skl diff <source>[/<skill>] [-i]  What the next update would change, rewrites and patches included
-  skl edit <source>/<skill> [--drop | --from-disk]
-                                   Customize a skill as a patch kept across updates;
-                                   --from-disk turns edits made in ~/.agents/skills into one
+  skl edit <source>/<skill> --from-disk [--note "<why>"] [--dry-run]
+                                   Save the changes you made to an installed skill in
+                                   ~/.agents/skills as a patch kept across updates
+  skl edit <source>/<skill> [--note "<why>"] [--dry-run]
+                                   Finish a merge once its MERGED folder is resolved
+  skl edit <source>/<skill> --drop  Drop your patch and go back to upstream
   skl adopt <owner/repo> [--as <id>] [-y]   Take over skills you installed with npx skills
   skl remove <source> [-y] [--discard-edits]   Remove a source's skills (to trash) and the source
   skl secret <source>              Store a source's token in Keychain
@@ -85,7 +89,7 @@ async function main(argv: string[]): Promise<number> {
     case "check":
       return checkCmd(base, args, rest.includes("--notify"));
     case "status":
-      return statusCmd(base);
+      return statusCmd(base, rest.includes("--json"));
     case "update":
       return updateCmd(base, args, rest, flags);
     case "which":
@@ -93,7 +97,7 @@ async function main(argv: string[]): Promise<number> {
     case "diff":
       return diffCmd(base, args[0], flags);
     case "edit":
-      return editCmd(base, args[0], rest);
+      return editCmd(base, rest, flags);
     case "adopt":
       return adoptCmd(base, args[0], rest);
     case "remove":
@@ -270,9 +274,16 @@ async function updateCmd(base: Paths, ids: string[], rest: string[], flags: Flag
   return update(paths, manifest, lock, readStatus(paths.statusFile), ids, updateFlags, io);
 }
 
-function statusCmd(base: Paths): number {
+function statusCmd(base: Paths, json = false): number {
   const { manifest, paths, lock } = load(base);
-  console.log(formatStatus(manifest, lock, readStatus(paths.statusFile)));
+  const status = readStatus(paths.statusFile);
+  if (!json) {
+    console.log(formatStatus(manifest, lock, status));
+    return 0;
+  }
+  // For agents: what check last found per source, and each skill as it is on disk now.
+  const sources = Object.fromEntries(Object.entries(manifest.sources).map(([id, s]) => [id, { type: s.type, ...(status?.sources[id as SourceId] ?? { state: "not-checked" }) }]));
+  console.log(JSON.stringify({ checkedAt: status?.checkedAt ?? null, sources, skills: skillReports(paths, manifest, lock) }, null, 2));
   return 0;
 }
 
@@ -306,15 +317,18 @@ async function removeCmd(base: Paths, id: string | undefined, rest: string[], fl
   return 0;
 }
 
-async function editCmd(base: Paths, arg: string | undefined, rest: string[]): Promise<number> {
+async function editCmd(base: Paths, rest: string[], flags: Flags): Promise<number> {
   const { manifest, paths, lock } = load(base);
-  cleanups.add(acquireLock(paths.sklDir));
-  const mode: EditMode = rest.includes("--drop") ? "drop" : rest.includes("--from-disk") ? "from-disk" : "edit";
-  const io = {
-    editor: runEditor,
+  // The note is a flag's value, not the skill: skl edit --note "why" a/b works too.
+  const arg = rest.find((w, i) => !w.startsWith("-") && rest[i - 1] !== "--note");
+  if (!flags.dryRun) cleanups.add(acquireLock(paths.sklDir));
+  const mode: EditMode = rest.includes("--drop") ? "drop" : rest.includes("--from-disk") ? "from-disk" : "finish";
+  const opts = {
+    note: option(rest, "--note"),
+    dryRun: flags.dryRun,
     askNote: () => (isInteractive() ? ask("Why this change? (saved as the note; enter to skip)") : Promise.resolve("")),
   };
-  console.log((await edit(paths, manifest, lock, arg, mode, io)).join("\n"));
+  console.log((await edit(paths, manifest, lock, arg, mode, opts)).join("\n"));
   return 0;
 }
 

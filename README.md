@@ -19,11 +19,11 @@ skl                              the TUI on a terminal, the status table otherwi
 skl add <id> --github <owner/repo> | --installer "<command>" | --npm <pkg@ver> --path <dir> | --local <dir>
 skl sync [--discard-edits]       make ~/.agents/skills match the manifest and lock (offline)
 skl check [source...] [--notify] look for updates; changes no skill
-skl status                       what check last found (offline)
+skl status [--json]              what check last found (offline); --json for agents
 skl update [source...] [-i] [--pick] [--discard-edits]   show the plan, then apply it
 skl which <name>                 the source, original name and version of an installed skill
 skl diff <source>[/<skill>]      what the next update would change on disk
-skl edit <source>/<skill> [--drop | --from-disk]   customize a skill as a patch
+skl edit <source>/<skill> [--from-disk | --drop] [--note "<why>"]   save, drop or finish a customization
 skl adopt <owner/repo>           take over skills you installed with npx skills
 skl remove <source>              remove a source's skills (to trash) and the source
 skl secret <source>              store an installer's token in macOS Keychain
@@ -97,14 +97,44 @@ and `skl schedule off` removes it.
 
 ## Customizing a skill
 
-`skl edit matt/tdd` opens the skill in your editor and saves the change as
-`~/.config/skl/patches/matt/tdd.patch`, with a note saying why. Updates install
-the new upstream version and reapply the patch. When your change and
-upstream's touch the same lines, the skill stays as it is and is listed as a
-conflict. The merge folder holds `BASE`, `YOURS`, `UPSTREAM` and `MERGED`.
-Resolve it in `MERGED`, then run `skl edit matt/tdd` again. If you edited a
-skill in `~/.agents/skills` directly, `skl edit matt/tdd --from-disk` turns
-that edit into a patch.
+Change the skill in `~/.agents/skills` directly, then save the change as a
+patch:
+
+```
+skl edit matt/tdd --from-disk --dry-run              # print the patch, write nothing
+skl edit matt/tdd --from-disk --note "Use vitest, not jest."
+```
+
+The patch goes to `~/.config/skl/patches/matt/tdd.patch` and the note beside
+it. The note says why, so whoever merges it later knows what you meant.
+Without `--note`, skl asks once on a terminal. Leave the frontmatter `name`
+and references to other skills as skl wrote them; the patch is against
+upstream's original names. `skl edit matt/tdd --drop` removes the patch and
+installs the skill as upstream ships it.
+
+Updates install the new upstream version and reapply the patch. When your
+change and upstream's touch the same lines, the skill stays as it is and is
+listed as a conflict. The merge folder holds `BASE`, `YOURS`, `UPSTREAM` and
+`MERGED`, with the note and your patch. Resolve it in `MERGED`, preview with
+`skl edit matt/tdd --dry-run`, then finish with `skl edit matt/tdd`.
+
+## Letting an agent do it
+
+`skills/` has two skills that teach an agent these commands:
+
+- `skillport-edit` customizes a skill when you ask your agent to change one.
+- `skillport-merge` resolves a conflict, carrying the note's intent over to
+  the new upstream.
+
+Install them like any other source:
+
+```
+skl add skillport --local ~/dev/skillport/skills
+```
+
+They read `skl status --json`, which lists every skill with its folder, patch,
+note, whether it was edited in place, and its merge folder when it has a
+conflict. skl itself never calls an agent.
 
 ## Dotfiles and a new machine
 

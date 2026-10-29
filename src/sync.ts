@@ -6,7 +6,7 @@ import { isOursOrFree, link, moveToTrash, trashDir, unlink } from "./apply.ts";
 import { describeExternal, externalSkills, foreignInTarget } from "./external.ts";
 import { type Lock, type SkillLock, writeLock } from "./lock.ts";
 import { type Manifest, type SkillId, type SkillName, type Source, type SourceId, installedName, skillId, splitSkillId } from "./manifest.ts";
-import { type MergeInfo, applyPatch, applyPatchPartly, diffTrees, mergeDir, mergeTrees, patchFiles, patchHash, readMergeInfo } from "./patch.ts";
+import { type MergeInfo, applyPatch, applyPatchPartly, diffTrees, mergeDir, mergeTrees, patchFiles, patchHash, readMergeInfo, removeMerge } from "./patch.ts";
 import { DEFAULT_LINKS, type Paths } from "./paths.ts";
 import { home } from "./report.ts";
 import { type Rewrite, render } from "./render.ts";
@@ -364,7 +364,7 @@ export function sync(paths: Paths, manifest: Manifest, given: Lock, opts: SyncOp
       const file = patchFiles(paths, r.source, r.original).patch;
       if (p.reapplied && p.patch) fs.writeFileSync(file, p.patch);
       if (p.reapplied && !p.patch) fs.rmSync(file);
-      fs.rmSync(mergeDir(paths, r.source, r.original), { recursive: true, force: true });
+      removeMerge(paths, r.source, r.original);
     }
     if (written) changes.push({ kind: "install", id: r.id, name: r.name, replaced: wasAt.get(r.id) === r.name, rewrites: r.rewrites, ...(p.reapplied ? { reapplied: true } : {}) });
     else if (relinked) changes.push({ kind: "relink", id: r.id, name: r.name });
